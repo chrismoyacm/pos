@@ -1,0 +1,14 @@
+[
+    {
+        "id": "ph-000001",
+        "orderId": "po-000001",
+        "orderFolio": "OC-000001",
+        "productId": "p-1011",
+        "barcode": "7501000000035",
+        "name": "desayuno",
+        "provider": "- Sin Proveedor -",
+        "qty": 1,
+        "cost": 0.5,
+        "createdAt": "2026-03-26T08:48:05+01:00"
+    }
+]

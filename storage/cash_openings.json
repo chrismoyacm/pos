@@ -1,0 +1,89 @@
+[
+    {
+        "id": "open-000001",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "createdAt": "2026-03-24T18:20:35+01:00",
+        "status": "closed",
+        "expectedCash": 72.5,
+        "actualCash": 0,
+        "difference": -72.5,
+        "closedAt": "2026-03-24T18:42:33+01:00"
+    },
+    {
+        "id": "open-000002",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "closed",
+        "createdAt": "2026-03-24T18:42:40+01:00",
+        "expectedCash": 0,
+        "actualCash": 0,
+        "difference": 0,
+        "closedAt": "2026-03-24T18:59:46+01:00"
+    },
+    {
+        "id": "open-000003",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "closed",
+        "createdAt": "2026-03-24T18:59:54+01:00",
+        "expectedCash": 0,
+        "actualCash": 0,
+        "difference": 0,
+        "closedAt": "2026-03-24T19:05:35+01:00"
+    },
+    {
+        "id": "open-000004",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "closed",
+        "createdAt": "2026-03-24T19:05:52+01:00",
+        "expectedCash": 240.4,
+        "actualCash": 240.4,
+        "difference": 0,
+        "closedAt": "2026-03-24T19:10:52+01:00"
+    },
+    {
+        "id": "open-000005",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "closed",
+        "createdAt": "2026-03-24T19:11:00+01:00",
+        "expectedCash": 0,
+        "actualCash": 0,
+        "difference": 0,
+        "closedAt": "2026-03-24T19:27:22+01:00"
+    },
+    {
+        "id": "open-000006",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "closed",
+        "createdAt": "2026-03-24T19:31:41+01:00",
+        "expectedCash": 30.5,
+        "actualCash": 30.5,
+        "difference": 0,
+        "closedAt": "2026-03-24T19:36:49+01:00"
+    },
+    {
+        "id": "open-000007",
+        "userId": 1,
+        "username": "admin",
+        "name": "Administrador",
+        "amount": 0,
+        "status": "open",
+        "createdAt": "2026-03-24T20:16:19+01:00"
+    }
+]

@@ -1,0 +1,18 @@
+[
+    {
+        "id": "dep-001",
+        "name": "Sin Departamento"
+    },
+    {
+        "id": "dep-002",
+        "name": "Abarrotes"
+    },
+    {
+        "id": "dep-003",
+        "name": "Bebidas"
+    },
+    {
+        "id": "dep-004",
+        "name": "Limpieza"
+    }
+]

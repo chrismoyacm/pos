@@ -1,0 +1,282 @@
+[
+    {
+        "id": "p-1001",
+        "barcode": "7501000000011",
+        "name": "Agua 600ml",
+        "cost": 1,
+        "margin": 30,
+        "price": 12.5,
+        "stock": 39,
+        "minStock": 5,
+        "maxStock": 43,
+        "inventoryEnabled": true,
+        "department": "Bebidas",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 6,
+            "price": 11
+        }
+    },
+    {
+        "id": "p-1002",
+        "barcode": "7501000000028",
+        "name": "Refresco 600ml",
+        "cost": 0,
+        "margin": 20,
+        "price": 18,
+        "stock": 28,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 6,
+            "price": 16.5
+        }
+    },
+    {
+        "id": "p-1003",
+        "barcode": "7501000000035",
+        "name": "Pan Blanco",
+        "cost": 0,
+        "margin": 20,
+        "price": 42,
+        "stock": 9,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 3,
+            "price": 39
+        }
+    },
+    {
+        "id": "p-1004",
+        "barcode": "7501000000042",
+        "name": "Leche 1L",
+        "cost": 0,
+        "margin": 20,
+        "price": 29.9,
+        "stock": 19,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 12,
+            "price": 27.5
+        }
+    },
+    {
+        "id": "p-1005",
+        "barcode": "7501000000059",
+        "name": "Huevos (docena)",
+        "cost": 0,
+        "margin": 20,
+        "price": 54,
+        "stock": 7,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 2,
+            "price": 52
+        }
+    },
+    {
+        "id": "p-1006",
+        "barcode": "7501000000066",
+        "name": "Arroz 1kg",
+        "cost": 0,
+        "margin": 20,
+        "price": 33.5,
+        "stock": 18,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 6,
+            "price": 31
+        }
+    },
+    {
+        "id": "p-1007",
+        "barcode": "7501000000073",
+        "name": "Azúcar 1kg",
+        "cost": 0,
+        "margin": 20,
+        "price": 31,
+        "stock": 16,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 6,
+            "price": 29
+        }
+    },
+    {
+        "id": "p-1008",
+        "barcode": "7501000000080",
+        "name": "Atún lata 140g",
+        "cost": 0,
+        "margin": 20,
+        "price": 24,
+        "stock": 40,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 12,
+            "price": 22.5
+        }
+    },
+    {
+        "id": "p-1009",
+        "barcode": "7501000000097",
+        "name": "Papas 45g",
+        "cost": 0,
+        "margin": 20,
+        "price": 17,
+        "stock": 50,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 10,
+            "price": 15.5
+        }
+    },
+    {
+        "id": "p-1010",
+        "barcode": "7501000000103",
+        "name": "Chocolate barra",
+        "cost": 0,
+        "margin": 20,
+        "price": 20,
+        "stock": 25,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "15%",
+        "wholesale": {
+            "minQty": 12,
+            "price": 18
+        }
+    },
+    {
+        "id": "p-1011",
+        "barcode": "7501000000035",
+        "name": "desayuno",
+        "cost": 0.5,
+        "margin": 20,
+        "price": 0.75,
+        "stock": 2,
+        "minStock": 1,
+        "maxStock": 10,
+        "inventoryEnabled": true,
+        "department": "Sin Departamento",
+        "unitType": "package",
+        "provider": "",
+        "iva": "15%",
+        "packageItems": [
+            {
+                "productId": "p-1001",
+                "barcode": "7501000000011",
+                "name": "Agua 600ml",
+                "qty": 1
+            },
+            {
+                "productId": "p-1003",
+                "barcode": "7501000000035",
+                "name": "Pan Blanco",
+                "qty": 1
+            }
+        ],
+        "wholesale": {
+            "minQty": 6,
+            "price": 0.75
+        }
+    },
+    {
+        "id": "p-1012",
+        "barcode": "2006l",
+        "name": "italcol levante libra",
+        "cost": 0.3,
+        "margin": 20,
+        "price": 0.4,
+        "stock": 980,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Abarrotes",
+        "unitType": "unit",
+        "provider": "",
+        "iva": "No",
+        "packageItems": [],
+        "wholesale": {
+            "minQty": 6,
+            "price": 0.35
+        }
+    },
+    {
+        "id": "p-1013",
+        "barcode": "2006",
+        "name": "italcol levante 40kg",
+        "cost": 26.4,
+        "margin": 20,
+        "price": 31.68,
+        "stock": 0,
+        "minStock": 0,
+        "maxStock": 0,
+        "inventoryEnabled": true,
+        "department": "Abarrotes",
+        "unitType": "package",
+        "provider": "",
+        "iva": "No",
+        "packageItems": [
+            {
+                "productId": "p-1012",
+                "barcode": "2006",
+                "name": "italcol levante libra",
+                "qty": 88
+            }
+        ],
+        "wholesale": null
+    }
+]
