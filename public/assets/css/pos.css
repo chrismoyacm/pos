@@ -120,6 +120,17 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
 .grid tbody tr:hover td{background:#f8fbff}
+.venta-iva-btn{
+  border:1px solid #cbd5e1;
+  border-radius:999px;
+  padding:2px 10px;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+  min-width:58px;
+}
+.venta-iva-btn--on{background:#ecfdf3;border-color:#86efac;color:#166534}
+.venta-iva-btn--off{background:#f8fafc;border-color:#cbd5e1;color:#64748b}
 .venta-footer{
   display:flex;gap:10px;align-items:center;justify-content:space-between;background:#fff;padding:10px;border-top:1px solid #e5e7eb
 }
@@ -139,11 +150,32 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .modal.active{display:flex}
 .modal-card{background:#fff;min-width:360px;max-width:520px;border-radius:8px;border:1px solid #d8dee6;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+.modal-card--wide{width:min(1100px,94vw);max-width:none}
 .modal-card header{padding:12px 16px;border-bottom:1px solid #e5e7eb;font-weight:700}
 .modal-card section{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .modal-card footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
 .modal-card input{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%}
 .modal-card input:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
+.pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pay-note-preview{
+  border:1px dashed #cbd5e1;
+  border-radius:6px;
+  padding:8px 10px;
+  font-size:12px;
+  color:#475569;
+  background:#f8fafc;
+}
+.modal-sales-toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.modal-sales-search{min-width:240px;flex:1}
+.modal-sales-grid{display:grid;grid-template-columns:minmax(300px,360px) minmax(0,1fr);gap:12px}
+.modal-sales-list{border:1px solid #e5e7eb;border-radius:6px;overflow:auto;max-height:360px}
+.modal-sales-detail{border:1px solid #e5e7eb;border-radius:6px;overflow:auto;max-height:360px}
+.modal-sales-meta{padding:8px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa;font-size:12px;font-weight:700}
+
+@media (max-width: 900px){
+  .pay-mixed-grid{grid-template-columns:1fr}
+  .modal-sales-grid{grid-template-columns:1fr}
+}
 .btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary-2);border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-secondary{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-danger{background:var(--danger);color:#fff;border:1px solid #7f1d1d;border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -261,6 +293,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .cred-rep-name{font-weight:800}
 .cred-rep-addr{margin-top:2px;white-space:pre-line}
 .cred-rep-balance{white-space:nowrap;text-align:right;font-weight:900}
+.cred-rep-overdue{color:#b91c1c!important;font-weight:900}
 
 /* Estado de Cuenta (cliente) */
 .creditos-detalle-wrap{
@@ -766,6 +799,27 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .inv-form-actions{
   margin-top:10px;display:flex;justify-content:flex-end;gap:10px
 }
+.inv-add-suggest{
+  margin-top:6px;
+  border:1px solid #dbe2ee;
+  border-radius:4px;
+  background:#fff;
+  max-height:180px;
+  overflow:auto;
+}
+.inv-add-suggest-item{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  padding:6px 8px;
+  border-bottom:1px solid #eef2f7;
+  font-size:12px;
+  cursor:pointer;
+}
+.inv-add-suggest-item:last-child{border-bottom:none}
+.inv-add-suggest-item:hover,.inv-add-suggest-item.active{background:#eef6ff}
+.inv-add-suggest-code{font-weight:700;color:#334155;white-space:nowrap}
+.inv-add-suggest-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inventario-table tbody tr.row-selected td{background:#e8f0ff}
 
 @media (max-width: 1100px){

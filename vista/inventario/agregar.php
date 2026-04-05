@@ -21,14 +21,39 @@ declare(strict_types=1);
     </div>
 
     <div class="inv-form-card">
-      <div class="inv-form-grid">
+      <div class="inv-form-grid inv-form-grid--adjust">
         <label class="catalog-filter inv-field-grow">
-          <span>Producto</span>
-          <select id="inv-add-product"></select>
+          <span>Código del Producto</span>
+          <input type="text" id="inv-add-code" placeholder="Escanee o escriba código/ID" autocomplete="off">
+          <div class="inv-add-suggest" id="inv-add-suggest" hidden></div>
+        </label>
+        <div class="catalog-filter">
+          <span>&nbsp;</span>
+          <button class="btn-secondary" type="button" id="inv-add-load-btn">Buscar producto</button>
+        </div>
+        <label class="catalog-filter inv-field-grow">
+          <span>Descripción</span>
+          <input type="text" id="inv-add-name" readonly>
         </label>
         <label class="catalog-filter">
-          <span>Cantidad a agregar</span>
+          <span>Hay</span>
+          <input type="text" id="inv-add-stock" readonly>
+        </label>
+        <label class="catalog-filter">
+          <span>Agregar</span>
           <input type="number" id="inv-add-qty" min="1" step="1" value="1">
+        </label>
+        <label class="catalog-filter">
+          <span>Precio costo</span>
+          <input type="text" id="inv-add-cost" readonly>
+        </label>
+        <label class="catalog-filter">
+          <span>Precio venta</span>
+          <input type="text" id="inv-add-price" readonly>
+        </label>
+        <label class="catalog-filter">
+          <span>Precio mayoreo</span>
+          <input type="text" id="inv-add-wholesale" readonly>
         </label>
         <label class="catalog-filter inv-field-grow">
           <span>Motivo</span>
@@ -36,7 +61,7 @@ declare(strict_types=1);
         </label>
       </div>
       <div class="inv-form-actions">
-        <button class="btn-primary" type="button" id="inv-add-save-btn">Registrar Entrada</button>
+        <button class="btn-primary" type="button" id="inv-add-save-btn">Agregar cantidad a inventario</button>
       </div>
     </div>
   </div>
