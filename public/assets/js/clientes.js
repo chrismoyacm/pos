@@ -106,6 +106,7 @@
     $('#cli-zip').val('');
     $('#cli-notes').val('');
     $('#cli-credit').prop('checked', false);
+    $('#cli-payment-day').val('');
   }
 
   function fillForm(c) {
@@ -127,12 +128,15 @@
     $('#cli-zip').val(c?.zip || '');
     $('#cli-notes').val(c?.notes || '');
     $('#cli-credit').prop('checked', !!c?.creditAuthorized);
+    $('#cli-payment-day').val(c?.paymentDueDay ?? '');
   }
 
   function readForm() {
     const firstName = $('#cli-first').val().toString().trim();
     const lastName = $('#cli-last').val().toString().trim();
     const name = (firstName + ' ' + lastName).trim();
+    const paymentDayRaw = $('#cli-payment-day').val().toString().trim();
+    const paymentDueDay = paymentDayRaw === '' ? null : Number(paymentDayRaw);
     return {
       id: $('#cli-id').val().toString().trim(),
       name,
@@ -147,7 +151,8 @@
       parish: $('#cli-parish').val().toString().trim(),
       zip: $('#cli-zip').val().toString().trim(),
       notes: $('#cli-notes').val().toString().trim(),
-      creditAuthorized: $('#cli-credit').is(':checked')
+      creditAuthorized: $('#cli-credit').is(':checked'),
+      paymentDueDay: Number.isInteger(paymentDueDay) ? paymentDueDay : null
     };
   }
 

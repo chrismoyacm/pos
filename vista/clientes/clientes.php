@@ -99,6 +99,10 @@ declare(strict_types=1);
             <input id="cli-credit" type="checkbox">
             <span>Tiene crédito autorizado</span>
           </label>
+          <div class="field-col" style="margin-top:10px;max-width:220px">
+            <label for="cli-payment-day">Fecha pago (día del mes)</label>
+            <input id="cli-payment-day" type="number" min="1" max="31" step="1" placeholder="1 - 31">
+          </div>
         </div>
       </form>
     </div>

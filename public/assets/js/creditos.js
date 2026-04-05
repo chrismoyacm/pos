@@ -52,6 +52,9 @@
       const parts = nameAddress.split('\n');
       const name = parts[0] || '';
       const addr = parts.slice(1).join('\n');
+      const overdueClass = r?.isOverdue ? 'cred-rep-overdue' : '';
+      const status = (r?.paymentStatus || '').toString();
+      const paymentDate = (r?.paymentDate || 'No definido').toString();
       const $tr = $(`
         <tr>
           <td>${escapeHtml(r?.number?.toString() || '')}</td>
@@ -61,7 +64,11 @@
           </td>
           <td>${escapeHtml(r?.phone || '')}</td>
           <td>${escapeHtml(r?.creditLimit || '')}</td>
-          <td class="cred-rep-balance">${formatMoney(r?.balance)}</td>
+          <td class="cred-rep-balance ${overdueClass}">${formatMoney(r?.balance)}</td>
+          <td class="${overdueClass}">
+            <div>${escapeHtml(paymentDate)}</div>
+            ${status ? `<div class="muted">${escapeHtml(status)}</div>` : ''}
+          </td>
           <td>${escapeHtml(r?.lastPayment || '')}</td>
         </tr>
       `);

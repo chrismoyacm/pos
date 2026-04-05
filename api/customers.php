@@ -17,6 +17,14 @@ function normalizeCustomer(array $c): array
     $province = (string)($c['province'] ?? ($c['state'] ?? ''));
     $canton = (string)($c['canton'] ?? ($c['city'] ?? ''));
     $parish = (string)($c['parish'] ?? ($c['colonia'] ?? ''));
+    $paymentDueDayRaw = $c['paymentDueDay'] ?? null;
+    $paymentDueDay = null;
+    if ($paymentDueDayRaw !== null && $paymentDueDayRaw !== '') {
+        $candidate = (int)$paymentDueDayRaw;
+        if ($candidate >= 1 && $candidate <= 31) {
+            $paymentDueDay = $candidate;
+        }
+    }
     return [
         'id' => (string)($c['id'] ?? ''),
         'name' => $name,
@@ -32,6 +40,7 @@ function normalizeCustomer(array $c): array
         'zip' => (string)($c['zip'] ?? ''),
         'notes' => (string)($c['notes'] ?? ''),
         'creditAuthorized' => (bool)($c['creditAuthorized'] ?? false),
+        'paymentDueDay' => $paymentDueDay,
     ];
 }
 
