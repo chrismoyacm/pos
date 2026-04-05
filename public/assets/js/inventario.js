@@ -165,13 +165,10 @@
     return matched.length === 1 ? matched[0] : null;
   }
 
-  function computeAdjustPreviewInv(product, kind, qty, entryCost, marginOverride) {
+  function computeAdjustPreviewInv(product, kind, qty, entryCost) {
     const currentStock = Number(product?.stock || 0);
     const currentCost = Number(product?.cost || 0);
-    const parsedMargin = Number(marginOverride);
-    const margin = Number.isFinite(parsedMargin) && parsedMargin >= 0
-      ? parsedMargin
-      : deriveMarginInv(product);
+    const margin = deriveMarginInv(product);
     const absQty = Math.max(0, Math.floor(Number(qty || 0)));
     const isExit = kind === 'exit';
     const newStock = isExit
@@ -204,18 +201,13 @@
     const kind = ($('#inv-adjust-type').val() || 'entry').toString();
     const qty = Number($('#inv-adjust-qty').val() || 0);
     const entryCost = Number($('#inv-adjust-entry-cost').val() || 0);
-    const marginRaw = ($('#inv-adjust-margin').val() || '').toString().trim();
-    const marginInput = marginRaw === '' ? Number.NaN : Number(marginRaw);
-    const preview = computeAdjustPreviewInv(product, kind, qty, entryCost, marginInput);
+    const preview = computeAdjustPreviewInv(product, kind, qty, entryCost);
 
     $('#inv-adjust-name').val((product.name || '').toString());
     $('#inv-adjust-current-stock').val(String(preview.currentStock));
     $('#inv-adjust-new-stock').val(String(preview.newStock));
     $('#inv-adjust-new-cost').val(formatMoneyInv(preview.newCost));
-    const marginEl = $('#inv-adjust-margin').get(0);
-    if (!marginEl || document.activeElement !== marginEl) {
-      $('#inv-adjust-margin').val(Number(preview.margin || 0).toFixed(2));
-    }
+    $('#inv-adjust-margin').val(Number(preview.margin || 0).toFixed(2) + '%');
     $('#inv-adjust-new-price').val(formatMoneyInv(preview.newPrice));
     $('#inv-adjust-entry-cost').prop('disabled', kind === 'exit');
   }
@@ -254,8 +246,8 @@
     invState.addSelectedId = null;
     $('#inv-add-name').val('');
     $('#inv-add-stock').val('');
-    $('#inv-add-cost').val('0.00');
-    $('#inv-add-price').val('0.00');
+    $('#inv-add-cost').val('');
+    $('#inv-add-price').val('');
     $('#inv-add-wholesale').val('');
     clearAddSuggestionsInv();
   }
@@ -267,13 +259,12 @@
     }
     invState.addSelectedId = (product.id || '').toString();
     $('#inv-add-name').val((product.name || '').toString());
-    const stockValue = (product.stock === null || product.stock === undefined) ? '' : String(product.stock);
-    $('#inv-add-stock').val(stockValue);
-    $('#inv-add-cost').val(Number(product.cost || 0).toFixed(2));
-    $('#inv-add-price').val(Number(product.price || 0).toFixed(2));
+    $('#inv-add-stock').val(String(product.stock ?? 0));
+    $('#inv-add-cost').val(formatMoneyInv(product.cost || 0));
+    $('#inv-add-price').val(formatMoneyInv(product.price || 0));
     const wholesale = product.wholesale && Number(product.wholesale.price || 0) > 0
-      ? Number(product.wholesale.price || 0).toFixed(2)
-      : '';
+      ? formatMoneyInv(product.wholesale.price || 0)
+      : 'N/A';
     $('#inv-add-wholesale').val(wholesale);
     clearAddSuggestionsInv();
   }
@@ -582,28 +573,18 @@
     });
   }
 
-  function applyMovementInv(productId, delta, type, note, entryCost, marginPct, productUpdates) {
-    const resolvedEntryCost = Number.isFinite(Number(entryCost))
-      ? Number(entryCost)
-      : Number($('#inv-adjust-entry-cost').val() || 0);
-    const resolvedMarginPct = Number.isFinite(Number(marginPct))
-      ? Number(marginPct)
-      : null;
-    const updates = (productUpdates && typeof productUpdates === 'object') ? productUpdates : {};
+  function applyMovementInv(productId, delta, type, note) {
+    const entryCost = Number($('#inv-adjust-entry-cost').val() || 0);
     return $.ajax({
       url: '../api/inventario.php',
-      method: 'POST',
+      method: 'PATCH',
       contentType: 'application/json',
       data: JSON.stringify({
         action: 'adjust_stock',
         productId,
         delta,
         movementType: type,
-        entryUnitCost: resolvedEntryCost,
-        marginPct: resolvedMarginPct,
-        productName: (updates.name || '').toString(),
-        salePrice: Number.isFinite(Number(updates.salePrice)) ? Number(updates.salePrice) : null,
-        wholesalePrice: Number.isFinite(Number(updates.wholesalePrice)) ? Number(updates.wholesalePrice) : null,
+        entryUnitCost: entryCost,
         note: note || '',
         source: 'inventario'
       })
@@ -637,37 +618,12 @@
     $('#inv-add-save-btn').on('click', function () {
       const productId = (invState.addSelectedId || '').toString();
       const qty = Number($('#inv-add-qty').val() || 0);
-      const addCost = Number($('#inv-add-cost').val() || 0);
-      const addName = ($('#inv-add-name').val() || '').toString().trim();
-      const addSalePrice = Number($('#inv-add-price').val() || 0);
-      const wholesaleRaw = ($('#inv-add-wholesale').val() || '').toString().trim();
-      const addWholesale = wholesaleRaw === '' ? null : Number(wholesaleRaw);
       const note = ($('#inv-add-note').val() || '').toString().trim();
       if (!productId || qty <= 0) {
         window.alert('Busque/cargue un producto y cantidad válida.');
         return;
       }
-      if (addCost <= 0) {
-        window.alert('Capture un precio costo válido.');
-        return;
-      }
-      if (!addName) {
-        window.alert('Capture una descripción válida.');
-        return;
-      }
-      if (!Number.isFinite(addSalePrice) || addSalePrice < 0) {
-        window.alert('Capture un precio de venta válido.');
-        return;
-      }
-      if (addWholesale !== null && (!Number.isFinite(addWholesale) || addWholesale < 0)) {
-        window.alert('Capture un precio mayoreo válido.');
-        return;
-      }
-      applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, null, {
-        name: addName,
-        salePrice: addSalePrice,
-        wholesalePrice: addWholesale
-      }).done(res => {
+      applyMovementInv(productId, Math.abs(qty), 'entry', note).done(res => {
         if (!res.ok) {
           window.alert(res.error || 'No se pudo registrar la entrada.');
           return;
@@ -688,14 +644,9 @@
 
       const exact = findAddProductInv(query);
       if (exact) {
-        fillAddFormInv(exact);
         clearAddSuggestionsInv();
         return;
       }
-
-      // Keep stock/value fields blank until user loads an existing product.
-      invState.addSelectedId = null;
-      $('#inv-add-stock').val('');
 
       invState.addSuggestions = addSuggestionsByQueryInv(query);
       invState.addSuggestionIndex = invState.addSuggestions.length > 0 ? 0 : -1;
@@ -738,14 +689,9 @@
       const kind = ($('#inv-adjust-type').val() || 'entry').toString();
       const qty = Number($('#inv-adjust-qty').val() || 0);
       const entryCost = Number($('#inv-adjust-entry-cost').val() || 0);
-      const marginPct = Number($('#inv-adjust-margin').val() || 0);
       const note = ($('#inv-adjust-note').val() || '').toString().trim();
       if (!productId || qty <= 0) {
         window.alert('Busque/cargue un producto y capture cantidad válida.');
-        return;
-      }
-      if (marginPct < 0) {
-        window.alert('Capture un % de ganancia válido.');
         return;
       }
       if (kind === 'entry' && entryCost <= 0) {
@@ -753,7 +699,7 @@
         return;
       }
       const delta = kind === 'exit' ? -Math.abs(qty) : Math.abs(qty);
-      applyMovementInv(productId, delta, kind, note, entryCost, marginPct, null).done(res => {
+      applyMovementInv(productId, delta, kind, note).done(res => {
         if (!res.ok) {
           window.alert(res.error || 'No se pudo aplicar el ajuste.');
           return;
@@ -811,23 +757,7 @@
         clearAdjustSuggestionsInv();
       }
     });
-    $('#inv-adjust-type, #inv-adjust-qty, #inv-adjust-entry-cost, #inv-adjust-margin').on('input change', updateAdjustPreviewInv);
-    $('#inv-adjust-margin').on('focus', function () {
-      this.select();
-    });
-    $('#inv-adjust-margin').on('blur', function () {
-      const raw = ($(this).val() || '').toString().trim();
-      if (raw === '') {
-        return;
-      }
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed < 0) {
-        window.alert('Capture un % de ganancia válido.');
-        return;
-      }
-      $(this).val(parsed.toFixed(2));
-      updateAdjustPreviewInv();
-    });
+    $('#inv-adjust-type, #inv-adjust-qty, #inv-adjust-entry-cost').on('input change', updateAdjustPreviewInv);
 
     $(document).on('click', function (e) {
       if (!$(e.target).closest('#inv-adjust-code, #inv-adjust-suggest').length) {

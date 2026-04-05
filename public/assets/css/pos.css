@@ -120,14 +120,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
 .grid tbody tr:hover td{background:#f8fbff}
-.venta-price-cell{cursor:pointer;position:relative;user-select:none}
-.venta-price-cell:hover{background:#eef6ff}
-.venta-price-cell::after{
-  content:'';
-  font-size:10px;
-  color:#64748b;
-  margin-left:6px;
-}
 .venta-iva-btn{
   border:1px solid #cbd5e1;
   border-radius:999px;
@@ -164,38 +156,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .modal-card footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
 .modal-card input{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%}
 .modal-card input:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
-.pay-method-picker{
-  display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:8px;
-}
-.pay-method-option{
-  border:1px solid #cbd5e1;
-  border-radius:8px;
-  background:#fff;
-  color:#334155;
-  font-weight:700;
-  padding:9px 6px;
-  cursor:pointer;
-}
-.pay-method-option.active{
-  background:#e0ecff;
-  border-color:#3b6ea5;
-  color:#1e3a8a;
-}
-.pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-.pay-credit-info{
-  border:1px solid #bfdbfe;
-  border-radius:6px;
-  background:#eff6ff;
-  color:#1e3a8a;
-  font-size:12px;
-  padding:8px 10px;
-}
-.pay-credit-table-wrap{max-height:190px;overflow:auto;border:1px solid #dbe2ea;border-radius:6px}
-.pay-credit-row{cursor:pointer}
-.pay-credit-row:hover td{background:#eef6ff}
-.pay-credit-row.selected td{background:#dbeafe}
+.pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pay-note-preview{
   border:1px dashed #cbd5e1;
   border-radius:6px;
@@ -212,13 +173,8 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .modal-sales-meta{padding:8px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa;font-size:12px;font-weight:700}
 
 @media (max-width: 900px){
-  .pay-method-picker{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .pay-mixed-grid{grid-template-columns:1fr 1fr}
-  .modal-sales-grid{grid-template-columns:1fr}
-}
-
-@media (max-width: 600px){
   .pay-mixed-grid{grid-template-columns:1fr}
+  .modal-sales-grid{grid-template-columns:1fr}
 }
 .btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary-2);border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-secondary{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -338,8 +294,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .cred-rep-addr{margin-top:2px;white-space:pre-line}
 .cred-rep-balance{white-space:nowrap;text-align:right;font-weight:900}
 .cred-rep-overdue{color:#b91c1c!important;font-weight:900}
-.cred-rep-row-overdue td{background:#fff1f2!important;color:#991b1b}
-.cred-rep-row-overdue .muted{color:#b45309}
 
 /* Estado de Cuenta (cliente) */
 .creditos-detalle-wrap{
@@ -643,94 +597,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .factura-footer{
   display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap
 }
-.facturacion-module{background:#fff;border:1px solid #d8dee6;box-shadow:0 1px 0 rgba(0,0,0,.03)}
-.facturacion-topbar{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:12px 14px;border-bottom:1px solid #e5e7eb;background:#fff
-}
-.facturacion-topbar h2{margin:0;color:#2563eb;font-size:22px;font-weight:900}
-.facturacion-nav{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(220px,1fr));
-  gap:14px;
-  padding:12px 14px;
-  border-bottom:1px solid #e5e7eb;
-  background:#f8fafc;
-}
-
-.facturacion-nav-group{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  background:#fff;
-  border:1px solid #e5e7eb;
-  border-radius:10px;
-  padding:10px;
-}
-
-.facturacion-nav-title{
-  font-size:12px;
-  font-weight:900;
-  color:#475569;
-  text-transform:uppercase;
-}
-
-.facturacion-nav-select-wrap{
-  display:block;
-  width:100%;
-}
-
-.facturacion-nav-select{
-  width:100%;
-  border:1px solid #cbd5e1;
-  border-radius:8px;
-  background:#fff;
-  padding:9px 11px;
-  font-size:13px;
-  font-weight:700;
-  color:#334155;
-}
-.facturacion-content{padding:14px}
-.facturacion-card{
-  border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden
-}
-.facturacion-card--flat{border:0;border-radius:0}
-.facturacion-card-head{
-  padding:14px;border-bottom:1px solid #edf0f3;background:#fcfcfd
-}
-.facturacion-card-head h3{margin:0 0 4px;font-size:18px;color:#0f172a}
-.facturacion-card-head p{margin:0;color:#64748b;font-size:13px}
-.facturacion-form{padding:14px}
-.facturacion-grid-3{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px}
-.facturacion-grid-2{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
-.facturacion-file-hint{font-size:12px;color:#64748b;margin-top:4px}
-.facturacion-card-footer{
-  display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px;border-top:1px solid #edf0f3;background:#fcfcfd
-}
-.facturacion-status{min-height:20px;color:#2563eb;font-size:13px;font-weight:700}
-.facturacion-status--wide{padding:0 2px}
-.facturacion-note{
-  margin:14px;padding:12px 14px;border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;color:#1d4ed8;font-size:13px
-}
-.facturacion-toolbar{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px
-}
-.facturacion-toolbar input{
-  width:360px;max-width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:9px 10px
-}
-.facturacion-table-wrap{padding:0 14px 14px}
-.facturacion-split{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;padding:14px}
-.facturacion-inline-actions{display:flex;gap:10px;flex-wrap:wrap}
-.facturacion-body{display:flex;flex-direction:column;gap:14px;padding:14px}
-.facturacion-search-results{
-  margin:0 14px 14px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;max-height:220px;overflow:auto
-}
-.facturacion-search-item{
-  display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #eef2f7;cursor:pointer
-}
-.facturacion-search-item:last-child{border-bottom:none}
-.facturacion-search-item:hover{background:#f8fbff}
-.facturacion-search-meta{font-size:12px;color:#64748b}
 
 .prod-period-toolbar{
   display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:12px
@@ -772,8 +638,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .promociones-main{grid-template-columns:1fr}
   .factura-grid--top,.factura-grid--buyer{grid-template-columns:repeat(2,minmax(220px,1fr))}
   .factura-bottom-grid{grid-template-columns:1fr}
-  .facturacion-grid-3{grid-template-columns:repeat(2,minmax(220px,1fr))}
-  .facturacion-split{grid-template-columns:1fr}
 }
 
 @media (max-width: 760px){
@@ -790,12 +654,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .factura-field--wide{grid-column:auto}
   .factura-inline-field,.factura-detail-toolbar,.factura-footer{flex-direction:column}
   .factura-field--grow{min-width:0}
-  .facturacion-topbar,.facturacion-nav-group,.facturacion-card-footer{flex-direction:column;align-items:flex-start}
-  .facturacion-nav-title{min-width:0;padding-top:0}
-  .facturacion-nav-select-wrap{min-width:0;max-width:none}
-  .facturacion-grid-3,.facturacion-grid-2{grid-template-columns:1fr}
-  .facturacion-toolbar{align-items:stretch}
-  .facturacion-toolbar input{width:100%}
 }
 
 /* Inventario */
@@ -982,6 +840,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 @media (max-width: 760px){
   .corte-kpis{flex-direction:column;align-items:flex-start}
 }
+<<<<<<< HEAD
 
 /* Configuracion */
 .config-wrap{background:#fff;border:1px solid #d8dee6;box-shadow:0 1px 0 rgba(0,0,0,.03)}
@@ -1179,3 +1038,5 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .reportes-donut-row{flex-direction:column}
   .reportes-legend{min-width:0;width:100%}
 }
+=======
+>>>>>>> a53b71d (feat: mejoras ventas, creditos e inventario)

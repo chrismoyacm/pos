@@ -128,25 +128,15 @@
     $('#cli-zip').val(c?.zip || '');
     $('#cli-notes').val(c?.notes || '');
     $('#cli-credit').prop('checked', !!c?.creditAuthorized);
-    const dueDate = (c?.paymentDueDate || '').toString();
-    if (dueDate) {
-      $('#cli-payment-day').val(dueDate);
-    } else if (Number(c?.paymentDueDay || 0) >= 1) {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, '0');
-      const d = String(Number(c.paymentDueDay)).padStart(2, '0');
-      $('#cli-payment-day').val(y + '-' + m + '-' + d);
-    } else {
-      $('#cli-payment-day').val('');
-    }
+    $('#cli-payment-day').val(c?.paymentDueDay ?? '');
   }
 
   function readForm() {
     const firstName = $('#cli-first').val().toString().trim();
     const lastName = $('#cli-last').val().toString().trim();
     const name = (firstName + ' ' + lastName).trim();
-    const paymentDueDate = ($('#cli-payment-day').val() || '').toString().trim();
+    const paymentDayRaw = $('#cli-payment-day').val().toString().trim();
+    const paymentDueDay = paymentDayRaw === '' ? null : Number(paymentDayRaw);
     return {
       id: $('#cli-id').val().toString().trim(),
       name,
@@ -162,7 +152,7 @@
       zip: $('#cli-zip').val().toString().trim(),
       notes: $('#cli-notes').val().toString().trim(),
       creditAuthorized: $('#cli-credit').is(':checked'),
-      paymentDueDate: paymentDueDate || null
+      paymentDueDay: Number.isInteger(paymentDueDay) ? paymentDueDay : null
     };
   }
 
@@ -224,14 +214,14 @@
       return;
     }
     const isNew = state.mode === 'new';
+    const method = isNew ? 'POST' : 'PATCH';
     if (!isNew && !payload.id) {
       alert('Seleccione un cliente');
       return;
     }
-    payload.action = isNew ? 'create' : 'update';
     $.ajax({
       url: '../api/customers.php',
-      method: 'POST',
+      method,
       contentType: 'application/json',
       data: JSON.stringify(payload)
     }).done(res => {
@@ -243,9 +233,6 @@
       setFormTitle();
       setButtons();
       loadCustomers($('#cli-search').val().toString());
-    }).fail(xhr => {
-      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'Error al guardar';
-      alert(backendError);
     });
   }
 
@@ -256,9 +243,9 @@
     if (!ok) return;
     $.ajax({
       url: '../api/customers.php',
-      method: 'POST',
+      method: 'DELETE',
       contentType: 'application/json',
-      data: JSON.stringify({ action: 'delete', id: state.selectedId })
+      data: JSON.stringify({ id: state.selectedId })
     }).done(res => {
       if (!res.ok) { alert(res.error || 'Error al eliminar'); return; }
       state.selectedId = null;
@@ -267,9 +254,6 @@
       setFormTitle();
       setButtons();
       loadCustomers($('#cli-search').val().toString());
-    }).fail(xhr => {
-      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'Error al eliminar';
-      alert(backendError);
     });
   }
 

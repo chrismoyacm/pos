@@ -2,72 +2,31 @@
   <div class="modal-card" role="dialog" aria-modal="true">
     <header>Pago (F12)</header>
     <section>
-      <label class="field">Subtotal
-        <input type="text" name="subtotal" readonly>
-      </label>
-      <label class="field">Descuento
-        <input type="text" name="discount" readonly>
-      </label>
       <label class="field">Total
         <input type="text" name="total" readonly>
       </label>
-      <input type="hidden" name="metodoPago" value="cash">
-
-      <div class="pay-method-picker" id="pay-method-picker" role="radiogroup" aria-label="Metodo de pago">
-        <button type="button" class="pay-method-option active" data-payment-method="cash" role="radio" aria-checked="true">Efectivo</button>
-        <button type="button" class="pay-method-option" data-payment-method="credit" role="radio" aria-checked="false">Crédito</button>
-        <button type="button" class="pay-method-option" data-payment-method="mixed" role="radio" aria-checked="false">Mixto</button>
-        <button type="button" class="pay-method-option" data-payment-method="transfer" role="radio" aria-checked="false">Transferencia</button>
-      </div>
-
-      <label class="field" id="pay-single-field">Pago con
+      <label class="field">Metodo de pago
+        <select name="metodoPago">
+          <option value="cash">Efectivo</option>
+          <option value="card">Tarjeta de Credito</option>
+          <option value="mixed">Mixto (Efectivo + Tarjeta)</option>
+          <option value="credit">Credito</option>
+          <option value="voucher">Vales de Despensa</option>
+          <option value="transfer">Transferencia</option>
+          <option value="check">Cheque</option>
+        </select>
+      </label>
+      <label class="field">Pago con
         <input type="number" step="0.01" name="pagoCon" placeholder="0.00">
       </label>
       <div class="pay-mixed-grid" id="pay-mixed-grid" hidden>
         <label class="field">Efectivo
           <input type="number" step="0.01" min="0" name="pagoConEfectivo" placeholder="0.00">
         </label>
-        <label class="field">Transferencia
-          <input type="number" step="0.01" min="0" name="pagoConTransferencia" placeholder="0.00">
-        </label>
-        <label class="field">Crédito
-          <input type="number" step="0.01" min="0" name="pagoConCredito" placeholder="0.00">
+        <label class="field">Tarjeta
+          <input type="number" step="0.01" min="0" name="pagoConTarjeta" placeholder="0.00">
         </label>
       </div>
-      <div id="pay-mixed-transfer-ref" hidden>
-        <label class="field">Referencia de transferencia
-          <input type="text" name="mixedTransferRef" placeholder="Número de referencia">
-        </label>
-      </div>
-      <div id="pay-credit-picker" hidden>
-        <label class="field">Buscar cliente
-          <input type="text" name="creditCustomerQ" placeholder="Nombre, teléfono o ID">
-        </label>
-        <div class="pay-credit-table-wrap">
-          <table class="grid grid-compact" style="margin:0">
-            <thead>
-              <tr>
-                <th style="width:110px">ID</th>
-                <th>Cliente</th>
-                <th style="width:120px">Teléfono</th>
-              </tr>
-            </thead>
-            <tbody id="pay-credit-customers-body"></tbody>
-          </table>
-        </div>
-      </div>
-      <div id="pay-transfer-fields" hidden>
-        <label class="field">Referencia
-          <input type="text" name="transferRef" placeholder="Número de referencia">
-        </label>
-        <label class="field">Número de teléfono
-          <input type="text" name="transferPhone" placeholder="Opcional">
-        </label>
-      </div>
-      <div class="pay-credit-info" id="pay-credit-info" hidden>
-        Venta a crédito: asigne un cliente y la venta se registra como saldo pendiente.
-      </div>
-      <div class="pay-credit-info" id="pay-customer-summary" hidden></div>
       <div class="pay-note-preview" id="pay-note-preview">Nota: -</div>
       <div><strong>Cambio:</strong> <span data-cambio>$0.00</span></div>
     </section>
@@ -152,20 +111,20 @@
 
 <div id="modal-stock" class="modal" aria-hidden="true">
   <div class="modal-card" role="dialog" aria-modal="true">
-    <header>Movimiento de efectivo</header>
+    <header>Movimiento de inventario</header>
     <section>
-      <div class="muted" id="cash-movement-help">Registre entradas o salidas de efectivo en caja.</div>
+      <div class="muted">Entradas (F7) suma stock, Salidas (F8) resta stock.</div>
       <input type="hidden" name="tipo" value="">
-      <label class="field">Cantidad
-        <input type="number" name="amount" value="0.00" min="0.01" step="0.01">
+      <label class="field">Codigo/ID
+        <input type="text" name="codigo" placeholder="Codigo de barras o ID">
       </label>
-      <label class="field" id="cash-movement-note-label"><span id="cash-movement-note-title">Comentario</span>
-        <input type="text" name="note" placeholder="Entrada de dinero">
+      <label class="field">Cantidad
+        <input type="number" name="cantidad" value="1" min="1" step="1">
       </label>
     </section>
     <footer>
       <button type="button" class="btn-secondary">Cancelar</button>
-      <button type="button" class="btn-primary">Guardar</button>
+      <button type="button" class="btn-primary">Aplicar</button>
     </footer>
   </div>
 </div>
@@ -220,23 +179,6 @@
     <footer>
       <button type="button" class="btn-secondary" id="sales-day-close">Cerrar</button>
       <button type="button" class="btn-danger" id="sales-day-return-btn" disabled>Devolver artículo seleccionado</button>
-    </footer>
-  </div>
-</div>
-
-<div id="modal-discount" class="modal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true">
-    <header>Descuento de venta</header>
-    <section>
-      <label class="field">Descuento (%)
-        <input type="number" id="sale-discount-pct" min="0" max="100" step="0.01" placeholder="0.00">
-      </label>
-      <div class="muted">Se aplicará a todos los productos de esta venta actual.</div>
-    </section>
-    <footer>
-      <button type="button" class="btn-secondary" id="sale-discount-clear">Quitar descuento</button>
-      <button type="button" class="btn-secondary" id="sale-discount-cancel">Cancelar</button>
-      <button type="button" class="btn-primary" id="sale-discount-apply">Aplicar</button>
     </footer>
   </div>
 </div>

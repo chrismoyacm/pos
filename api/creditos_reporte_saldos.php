@@ -20,7 +20,6 @@ $number = 0;
 $today = new DateTimeImmutable('now');
 $currentYearMonth = $today->format('Y-m');
 $currentDay = (int)$today->format('d');
-$todayDate = $today->format('Y-m-d');
 
 foreach ($customers as $customer) {
     if (!is_array($customer)) {
@@ -40,14 +39,6 @@ foreach ($customers as $customer) {
     $balance = (float)($ledger['summary']['balance'] ?? 0);
     $creditLimit = (float)($ledger['client']['limit'] ?? ($customer['creditLimit'] ?? 1000));
     $lastPayment = (string)($ledger['summary']['lastPaymentText'] ?? '');
-    $paymentDueDateRaw = trim((string)($customer['paymentDueDate'] ?? ''));
-    $paymentDueDate = null;
-    if ($paymentDueDateRaw !== '') {
-        $dt = DateTimeImmutable::createFromFormat('Y-m-d', $paymentDueDateRaw);
-        if ($dt instanceof DateTimeImmutable && $dt->format('Y-m-d') === $paymentDueDateRaw) {
-            $paymentDueDate = $dt;
-        }
-    }
     $paymentDueDayRaw = $customer['paymentDueDay'] ?? null;
     $paymentDueDay = is_numeric($paymentDueDayRaw) ? (int)$paymentDueDayRaw : null;
     if ($paymentDueDay !== null && ($paymentDueDay < 1 || $paymentDueDay > 31)) {
@@ -72,17 +63,7 @@ foreach ($customers as $customer) {
 
     $isOverdue = false;
     $paymentStatus = '';
-    if ($paymentDueDate instanceof DateTimeImmutable) {
-        $dueDateStr = $paymentDueDate->format('Y-m-d');
-        if ($balance > 0 && strcmp($todayDate, $dueDateStr) > 0) {
-            $isOverdue = true;
-            $paymentStatus = 'Vencido';
-        } elseif ($balance <= 0) {
-            $paymentStatus = 'Liquidado';
-        } else {
-            $paymentStatus = 'Pendiente';
-        }
-    } elseif ($paymentDueDay !== null) {
+    if ($paymentDueDay !== null) {
         if ($hasPaymentCurrentMonth) {
             $paymentStatus = 'Abonado este mes';
         } else {
@@ -96,12 +77,9 @@ foreach ($customers as $customer) {
         }
     }
 
-    $paymentDateLabel = 'No definido';
-    if ($paymentDueDate instanceof DateTimeImmutable) {
-        $paymentDateLabel = $paymentDueDate->format('d/m/Y');
-    } elseif ($paymentDueDay !== null) {
-        $paymentDateLabel = 'Día ' . str_pad((string)$paymentDueDay, 2, '0', STR_PAD_LEFT);
-    }
+    $paymentDateLabel = $paymentDueDay !== null
+        ? ('Día ' . str_pad((string)$paymentDueDay, 2, '0', STR_PAD_LEFT))
+        : 'No definido';
 
     $totalPending += $balance;
 

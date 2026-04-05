@@ -53,11 +53,10 @@
       const name = parts[0] || '';
       const addr = parts.slice(1).join('\n');
       const overdueClass = r?.isOverdue ? 'cred-rep-overdue' : '';
-      const overdueRowClass = r?.isOverdue ? 'cred-rep-row-overdue' : '';
       const status = (r?.paymentStatus || '').toString();
       const paymentDate = (r?.paymentDate || 'No definido').toString();
       const $tr = $(`
-        <tr class="${overdueRowClass}">
+        <tr>
           <td>${escapeHtml(r?.number?.toString() || '')}</td>
           <td>
             <div class="cred-rep-name">${escapeHtml(name)}</div>

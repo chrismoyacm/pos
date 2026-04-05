@@ -17,25 +17,12 @@ function normalizeCustomer(array $c): array
     $province = (string)($c['province'] ?? ($c['state'] ?? ''));
     $canton = (string)($c['canton'] ?? ($c['city'] ?? ''));
     $parish = (string)($c['parish'] ?? ($c['colonia'] ?? ''));
-    $paymentDueDateRaw = trim((string)($c['paymentDueDate'] ?? ''));
-    $paymentDueDate = null;
+    $paymentDueDayRaw = $c['paymentDueDay'] ?? null;
     $paymentDueDay = null;
-
-    if ($paymentDueDateRaw !== '') {
-        $dt = \DateTimeImmutable::createFromFormat('Y-m-d', $paymentDueDateRaw);
-        if ($dt instanceof \DateTimeImmutable && $dt->format('Y-m-d') === $paymentDueDateRaw) {
-            $paymentDueDate = $paymentDueDateRaw;
-            $paymentDueDay = (int)$dt->format('j');
-        }
-    }
-
-    if ($paymentDueDay === null) {
-        $paymentDueDayRaw = $c['paymentDueDay'] ?? null;
-        if ($paymentDueDayRaw !== null && $paymentDueDayRaw !== '') {
-            $candidate = (int)$paymentDueDayRaw;
-            if ($candidate >= 1 && $candidate <= 31) {
-                $paymentDueDay = $candidate;
-            }
+    if ($paymentDueDayRaw !== null && $paymentDueDayRaw !== '') {
+        $candidate = (int)$paymentDueDayRaw;
+        if ($candidate >= 1 && $candidate <= 31) {
+            $paymentDueDay = $candidate;
         }
     }
     return [
@@ -53,7 +40,6 @@ function normalizeCustomer(array $c): array
         'zip' => (string)($c['zip'] ?? ''),
         'notes' => (string)($c['notes'] ?? ''),
         'creditAuthorized' => (bool)($c['creditAuthorized'] ?? false),
-        'paymentDueDate' => $paymentDueDate,
         'paymentDueDay' => $paymentDueDay,
     ];
 }
@@ -109,52 +95,6 @@ if ($method === 'POST') {
     if (!is_array($body)) {
         errorResponse('Cuerpo inválido', 400);
     }
-    $action = strtolower(trim((string)($body['action'] ?? 'create')));
-
-    if ($action === 'update') {
-        $id = (string)($body['id'] ?? '');
-        if ($id === '') {
-            errorResponse('ID requerido', 400);
-        }
-        $customers = readJsonFile($customersPath);
-        $updated = normalizeCustomer($body);
-        $updated['id'] = $id;
-        if (trim($updated['name']) === '') {
-            errorResponse('Nombre requerido', 400);
-        }
-        $found = false;
-        foreach ($customers as &$c) {
-            if ((string)($c['id'] ?? '') === $id) {
-                $c = $updated;
-                $found = true;
-                break;
-            }
-        }
-        unset($c);
-        if (!$found) {
-            errorResponse('Cliente no encontrado', 404);
-        }
-        writeJsonFile($customersPath, $customers);
-        ok($updated);
-    }
-
-    if ($action === 'delete') {
-        $id = (string)($body['id'] ?? '');
-        if ($id === '') {
-            errorResponse('ID requerido', 400);
-        }
-        $customers = readJsonFile($customersPath);
-        $before = count($customers);
-        $customers = array_values(array_filter($customers, function ($c) use ($id) {
-            return (string)($c['id'] ?? '') !== $id;
-        }));
-        if (count($customers) === $before) {
-            errorResponse('Cliente no encontrado', 404);
-        }
-        writeJsonFile($customersPath, $customers);
-        ok(['id' => $id]);
-    }
-
     $customers = readJsonFile($customersPath);
     $incoming = normalizeCustomer($body);
     $incoming['id'] = nextCustomerId($customers);

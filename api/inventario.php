@@ -97,11 +97,8 @@ if ($method === 'GET') {
     ok($filtered);
 }
 
-if ($method === 'PATCH' || $method === 'POST') {
+if ($method === 'PATCH') {
     $body = $request['body'];
-    if (!is_array($body)) {
-        $body = $_POST;
-    }
     if (!is_array($body)) {
         errorResponse('Cuerpo inválido', 400);
     }
@@ -115,13 +112,6 @@ if ($method === 'PATCH' || $method === 'POST') {
     $delta = (int)($body['delta'] ?? 0);
     $movementType = trim((string)($body['movementType'] ?? ''));
     $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
-    $marginPctRaw = $body['marginPct'] ?? null;
-    $marginPct = is_numeric($marginPctRaw) ? (float)$marginPctRaw : null;
-    $productNameInput = trim((string)($body['productName'] ?? ''));
-    $salePriceRaw = $body['salePrice'] ?? null;
-    $salePrice = is_numeric($salePriceRaw) ? (float)$salePriceRaw : null;
-    $wholesalePriceRaw = $body['wholesalePrice'] ?? null;
-    $wholesalePrice = is_numeric($wholesalePriceRaw) ? (float)$wholesalePriceRaw : null;
     $note = trim((string)($body['note'] ?? ''));
     $source = trim((string)($body['source'] ?? 'inventario'));
     if ($productId === '' || $delta === 0) {
@@ -152,9 +142,6 @@ if ($method === 'PATCH' || $method === 'POST') {
             $currentCost = (float)($p['cost'] ?? 0);
             $currentPrice = (float)($p['price'] ?? 0);
             $marginValue = (float)($p['margin'] ?? 0);
-            if ($marginPct !== null && $marginPct >= 0) {
-                $marginValue = $marginPct;
-            }
             if ($marginValue <= 0 && $currentCost > 0 && $currentPrice > 0) {
                 $marginValue = (($currentPrice - $currentCost) / $currentCost) * 100;
             }
@@ -174,10 +161,6 @@ if ($method === 'PATCH' || $method === 'POST') {
             }
 
             $p['stock'] = $next;
-            if ($productNameInput !== '') {
-                $p['name'] = $productNameInput;
-            }
-            $p['margin'] = round2Inv(max(0, $marginValue));
             $p['cost'] = round2Inv($newCost);
             $p['price'] = round2Inv(max(0, $newPrice));
             if ($wholesalePrice !== null && $wholesalePrice >= 0) {
