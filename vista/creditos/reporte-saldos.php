@@ -34,6 +34,7 @@ declare(strict_types=1);
                 <th style="width:140px">Teléfono</th>
                 <th style="width:140px">Límite de Crédito</th>
                 <th style="width:140px">Saldo Actual</th>
+                <th style="width:160px">Fecha Pago</th>
                 <th style="width:170px">Último Pago</th>
               </tr>
             </thead>

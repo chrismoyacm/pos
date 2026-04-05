@@ -51,7 +51,8 @@ declare(strict_types=1);
 
   <div style="display:flex;justify-content:flex-end;gap:10px;padding:10px;border-top:1px solid #e5e7eb;background:#fff">
     <button type="button" class="btn" id="btn-reimprimir">Reimprimir Último Ticket</button>
-    <button type="button" class="btn">Ventas del día y Devoluciones</button>
+    <button type="button" class="btn" id="btn-ventas-dia">Ventas del día</button>
+    <button type="button" class="btn" id="btn-devoluciones">Devoluciones</button>
   </div>
 </section>
 

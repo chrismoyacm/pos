@@ -38,6 +38,11 @@ function appendInventoryMovementInv(array $movements, array $entry): array
     return $movements;
 }
 
+function round2Inv(float $value): float
+{
+    return round($value, 2);
+}
+
 if ($method === 'GET') {
     $action = strtolower(trim((string)($_GET['action'] ?? 'products')));
 
@@ -97,6 +102,7 @@ if ($method === 'PATCH') {
     $productId = (string)($body['productId'] ?? '');
     $delta = (int)($body['delta'] ?? 0);
     $movementType = trim((string)($body['movementType'] ?? ''));
+    $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
     $note = trim((string)($body['note'] ?? ''));
     $source = trim((string)($body['source'] ?? 'inventario'));
     if ($productId === '' || $delta === 0) {
@@ -108,6 +114,11 @@ if ($method === 'PATCH') {
     $beforeQty = 0;
     $afterQty = 0;
     $productName = '';
+    $beforeCost = 0.0;
+    $afterCost = 0.0;
+    $beforePrice = 0.0;
+    $afterPrice = 0.0;
+    $margin = 0.0;
     foreach ($products as &$p) {
         if ((string)($p['id'] ?? '') === $productId) {
             $current = (int)($p['stock'] ?? 0);
@@ -115,9 +126,31 @@ if ($method === 'PATCH') {
             if ($next < 0) {
                 errorResponse('Stock insuficiente', 409, ['current' => $current, 'delta' => $delta]);
             }
+
+            $currentCost = (float)($p['cost'] ?? 0);
+            $currentPrice = (float)($p['price'] ?? 0);
+            $marginValue = (float)($p['margin'] ?? 0);
+            if ($marginValue <= 0 && $currentCost > 0 && $currentPrice > 0) {
+                $marginValue = (($currentPrice - $currentCost) / $currentCost) * 100;
+            }
+
+            $newCost = $currentCost;
+            // For inventory entries, use weighted average cost if a valid entry cost was provided.
+            if ($delta > 0 && $entryUnitCost > 0 && $next > 0) {
+                $newCost = (($current * $currentCost) + ($delta * $entryUnitCost)) / $next;
+            }
+            $newPrice = $newCost * (1 + ($marginValue / 100));
+
             $p['stock'] = $next;
+            $p['cost'] = round2Inv($newCost);
+            $p['price'] = round2Inv(max(0, $newPrice));
             $beforeQty = $current;
             $afterQty = $next;
+            $beforeCost = round2Inv($currentCost);
+            $afterCost = (float)$p['cost'];
+            $beforePrice = round2Inv($currentPrice);
+            $afterPrice = (float)$p['price'];
+            $margin = round2Inv($marginValue);
             $productName = (string)($p['name'] ?? '');
             $found = true;
             break;
@@ -146,11 +179,22 @@ if ($method === 'PATCH') {
         'delta' => $delta,
         'before' => $beforeQty,
         'after' => $afterQty,
+        'beforeCost' => $beforeCost,
+        'afterCost' => $afterCost,
+        'beforePrice' => $beforePrice,
+        'afterPrice' => $afterPrice,
+        'margin' => $margin,
         'note' => $note,
         'source' => $source,
     ]);
     writeJsonFile($inventoryMovementsPath, $movements);
-    ok(['productId' => $productId]);
+    ok([
+        'productId' => $productId,
+        'stock' => $afterQty,
+        'cost' => $afterCost,
+        'price' => $afterPrice,
+        'margin' => $margin,
+    ]);
 }
 
 errorResponse('Método no soportado', 405);

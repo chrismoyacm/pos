@@ -17,6 +17,9 @@ $ledgers = buildCreditLedgers();
 $rows = [];
 $totalPending = 0.0;
 $number = 0;
+$today = new DateTimeImmutable('now');
+$currentYearMonth = $today->format('Y-m');
+$currentDay = (int)$today->format('d');
 
 foreach ($customers as $customer) {
     if (!is_array($customer)) {
@@ -36,6 +39,48 @@ foreach ($customers as $customer) {
     $balance = (float)($ledger['summary']['balance'] ?? 0);
     $creditLimit = (float)($ledger['client']['limit'] ?? ($customer['creditLimit'] ?? 1000));
     $lastPayment = (string)($ledger['summary']['lastPaymentText'] ?? '');
+    $paymentDueDayRaw = $customer['paymentDueDay'] ?? null;
+    $paymentDueDay = is_numeric($paymentDueDayRaw) ? (int)$paymentDueDayRaw : null;
+    if ($paymentDueDay !== null && ($paymentDueDay < 1 || $paymentDueDay > 31)) {
+        $paymentDueDay = null;
+    }
+
+    $hasPaymentCurrentMonth = false;
+    foreach (($ledger['movements'] ?? []) as $movement) {
+        if (!is_array($movement)) {
+            continue;
+        }
+        if (strtoupper((string)($movement['movimiento'] ?? '')) !== 'LIQUIDAR') {
+            continue;
+        }
+        $createdAt = (string)($movement['createdAt'] ?? '');
+        if (strlen($createdAt) < 7 || substr($createdAt, 0, 7) !== $currentYearMonth) {
+            continue;
+        }
+        $hasPaymentCurrentMonth = true;
+        break;
+    }
+
+    $isOverdue = false;
+    $paymentStatus = '';
+    if ($paymentDueDay !== null) {
+        if ($hasPaymentCurrentMonth) {
+            $paymentStatus = 'Abonado este mes';
+        } else {
+            $effectiveDueDay = min($paymentDueDay, (int)$today->format('t'));
+            if ($balance > 0 && $currentDay > $effectiveDueDay) {
+                $isOverdue = true;
+                $paymentStatus = 'Vencido';
+            } else {
+                $paymentStatus = 'Pendiente del mes';
+            }
+        }
+    }
+
+    $paymentDateLabel = $paymentDueDay !== null
+        ? ('Día ' . str_pad((string)$paymentDueDay, 2, '0', STR_PAD_LEFT))
+        : 'No definido';
+
     $totalPending += $balance;
 
     $rows[] = [
@@ -44,6 +89,9 @@ foreach ($customers as $customer) {
         'phone' => (string)($customer['phone'] ?? ''),
         'creditLimit' => $creditLimit > 0 ? ('$' . number_format($creditLimit, 2, '.', ',')) : 'Sin Límite',
         'balance' => $balance,
+        'paymentDate' => $paymentDateLabel,
+        'paymentStatus' => $paymentStatus,
+        'isOverdue' => $isOverdue,
         'lastPayment' => $lastPayment,
     ];
 }
