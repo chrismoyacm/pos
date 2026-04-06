@@ -311,5 +311,62 @@
         "customerName": "Publico en general",
         "amountPending": 0,
         "cashier": "Administrador"
+    },
+    {
+        "ticketId": "9",
+        "createdAt": "2026-04-05T00:16:19+02:00",
+        "items": [
+            {
+                "id": "p-1002",
+                "barcode": "7501000000028",
+                "name": "Refresco 600ml",
+                "iva": "15%",
+                "basePrice": 18,
+                "price": 18,
+                "wholesale": {
+                    "minQty": 6,
+                    "price": 16.5
+                },
+                "qty": 1,
+                "stock": 28
+            },
+            {
+                "id": "p-1001",
+                "barcode": "7501000000011",
+                "name": "Agua 600ml",
+                "iva": "15%",
+                "basePrice": 12.5,
+                "price": 12.5,
+                "wholesale": {
+                    "minQty": 6,
+                    "price": 11
+                },
+                "qty": 1,
+                "stock": 39
+            },
+            {
+                "id": "p-1003",
+                "barcode": "7501000000035",
+                "name": "Pan Blanco",
+                "iva": "15%",
+                "basePrice": 42,
+                "price": 42,
+                "wholesale": {
+                    "minQty": 3,
+                    "price": 39
+                },
+                "qty": 1,
+                "stock": 9
+            }
+        ],
+        "subtotal": 72.5,
+        "total": 72.5,
+        "paidWith": 80,
+        "change": 7.5,
+        "paymentMethod": "cash",
+        "customerId": "c-001",
+        "customerName": "Publico en general",
+        "amountPending": 0,
+        "cashier": "Administrador"
     }
 ]

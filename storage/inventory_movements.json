@@ -358,5 +358,41 @@
         "source": "inventario",
         "id": "mov-000030",
         "createdAt": "2026-03-30T19:30:09+02:00"
+    },
+    {
+        "type": "sale",
+        "productId": "p-1002",
+        "productName": "Refresco 600ml",
+        "delta": -1,
+        "before": 28,
+        "after": 27,
+        "note": "Venta ticket #9",
+        "source": "sales",
+        "createdAt": "2026-04-05T00:16:19+02:00",
+        "id": "mov-000031"
+    },
+    {
+        "type": "sale",
+        "productId": "p-1001",
+        "productName": "Agua 600ml",
+        "delta": -1,
+        "before": 39,
+        "after": 38,
+        "note": "Venta ticket #9",
+        "source": "sales",
+        "createdAt": "2026-04-05T00:16:19+02:00",
+        "id": "mov-000032"
+    },
+    {
+        "type": "sale",
+        "productId": "p-1003",
+        "productName": "Pan Blanco",
+        "delta": -1,
+        "before": 9,
+        "after": 8,
+        "note": "Venta ticket #9",
+        "source": "sales",
+        "createdAt": "2026-04-05T00:16:19+02:00",
+        "id": "mov-000033"
     }
 ]

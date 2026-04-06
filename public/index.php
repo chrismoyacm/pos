@@ -100,7 +100,7 @@ switch ($mod) {
         $content = $vistaDir . '/corte/corte.php';
         break;
     case 'facturas':
-        $content = $vistaDir . '/facturas/factura.php';
+        $content = $vistaDir . '/facturas/modulo.php';
         break;
     default:
         $content = $vistaDir . '/en-construccion.php';
@@ -124,6 +124,7 @@ switch ($mod) {
   <script src="assets/js/compras.js" defer></script>
     <script src="assets/js/inventario.js" defer></script>
   <script src="assets/js/corte.js" defer></script>
+  <script src="assets/js/facturas.js" defer></script>
 </head>
 <body>
 <div class="app-chrome">
