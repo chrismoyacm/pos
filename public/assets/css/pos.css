@@ -564,6 +564,93 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .factura-footer{
   display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap
 }
+.facturacion-module{background:#fff;border:1px solid #d8dee6;box-shadow:0 1px 0 rgba(0,0,0,.03)}
+.facturacion-topbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 14px;border-bottom:1px solid #e5e7eb;background:#fff
+}
+.facturacion-topbar h2{margin:0;color:#2563eb;font-size:22px;font-weight:900}
+.facturacion-nav{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(220px,1fr));
+  gap:14px;
+  padding:12px 14px;
+  border-bottom:1px solid #e5e7eb;
+  background:#f8fafc;
+}
+
+.facturacion-nav-group{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  background:#fff;
+  border:1px solid #e5e7eb;
+  border-radius:10px;
+  padding:10px;
+}
+
+.facturacion-nav-title{
+  font-size:12px;
+  font-weight:900;
+  color:#475569;
+  text-transform:uppercase;
+}
+
+.facturacion-nav-select-wrap{
+  display:block;
+  width:100%;
+}
+
+.facturacion-nav-select{
+  width:100%;
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  background:#fff;
+  padding:9px 11px;
+  font-size:13px;
+  font-weight:700;
+  color:#334155;
+}
+.facturacion-content{padding:14px}
+.facturacion-card{
+  border:1px solid #e5e7eb;border-radius:10px;background:#fff;overflow:hidden
+}
+.facturacion-card--flat{border:0;border-radius:0}
+.facturacion-card-head{
+  padding:14px;border-bottom:1px solid #edf0f3;background:#fcfcfd
+}
+.facturacion-card-head h3{margin:0 0 4px;font-size:18px;color:#0f172a}
+.facturacion-card-head p{margin:0;color:#64748b;font-size:13px}
+.facturacion-form{padding:14px}
+.facturacion-grid-3{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px}
+.facturacion-grid-2{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
+.facturacion-card-footer{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px;border-top:1px solid #edf0f3;background:#fcfcfd
+}
+.facturacion-status{min-height:20px;color:#2563eb;font-size:13px;font-weight:700}
+.facturacion-status--wide{padding:0 2px}
+.facturacion-note{
+  margin:14px;padding:12px 14px;border:1px solid #dbeafe;background:#eff6ff;border-radius:8px;color:#1d4ed8;font-size:13px
+}
+.facturacion-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:14px
+}
+.facturacion-toolbar input{
+  width:360px;max-width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:9px 10px
+}
+.facturacion-table-wrap{padding:0 14px 14px}
+.facturacion-split{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;padding:14px}
+.facturacion-inline-actions{display:flex;gap:10px;flex-wrap:wrap}
+.facturacion-body{display:flex;flex-direction:column;gap:14px;padding:14px}
+.facturacion-search-results{
+  margin:0 14px 14px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;max-height:220px;overflow:auto
+}
+.facturacion-search-item{
+  display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #eef2f7;cursor:pointer
+}
+.facturacion-search-item:last-child{border-bottom:none}
+.facturacion-search-item:hover{background:#f8fbff}
+.facturacion-search-meta{font-size:12px;color:#64748b}
 
 .prod-period-toolbar{
   display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:12px
@@ -605,6 +692,8 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .promociones-main{grid-template-columns:1fr}
   .factura-grid--top,.factura-grid--buyer{grid-template-columns:repeat(2,minmax(220px,1fr))}
   .factura-bottom-grid{grid-template-columns:1fr}
+  .facturacion-grid-3{grid-template-columns:repeat(2,minmax(220px,1fr))}
+  .facturacion-split{grid-template-columns:1fr}
 }
 
 @media (max-width: 760px){
@@ -621,6 +710,12 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .factura-field--wide{grid-column:auto}
   .factura-inline-field,.factura-detail-toolbar,.factura-footer{flex-direction:column}
   .factura-field--grow{min-width:0}
+  .facturacion-topbar,.facturacion-nav-group,.facturacion-card-footer{flex-direction:column;align-items:flex-start}
+  .facturacion-nav-title{min-width:0;padding-top:0}
+  .facturacion-nav-select-wrap{min-width:0;max-width:none}
+  .facturacion-grid-3,.facturacion-grid-2{grid-template-columns:1fr}
+  .facturacion-toolbar{align-items:stretch}
+  .facturacion-toolbar input{width:100%}
 }
 
 /* Inventario */

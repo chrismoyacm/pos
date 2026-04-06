@@ -1,0 +1,119 @@
+[
+    {
+        "productId": "p-1001",
+        "codigoPrincipal": "7501000000011",
+        "codigoAuxiliar": "7501000000011",
+        "unidadMedida": "",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-04T23:19:57+02:00"
+    },
+    {
+        "productId": "p-1002",
+        "codigoPrincipal": "7501000000028",
+        "codigoAuxiliar": "7501000000028",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1003",
+        "codigoPrincipal": "7501000000035",
+        "codigoAuxiliar": "7501000000035",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1004",
+        "codigoPrincipal": "7501000000042",
+        "codigoAuxiliar": "7501000000042",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1005",
+        "codigoPrincipal": "7501000000059",
+        "codigoAuxiliar": "7501000000059",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1006",
+        "codigoPrincipal": "7501000000066",
+        "codigoAuxiliar": "7501000000066",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1007",
+        "codigoPrincipal": "7501000000073",
+        "codigoAuxiliar": "7501000000073",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1008",
+        "codigoPrincipal": "7501000000080",
+        "codigoAuxiliar": "7501000000080",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1009",
+        "codigoPrincipal": "7501000000097",
+        "codigoAuxiliar": "7501000000097",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1010",
+        "codigoPrincipal": "7501000000103",
+        "codigoAuxiliar": "7501000000103",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1011",
+        "codigoPrincipal": "7501000000035",
+        "codigoAuxiliar": "7501000000035",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1012",
+        "codigoPrincipal": "2006l",
+        "codigoAuxiliar": "2006l",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    },
+    {
+        "productId": "p-1013",
+        "codigoPrincipal": "2006",
+        "codigoAuxiliar": "2006",
+        "unidadMedida": "UNI",
+        "iceCode": "",
+        "iceValue": 0,
+        "updatedAt": "2026-04-03T09:04:46+02:00"
+    }
+]
