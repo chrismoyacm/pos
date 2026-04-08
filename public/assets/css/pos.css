@@ -120,6 +120,14 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
 .grid tbody tr:hover td{background:#f8fbff}
+.venta-price-cell{cursor:pointer;position:relative}
+.venta-price-cell:hover{background:#eef6ff}
+.venta-price-cell::after{
+  content:'ed';
+  font-size:10px;
+  color:#64748b;
+  margin-left:6px;
+}
 .venta-iva-btn{
   border:1px solid #cbd5e1;
   border-radius:999px;
@@ -156,7 +164,34 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .modal-card footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
 .modal-card input{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%}
 .modal-card input:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
+.pay-method-picker{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+}
+.pay-method-option{
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  background:#fff;
+  color:#334155;
+  font-weight:700;
+  padding:9px 6px;
+  cursor:pointer;
+}
+.pay-method-option.active{
+  background:#e0ecff;
+  border-color:#3b6ea5;
+  color:#1e3a8a;
+}
 .pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pay-credit-info{
+  border:1px solid #bfdbfe;
+  border-radius:6px;
+  background:#eff6ff;
+  color:#1e3a8a;
+  font-size:12px;
+  padding:8px 10px;
+}
 .pay-note-preview{
   border:1px dashed #cbd5e1;
   border-radius:6px;
@@ -173,6 +208,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .modal-sales-meta{padding:8px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa;font-size:12px;font-weight:700}
 
 @media (max-width: 900px){
+  .pay-method-picker{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pay-mixed-grid{grid-template-columns:1fr}
   .modal-sales-grid{grid-template-columns:1fr}
 }
@@ -294,6 +330,8 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .cred-rep-addr{margin-top:2px;white-space:pre-line}
 .cred-rep-balance{white-space:nowrap;text-align:right;font-weight:900}
 .cred-rep-overdue{color:#b91c1c!important;font-weight:900}
+.cred-rep-row-overdue td{background:#fff1f2!important;color:#991b1b}
+.cred-rep-row-overdue .muted{color:#b45309}
 
 /* Estado de Cuenta (cliente) */
 .creditos-detalle-wrap{

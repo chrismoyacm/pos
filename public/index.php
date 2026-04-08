@@ -25,6 +25,15 @@ $mod = $_GET['mod'] ?? 'ventas';
 $baseDir = dirname(__DIR__);
 $vistaDir = $baseDir . DIRECTORY_SEPARATOR . 'vista';
 
+function assetVersion(string $relativePath): string {
+    $fullPath = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+    if (!is_file($fullPath)) {
+        return '0';
+    }
+    $mtime = filemtime($fullPath);
+    return $mtime === false ? '0' : (string)$mtime;
+}
+
 function safeInclude(string $path): void {
     if (is_file($path)) {
         include_once $path;
@@ -114,17 +123,17 @@ switch ($mod) {
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>POS Minimarket</title>
-  <link rel="stylesheet" href="assets/css/pos.css">
+    <link rel="stylesheet" href="assets/css/pos.css?v=<?php echo urlencode(assetVersion('assets/css/pos.css')); ?>">
   <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
-  <script src="assets/js/pos.js" defer></script>
-  <script src="assets/js/clientes.js" defer></script>
-  <script src="assets/js/creditos.js" defer></script>
-  <script src="assets/js/creditos_estado_cliente.js" defer></script>
-  <script src="assets/js/productos.js" defer></script>
-  <script src="assets/js/compras.js" defer></script>
-    <script src="assets/js/inventario.js" defer></script>
-  <script src="assets/js/corte.js" defer></script>
-  <script src="assets/js/facturas.js" defer></script>
+    <script src="assets/js/pos.js?v=<?php echo urlencode(assetVersion('assets/js/pos.js')); ?>" defer></script>
+    <script src="assets/js/clientes.js?v=<?php echo urlencode(assetVersion('assets/js/clientes.js')); ?>" defer></script>
+    <script src="assets/js/creditos.js?v=<?php echo urlencode(assetVersion('assets/js/creditos.js')); ?>" defer></script>
+    <script src="assets/js/creditos_estado_cliente.js?v=<?php echo urlencode(assetVersion('assets/js/creditos_estado_cliente.js')); ?>" defer></script>
+    <script src="assets/js/productos.js?v=<?php echo urlencode(assetVersion('assets/js/productos.js')); ?>" defer></script>
+    <script src="assets/js/compras.js?v=<?php echo urlencode(assetVersion('assets/js/compras.js')); ?>" defer></script>
+    <script src="assets/js/inventario.js?v=<?php echo urlencode(assetVersion('assets/js/inventario.js')); ?>" defer></script>
+    <script src="assets/js/corte.js?v=<?php echo urlencode(assetVersion('assets/js/corte.js')); ?>" defer></script>
+    <script src="assets/js/facturas.js?v=<?php echo urlencode(assetVersion('assets/js/facturas.js')); ?>" defer></script>
 </head>
 <body>
 <div class="app-chrome">

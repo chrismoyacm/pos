@@ -45,6 +45,56 @@ if (!is_array($body)) {
 }
 
 $action = trim((string)($body['action'] ?? ''));
+
+if ($action === 'cash_movement') {
+    if (!is_array($shift)) {
+        errorResponse('No hay un turno abierto para registrar movimiento', 409);
+    }
+
+    $movementType = strtolower(trim((string)($body['movementType'] ?? '')));
+    if (!in_array($movementType, ['entry', 'exit'], true)) {
+        errorResponse('Tipo de movimiento inválido', 400);
+    }
+
+    $amount = round((float)($body['amount'] ?? 0), 2);
+    if ($amount <= 0) {
+        errorResponse('La cantidad debe ser mayor a cero', 400);
+    }
+
+    $note = trim((string)($body['note'] ?? ''));
+    if ($movementType === 'exit' && $note === '') {
+        errorResponse('Ingrese razón o proveedor para la salida', 400);
+    }
+    if ($movementType === 'entry' && $note === '') {
+        $note = 'Entrada de efectivo';
+    }
+
+    $movements = readCashMovements();
+    $entry = [
+        'id' => nextCashMovementId($movements),
+        'shiftId' => (string)($shift['id'] ?? ''),
+        'userId' => $_SESSION['user_id'] ?? null,
+        'username' => $_SESSION['username'] ?? null,
+        'name' => $_SESSION['name'] ?? $_SESSION['username'] ?? 'Usuario',
+        'type' => $movementType,
+        'amount' => $amount,
+        'note' => $note,
+        'createdAt' => date('c'),
+    ];
+    $movements[] = $entry;
+    if (count($movements) > 50000) {
+        $movements = array_slice($movements, -50000);
+    }
+    writeCashMovements($movements);
+
+    $expectedCash = computeExpectedCashForShift($shift);
+    ok([
+        'message' => $movementType === 'entry' ? 'Entrada de efectivo registrada' : 'Salida de efectivo registrada',
+        'movement' => $entry,
+        'expectedCash' => $expectedCash,
+    ]);
+}
+
 if ($action === 'leave_open') {
     ok([
         'message' => 'Turno dejado abierto',

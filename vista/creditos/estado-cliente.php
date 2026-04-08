@@ -33,8 +33,8 @@ declare(strict_types=1);
   </div>
 
   <div class="creditos-detalle-actions">
-    <button class="btn-tab" type="button" disabled>Abonar a deuda</button>
-    <button class="btn-tab" type="button" disabled>Liquidar</button>
+    <button class="btn-tab" type="button" id="ec-btn-abonar">Abonar a deuda</button>
+    <button class="btn-tab" type="button" id="ec-btn-liquidar">Liquidar</button>
     <button class="btn-tab" type="button" id="ec-btn-consulta">Consultar crédito anterior</button>
     <button class="btn-tab" type="button" id="ec-btn-print">Imprimir Estado de Cuenta</button>
   </div>
@@ -110,3 +110,28 @@ declare(strict_types=1);
     </div>
   </div>
 </section>
+
+<div id="modal-ec-pago" class="modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <header id="ec-pago-title">Pago de deuda</header>
+    <section>
+      <input type="hidden" id="ec-pago-mode" value="abono">
+      <label class="field">Deuda actual
+        <input type="text" id="ec-pago-deuda" readonly>
+      </label>
+      <label class="field">Monto a pagar
+        <input type="number" id="ec-pago-monto" min="0.01" step="0.01" placeholder="0.00">
+      </label>
+      <label class="field">Pendiente
+        <input type="text" id="ec-pago-pendiente" readonly>
+      </label>
+      <label class="field">Comentario
+        <input type="text" id="ec-pago-nota" placeholder="Abono a deuda">
+      </label>
+    </section>
+    <footer>
+      <button type="button" class="btn-secondary" id="ec-pago-cancel">Cancelar</button>
+      <button type="button" class="btn-primary" id="ec-pago-save">Guardar</button>
+    </footer>
+  </div>
+</div>

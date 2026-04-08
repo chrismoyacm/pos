@@ -8,6 +8,11 @@ function cashOpeningsPath(): string
     return storagePath('cash_openings.json');
 }
 
+function cashMovementsPath(): string
+{
+    return storagePath('cash_movements.json');
+}
+
 /**
  * @return array<int, array<string, mixed>>
  */
@@ -22,6 +27,38 @@ function readCashOpenings(): array
 function writeCashOpenings(array $rows): void
 {
     writeJsonFile(cashOpeningsPath(), $rows);
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function readCashMovements(): array
+{
+    return readJsonFile(cashMovementsPath());
+}
+
+/**
+ * @param array<int, array<string, mixed>> $rows
+ */
+function writeCashMovements(array $rows): void
+{
+    writeJsonFile(cashMovementsPath(), $rows);
+}
+
+/**
+ * @param array<int, array<string, mixed>> $rows
+ */
+function nextCashMovementId(array $rows): string
+{
+    $max = 0;
+    foreach ($rows as $row) {
+        $id = (string)($row['id'] ?? '');
+        if (preg_match('/^cmov-(\d+)$/i', $id, $matches) === 1) {
+            $max = max($max, (int)$matches[1]);
+        }
+    }
+
+    return 'cmov-' . str_pad((string)($max + 1), 6, '0', STR_PAD_LEFT);
 }
 
 /**
@@ -118,5 +155,28 @@ function computeExpectedCashForShift(array $shift): float
         }
     }
 
-    return round($openingAmount + $cashSales + $cashPayments, 2);
+    $cashMovements = readCashMovements();
+    $movementBalance = 0.0;
+    $shiftId = (string)($shift['id'] ?? '');
+    foreach ($cashMovements as $movement) {
+        if (!is_array($movement)) {
+            continue;
+        }
+        if ($shiftId !== '' && (string)($movement['shiftId'] ?? '') !== $shiftId) {
+            continue;
+        }
+
+        $type = strtolower(trim((string)($movement['type'] ?? '')));
+        $amount = round((float)($movement['amount'] ?? 0), 2);
+        if ($amount <= 0) {
+            continue;
+        }
+        if ($type === 'entry') {
+            $movementBalance += $amount;
+        } elseif ($type === 'exit') {
+            $movementBalance -= $amount;
+        }
+    }
+
+    return round($openingAmount + $cashSales + $cashPayments + $movementBalance, 2);
 }

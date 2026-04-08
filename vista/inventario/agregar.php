@@ -45,7 +45,7 @@ declare(strict_types=1);
         </label>
         <label class="catalog-filter">
           <span>Precio costo</span>
-          <input type="text" id="inv-add-cost" readonly>
+          <input type="number" id="inv-add-cost" min="0" step="0.01" value="0.00">
         </label>
         <label class="catalog-filter">
           <span>Precio venta</span>
