@@ -88,8 +88,11 @@ if ($method === 'GET') {
     ok($filtered);
 }
 
-if ($method === 'PATCH') {
+if ($method === 'PATCH' || $method === 'POST') {
     $body = $request['body'];
+    if (!is_array($body)) {
+        $body = $_POST;
+    }
     if (!is_array($body)) {
         errorResponse('Cuerpo inválido', 400);
     }
@@ -103,6 +106,8 @@ if ($method === 'PATCH') {
     $delta = (int)($body['delta'] ?? 0);
     $movementType = trim((string)($body['movementType'] ?? ''));
     $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
+    $marginPctRaw = $body['marginPct'] ?? null;
+    $marginPct = is_numeric($marginPctRaw) ? (float)$marginPctRaw : null;
     $note = trim((string)($body['note'] ?? ''));
     $source = trim((string)($body['source'] ?? 'inventario'));
     if ($productId === '' || $delta === 0) {
@@ -130,6 +135,9 @@ if ($method === 'PATCH') {
             $currentCost = (float)($p['cost'] ?? 0);
             $currentPrice = (float)($p['price'] ?? 0);
             $marginValue = (float)($p['margin'] ?? 0);
+            if ($marginPct !== null && $marginPct >= 0) {
+                $marginValue = $marginPct;
+            }
             if ($marginValue <= 0 && $currentCost > 0 && $currentPrice > 0) {
                 $marginValue = (($currentPrice - $currentCost) / $currentCost) * 100;
             }
@@ -142,6 +150,7 @@ if ($method === 'PATCH') {
             $newPrice = $newCost * (1 + ($marginValue / 100));
 
             $p['stock'] = $next;
+            $p['margin'] = round2Inv(max(0, $marginValue));
             $p['cost'] = round2Inv($newCost);
             $p['price'] = round2Inv(max(0, $newPrice));
             $beforeQty = $current;

@@ -1,5 +1,5 @@
 <div class="acciones-bar">
-  <button type="button" class="btn"><span class="kbd">Nº</span> Visitas</button>
+  <button type="button" class="btn" id="btn-varios"><span class="kbd">Nº</span> Varios</button>
   <button type="button" class="btn" id="btn-common"><span class="kbd">Ctrl+P</span> Art. Común</button>
   <button type="button" class="btn" id="btn-buscar"><span class="kbd">F10</span> Buscar</button>
   <button type="button" class="btn" id="btn-mayoreo"><span class="kbd">F11</span> Mayoreo</button>

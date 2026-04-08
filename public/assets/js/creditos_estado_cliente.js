@@ -22,8 +22,95 @@
   const state = {
     movimientos: [],
     selectedIndex: 0,
-    rawData: null
+    rawData: null,
+    currentDebt: 0
   };
+
+  function closeModal(selector) {
+    $(selector).removeClass('active');
+  }
+
+  function updateDebtActionButtons() {
+    const hasDebt = Number(state.currentDebt || 0) > 0;
+    $('#ec-btn-abonar').prop('disabled', !hasDebt);
+    $('#ec-btn-liquidar').prop('disabled', !hasDebt);
+  }
+
+  function updatePagoPendiente() {
+    const debt = Number(state.currentDebt || 0);
+    const amount = parseFloat($('#ec-pago-monto').val() || '0') || 0;
+    const pending = Math.max(0, debt - Math.max(0, amount));
+    $('#ec-pago-pendiente').val(formatMoney(pending));
+  }
+
+  function openPagoModal(mode) {
+    const debt = Number(state.currentDebt || 0);
+    if (!(debt > 0)) {
+      window.alert('El cliente no tiene deuda pendiente.');
+      return;
+    }
+
+    const isLiquidar = mode === 'liquidar';
+    $('#ec-pago-mode').val(isLiquidar ? 'liquidar' : 'abonar');
+    $('#ec-pago-title').text(isLiquidar ? 'Liquidar deuda' : 'Abonar a deuda');
+    $('#ec-pago-deuda').val(formatMoney(debt));
+    $('#ec-pago-monto').val(isLiquidar ? debt.toFixed(2) : '');
+    $('#ec-pago-monto').prop('readonly', isLiquidar);
+    $('#ec-pago-nota').val(isLiquidar ? 'Liquidación de deuda' : 'Abono a deuda');
+    $('#modal-ec-pago').addClass('active');
+    updatePagoPendiente();
+    if (isLiquidar) {
+      $('#ec-pago-save').focus();
+    } else {
+      $('#ec-pago-monto').focus();
+    }
+  }
+
+  function savePago() {
+    const cid = getQueryParam('cid');
+    if (!cid) return;
+
+    const mode = ($('#ec-pago-mode').val() || 'abonar').toString();
+    const debt = Number(state.currentDebt || 0);
+    const amount = parseFloat($('#ec-pago-monto').val() || '0') || 0;
+    const note = ($('#ec-pago-nota').val() || '').toString().trim();
+
+    if (!(amount > 0)) {
+      window.alert('Ingrese un monto válido.');
+      return;
+    }
+
+    if (mode === 'liquidar' && Math.abs(amount - debt) > 0.009) {
+      window.alert('En liquidar, el monto debe ser igual al total de la deuda.');
+      return;
+    }
+
+    if (mode === 'abonar' && amount >= debt) {
+      window.alert('El abono debe ser menor que la deuda total. Para pagar todo use Liquidar.');
+      return;
+    }
+
+    $.ajax({
+      url: '../api/creditos_estado_cliente.php?cid=' + encodeURIComponent(cid),
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({
+        action: mode,
+        amount: amount,
+        description: note
+      })
+    }).done(function (res) {
+      if (!res.ok) {
+        window.alert(res.error || 'No se pudo registrar el pago.');
+        return;
+      }
+      closeModal('#modal-ec-pago');
+      load();
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo registrar el pago.';
+      window.alert(backendError);
+    });
+  }
 
   function renderTicket(ticket) {
     const data = ticket || {};
@@ -66,6 +153,8 @@
     $('#ec-client-id').text('ID: ' + (client.id || ''));
     $('#ec-limit').text(formatMoney(client.limit || 0));
     $('#ec-saldo').text(formatMoney(summary.saldoActual || 0));
+    state.currentDebt = Number(summary.saldoActual || 0);
+    updateDebtActionButtons();
     $('#ec-total-mov').text(formatMoney(summary.totalMovimientos || 0));
     $('#ec-ultimo-pago').text(summary.ultimoPago || '');
 
@@ -116,6 +205,27 @@
       window.location.href = 'index.php?mod=creditos&sub=reporte';
     });
 
+    $('#ec-btn-abonar').on('click', function () {
+      openPagoModal('abonar');
+    });
+
+    $('#ec-btn-liquidar').on('click', function () {
+      openPagoModal('liquidar');
+    });
+
+    $('#ec-pago-cancel').on('click', function () {
+      closeModal('#modal-ec-pago');
+    });
+
+    $('#ec-pago-save').on('click', savePago);
+    $('#ec-pago-monto').on('input', updatePagoPendiente);
+    $('#ec-pago-monto').on('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        savePago();
+      }
+    });
+
     
 
     $('#ec-btn-print').on('click', function () {
@@ -124,6 +234,12 @@
 
     $('#ec-btn-consulta').on('click', function () {
       // Pendiente: consultar crÃ©dito anterior
+    });
+
+    $(window).on('keydown', function (e) {
+      if (e.key === 'Escape' && $('#modal-ec-pago').hasClass('active')) {
+        closeModal('#modal-ec-pago');
+      }
     });
 
     load();

@@ -64,7 +64,7 @@ declare(strict_types=1);
         </label>
         <label class="catalog-filter">
           <span>% Ganancia</span>
-          <input type="text" id="inv-adjust-margin" readonly>
+          <input type="number" id="inv-adjust-margin" min="0" step="0.01" value="0.00">
         </label>
         <label class="catalog-filter">
           <span>Precio venta</span>
