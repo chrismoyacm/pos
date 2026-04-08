@@ -12,6 +12,8 @@
     paymentMethod: 'cash',
     mixedPayments: { cash: 0, card: 0 },
     paymentNote: '',
+    transferMeta: { reference: '', phone: '' },
+    saleDiscountPct: 0,
     customer: { id: 'c-001', name: 'Publico en general' }
   };
 
@@ -28,6 +30,51 @@
     return $('#venta-body').length > 0;
   }
 
+  function hasActiveModal() {
+    return $('.modal.active').length > 0;
+  }
+
+  function focusCodigoInput(force) {
+    if (!isVentasPage()) return;
+    if (!force && hasActiveModal()) return;
+    const $codigo = $('#codigo');
+    if ($codigo.length === 0 || $codigo.is(':disabled')) return;
+    if (document.activeElement === $codigo[0]) return;
+    $codigo.trigger('focus');
+  }
+
+  function parseCodeQtyInput(rawValue) {
+    const raw = (rawValue || '').toString().trim();
+    if (!raw) return null;
+
+    // Supported formats: CODIGO, CODIGO*3, CODIGO x 3, CODIGO 3
+    let match = raw.match(/^(.+?)\s*[*xX]\s*(\d+)$/);
+    if (!match) {
+      match = raw.match(/^(\S+)\s+(\d+)$/);
+    }
+
+    if (!match) {
+      return { code: raw, qty: 1 };
+    }
+
+    const code = (match[1] || '').toString().trim();
+    const qty = parseInt((match[2] || '1').toString(), 10);
+    if (!code || !Number.isFinite(qty) || qty <= 0) {
+      return null;
+    }
+    return { code: code, qty: qty };
+  }
+
+  function processCodigoInput() {
+    const parsed = parseCodeQtyInput($('#codigo').val());
+    if (!parsed) {
+      window.alert('Formato inválido. Use CODIGO o CODIGO*Cantidad.');
+      focusCodigoInput(true);
+      return;
+    }
+    addItemByCode(parsed.code, parsed.qty);
+  }
+
   function persistCartState() {
     if (!isVentasPage()) return;
     try {
@@ -39,6 +86,8 @@
         paymentMethod: state.paymentMethod,
         mixedPayments: state.mixedPayments,
         paymentNote: state.paymentNote,
+        transferMeta: state.transferMeta,
+        saleDiscountPct: state.saleDiscountPct,
         customer: state.customer
       };
       window.sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(snapshot));
@@ -66,6 +115,12 @@
         card: Number(mixed.card || 0)
       };
       state.paymentNote = (parsed.paymentNote || '').toString();
+      const transferMeta = parsed.transferMeta || {};
+      state.transferMeta = {
+        reference: (transferMeta.reference || '').toString(),
+        phone: (transferMeta.phone || '').toString()
+      };
+      state.saleDiscountPct = Math.max(0, Math.min(100, Number(parsed.saleDiscountPct || 0)));
 
       const customer = parsed.customer || {};
       state.customer = {
@@ -81,6 +136,8 @@
       state.paymentMethod = 'cash';
       state.mixedPayments = { cash: 0, card: 0 };
       state.paymentNote = '';
+      state.transferMeta = { reference: '', phone: '' };
+      state.saleDiscountPct = 0;
       state.customer = { id: 'c-001', name: 'Publico en general' };
     }
   }
@@ -96,12 +153,9 @@
   }
 
   function paymentMethodLabel(method) {
-    if (method === 'card') return 'Tarjeta';
     if (method === 'mixed') return 'Mixto';
     if (method === 'credit') return 'Credito';
-    if (method === 'voucher') return 'Vales';
     if (method === 'transfer') return 'Transferencia';
-    if (method === 'check') return 'Cheque';
     return 'Efectivo';
   }
 
@@ -126,7 +180,11 @@
   }
 
   function nextIvaLabel(current) {
-    return normalizeIvaLabel(current) === 'No' ? '12%' : 'No';
+    const options = ['No', '12%', '15%'];
+    const normalized = normalizeIvaLabel(current);
+    const currentIndex = options.indexOf(normalized);
+    if (currentIndex < 0) return 'No';
+    return options[(currentIndex + 1) % options.length];
   }
 
   function isCreditPayment() {
@@ -137,11 +195,53 @@
     return state.paymentMethod === 'mixed';
   }
 
+  function isAutoPaidMethod() {
+    return state.paymentMethod === 'transfer';
+  }
+
+  function buildPaymentNote() {
+    const baseNote = (state.paymentNote || '').toString().trim();
+    if (state.paymentMethod !== 'transfer') {
+      return baseNote;
+    }
+
+    const ref = ($('#modal-pago [name=transferRef]').val() || '').toString().trim();
+    const phone = ($('#modal-pago [name=transferPhone]').val() || '').toString().trim();
+    state.transferMeta.reference = ref;
+    state.transferMeta.phone = phone;
+
+    if (!ref && !phone) {
+      return baseNote;
+    }
+
+    const parts = [];
+    if (ref) parts.push('Ref: ' + ref);
+    if (phone) parts.push('Tel: ' + phone);
+    const transferNote = parts.join(' | ');
+    return baseNote ? (baseNote + ' | ' + transferNote) : transferNote;
+  }
+
+  function getItemGrossAmount(item) {
+    return Number(item.price || 0) * Number(item.qty || 0);
+  }
+
+  function getItemNetAmount(item) {
+    const gross = getItemGrossAmount(item);
+    const pct = Math.max(0, Math.min(100, Number(state.saleDiscountPct || 0)));
+    return gross - (gross * (pct / 100));
+  }
+
+  function getSaleDiscountAmount() {
+    return Math.max(0, Number(state.subtotal || 0) - Number(state.total || 0));
+  }
+
   function recalc() {
     state.subtotal = state.items.reduce(function (sum, item) {
-      return sum + (item.price * item.qty);
+      return sum + getItemGrossAmount(item);
     }, 0);
-    state.total = state.subtotal;
+    state.total = state.items.reduce(function (sum, item) {
+      return sum + getItemNetAmount(item);
+    }, 0);
 
     $('#subtotal').text(formatMoney(state.subtotal));
     $('#total').text(formatMoney(state.total));
@@ -158,16 +258,28 @@
   }
 
   function paymentMethodOptions() {
-    return ['cash', 'card', 'mixed', 'credit', 'voucher', 'transfer', 'check'];
+    return ['cash', 'credit', 'mixed', 'transfer'];
+  }
+
+  function setPaymentMethod(method) {
+    const normalized = paymentMethodOptions().includes(method) ? method : 'cash';
+    state.paymentMethod = normalized;
+    $('#modal-pago [name=metodoPago]').val(normalized);
+    $('#pay-method-picker .pay-method-option').each(function () {
+      const $btn = $(this);
+      const active = ($btn.data('payment-method') || '').toString() === normalized;
+      $btn.toggleClass('active', active);
+      $btn.attr('aria-checked', active ? 'true' : 'false');
+    });
   }
 
   function cyclePaymentMethod(direction) {
     const options = paymentMethodOptions();
-    const current = ($('#modal-pago [name=metodoPago]').val() || state.paymentMethod || 'cash').toString();
+    const current = (state.paymentMethod || 'cash').toString();
     const idx = options.indexOf(current);
     const start = idx >= 0 ? idx : 0;
     const nextIdx = (start + direction + options.length) % options.length;
-    $('#modal-pago [name=metodoPago]').val(options[nextIdx]);
+    setPaymentMethod(options[nextIdx]);
     updatePaymentMethod();
   }
 
@@ -181,9 +293,9 @@
           '<td>' + (item.barcode || '') + '</td>' +
           '<td>' + escapeHtml(item.name || '') + '</td>' +
           '<td class="catalog-center"><button type="button" class="' + ivaButtonClass + '" data-iva-idx="' + index + '">' + escapeHtml(ivaLabel) + '</button></td>' +
-          '<td>' + formatMoney(item.price) + '</td>' +
+          '<td class="venta-price-cell" data-price-idx="' + index + '">' + formatMoney(item.price) + '</td>' +
           '<td class="qty">' + item.qty + '</td>' +
-          '<td>' + formatMoney(item.price * item.qty) + '</td>' +
+          '<td>' + formatMoney(getItemNetAmount(item)) + '</td>' +
           '<td>' + (item.stock ?? '') + '</td>' +
         '</tr>'
       );
@@ -191,13 +303,19 @@
         state.selectedIndex = index;
         renderGrid();
       });
-      $tr.on('dblclick', function () {
+      $tr.find('.qty').on('dblclick', function (e) {
+        e.stopPropagation();
         promptChangeQty(index);
       });
 
       $tr.find('[data-iva-idx]').on('click', function (e) {
         e.stopPropagation();
         toggleItemIva(index);
+      });
+
+      $tr.find('[data-price-idx]').on('dblclick', function (e) {
+        e.stopPropagation();
+        promptChangePrice(index);
       });
 
       $tbody.append($tr);
@@ -247,6 +365,9 @@
   }
 
   function applyWholesaleForItem(item) {
+    if (item && item.customPrice) {
+      return;
+    }
     if (!item || !item.wholesale) {
       item.price = Number(item.basePrice);
       return;
@@ -257,12 +378,14 @@
     item.price = item.qty >= minQty ? wholesalePrice : Number(item.basePrice);
   }
 
-  function addItemByCode(code) {
+  function addItemByCode(code, qty) {
     if (!code) return;
+    const qtyToAdd = Math.max(1, parseInt(String(qty || 1), 10) || 1);
 
     $.getJSON('../api/products.php', { q: code }).done(function (res) {
       if (!res.ok || !res.data || res.data.length === 0) {
         window.alert('Producto no encontrado');
+        focusCodigoInput(true);
         return;
       }
 
@@ -270,11 +393,29 @@
       const index = state.items.findIndex(function (item) {
         return item.id === product.id;
       });
+      const availableStock = Number(product.stock || 0);
 
       if (index >= 0) {
-        state.items[index].qty += 1;
+        const nextQty = Number(state.items[index].qty || 0) + qtyToAdd;
+        if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          focusCodigoInput(true);
+          return;
+        }
+        state.items[index].qty = nextQty;
         applyWholesaleForItem(state.items[index]);
+        state.selectedIndex = index;
       } else {
+        if (!String(product.id || '').startsWith('tmp-') && availableStock <= 0) {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '.');
+          focusCodigoInput(true);
+          return;
+        }
+        if (!String(product.id || '').startsWith('tmp-') && qtyToAdd > availableStock) {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          focusCodigoInput(true);
+          return;
+        }
         const newItem = {
           id: product.id,
           barcode: product.barcode,
@@ -283,16 +424,17 @@
           basePrice: Number(product.price),
           price: Number(product.price),
           wholesale: product.wholesale || null,
-          qty: 1,
+          customPrice: false,
+          qty: qtyToAdd,
           stock: product.stock
         };
         applyWholesaleForItem(newItem);
         state.items.push(newItem);
+        state.selectedIndex = state.items.length - 1;
       }
-
-      state.selectedIndex = state.items.length - 1;
       renderGrid();
-      $('#codigo').val('').focus();
+      $('#codigo').val('');
+      focusCodigoInput(true);
     });
   }
 
@@ -338,16 +480,27 @@
   }
 
   function updatePaymentMethod() {
-    state.paymentMethod = ($('#modal-pago [name=metodoPago]').val() || 'cash').toString();
-    const disableAmount = isCreditPayment();
+    state.paymentMethod = ($('#modal-pago [name=metodoPago]').val() || state.paymentMethod || 'cash').toString();
+    setPaymentMethod(state.paymentMethod);
+    const disableAmount = isCreditPayment() || isAutoPaidMethod();
     const showMixed = isMixedPayment();
+    const showTransfer = state.paymentMethod === 'transfer';
+    const showCredit = isCreditPayment();
+    const showSingle = !showMixed && !showTransfer && !showCredit;
 
     $('#pay-mixed-grid').prop('hidden', !showMixed);
-    $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount);
-    $('#modal-pago [name=pagoCon]').closest('label.field').prop('hidden', showMixed);
+    $('#pay-transfer-fields').prop('hidden', !showTransfer);
+    $('#pay-credit-info').prop('hidden', !showCredit);
+    $('#pay-single-field').prop('hidden', !showSingle);
+    $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount || !showSingle);
 
-    if (disableAmount) {
+    if (showCredit) {
       $('#modal-pago [name=pagoCon]').val('0.00');
+      $('#modal-pago [name=pagoConEfectivo]').val('0.00');
+      $('#modal-pago [name=pagoConTarjeta]').val('0.00');
+      state.mixedPayments = { cash: 0, card: 0 };
+    } else if (showTransfer) {
+      $('#modal-pago [name=pagoCon]').val(isAutoPaidMethod() ? state.total.toFixed(2) : '0.00');
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
       $('#modal-pago [name=pagoConTarjeta]').val('0.00');
       state.mixedPayments = { cash: 0, card: 0 };
@@ -362,19 +515,26 @@
   }
 
   function openPayModal() {
+    const discountAmount = getSaleDiscountAmount();
+    $('#modal-pago [name=subtotal]').val(state.subtotal.toFixed(2));
+    $('#modal-pago [name=discount]').val(discountAmount.toFixed(2));
     $('#modal-pago [name=total]').val(state.total.toFixed(2));
-    $('#modal-pago [name=metodoPago]').val(state.paymentMethod);
+    setPaymentMethod(state.paymentMethod);
     $('#modal-pago [name=pagoCon]').val(isCreditPayment() ? '0.00' : '');
     $('#modal-pago [name=pagoConEfectivo]').val(state.mixedPayments.cash ? state.mixedPayments.cash.toFixed(2) : '');
     $('#modal-pago [name=pagoConTarjeta]').val(state.mixedPayments.card ? state.mixedPayments.card.toFixed(2) : '');
+    $('#modal-pago [name=transferRef]').val(state.transferMeta.reference || '');
+    $('#modal-pago [name=transferPhone]').val(state.transferMeta.phone || '');
     $('#pay-note-preview').text('Nota: ' + (state.paymentNote ? state.paymentNote : '-'));
     $('#modal-pago [data-cambio]').text(formatMoney(0));
     $('#modal-pago').addClass('active');
     updatePaymentMethod();
     if (isCreditPayment()) {
-      $('#modal-pago [name=metodoPago]').focus();
+      $('#pay-method-picker .pay-method-option.active').focus();
     } else if (isMixedPayment()) {
       $('#modal-pago [name=pagoConEfectivo]').focus();
+    } else if (isAutoPaidMethod()) {
+      $('#modal-pago [name=transferRef]').focus();
     } else {
       $('#modal-pago [name=pagoCon]').focus();
     }
@@ -393,6 +553,16 @@
     if (isCreditPayment()) {
       state.paidWith = 0;
       state.change = 0;
+      $('#modal-pago [data-cambio]').text(formatMoney(0));
+      recalc();
+      return;
+    }
+
+    if (isAutoPaidMethod()) {
+      state.paidWith = state.total;
+      state.change = 0;
+      state.transferMeta.reference = ($('#modal-pago [name=transferRef]').val() || '').toString().trim();
+      state.transferMeta.phone = ($('#modal-pago [name=transferPhone]').val() || '').toString().trim();
       $('#modal-pago [data-cambio]').text(formatMoney(0));
       recalc();
       return;
@@ -449,7 +619,7 @@
     const paymentMethod = paymentMethodLabel(String(safeSale.paymentMethod || 'cash'));
     const mixed = safeSale.mixedPayments || { cash: 0, card: 0 };
     const mixedInfo = String(safeSale.paymentMethod || '') === 'mixed'
-      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Tarjeta: ' + formatMoney(Number(mixed.card || 0)) + '</div>'
+      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Transferencia: ' + formatMoney(Number(mixed.card || 0)) + '</div>'
       : '';
 
     const html = [
@@ -558,15 +728,32 @@
       return;
     }
 
+    const stockConflict = state.items.find(function (item) {
+      if (String(item.id || '').startsWith('tmp-')) return false;
+      return Number(item.qty || 0) > Number(item.stock || 0);
+    });
+    if (stockConflict) {
+      window.alert(
+        'Stock insuficiente para ' + (stockConflict.name || 'el producto') +
+        '. Cantidad solicitada: ' + Number(stockConflict.qty || 0) +
+        ', existencia: ' + Number(stockConflict.stock || 0)
+      );
+      return;
+    }
+
+    const paymentNotePayload = buildPaymentNote();
+
     const payload = {
       items: state.items,
       subtotal: state.subtotal,
+      discountPct: state.saleDiscountPct,
+      discountAmount: getSaleDiscountAmount(),
       total: state.total,
       paidWith: state.paidWith,
       change: state.change,
       paymentMethod: state.paymentMethod,
       mixedPayments: isMixedPayment() ? state.mixedPayments : null,
-      paymentNote: state.paymentNote,
+      paymentNote: paymentNotePayload,
       amountPending: isCreditPayment() ? state.total : 0,
       customerId: state.customer?.id || null,
       customerName: state.customer?.name || ''
@@ -605,7 +792,7 @@
         paymentMethod: state.paymentMethod,
         mixedPayments: state.paymentMethod === 'mixed' ? { cash: state.mixedPayments.cash, card: state.mixedPayments.card } : null,
         customerName: state.customer?.name || 'Publico en general',
-        paymentNote: state.paymentNote
+        paymentNote: paymentNotePayload
       };
 
       closeModal('#modal-pago');
@@ -616,6 +803,8 @@
       state.paymentMethod = 'cash';
       state.mixedPayments = { cash: 0, card: 0 };
       state.paymentNote = '';
+      state.transferMeta = { reference: '', phone: '' };
+      state.saleDiscountPct = 0;
       renderGrid();
 
       if (shouldPrint) {
@@ -624,6 +813,9 @@
       } else {
         window.alert('Venta realizada. Ticket #' + ticketId);
       }
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo registrar la venta.';
+      window.alert('No se pudo registrar la venta: ' + backendError);
     });
   }
 
@@ -693,48 +885,100 @@
 
   function openStockModal(type) {
     $('#modal-stock [name=tipo]').val(type);
-    $('#modal-stock [name=codigo]').val('');
-    $('#modal-stock [name=cantidad]').val('1');
-    $('#modal-stock header').text(type === 'entrada' ? 'Entradas (F7)' : 'Salidas (F8)');
+    const isEntry = type === 'entrada';
+    $('#modal-stock [name=amount]').val('0.00');
+    $('#modal-stock [name=note]').val('');
+    $('#modal-stock header').text(isEntry ? 'Entrada de efectivo (F7)' : 'Salida de efectivo (F8)');
+    $('#cash-movement-help').text(
+      isEntry
+        ? 'Registre la cantidad y un comentario para la entrada de efectivo.'
+        : 'Registre la cantidad y la razón o proveedor para la salida de efectivo.'
+    );
+    $('#cash-movement-note-title').text(isEntry ? 'Comentario' : 'Razón o proveedor');
+    $('#modal-stock [name=note]').attr('placeholder', isEntry ? 'Entrada de dinero' : 'Razón o proveedor');
     $('#modal-stock').addClass('active');
-    $('#modal-stock [name=codigo]').focus();
+    $('#modal-stock [name=amount]').focus();
   }
 
   function confirmStockMovement() {
     const type = $('#modal-stock [name=tipo]').val().toString();
-    const code = $('#modal-stock [name=codigo]').val().toString().trim();
-    const qty = parseInt($('#modal-stock [name=cantidad]').val().toString(), 10) || 0;
-    if (!code || qty <= 0) {
-      window.alert('Complete codigo y cantidad');
+    const amount = parseFloat($('#modal-stock [name=amount]').val().toString()) || 0;
+    const note = ($('#modal-stock [name=note]').val() || '').toString().trim();
+    if (!(amount > 0)) {
+      window.alert('Ingrese una cantidad válida.');
+      return;
+    }
+    if (type !== 'entrada' && !note) {
+      window.alert('Ingrese razón o proveedor para la salida.');
       return;
     }
 
-    $.getJSON('../api/products.php', { q: code }).done(function (res) {
-      if (!res.ok || !Array.isArray(res.data) || res.data.length === 0) {
-        window.alert('Producto no encontrado');
+    $.ajax({
+      url: '../api/shift.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({
+        action: 'cash_movement',
+        movementType: type === 'entrada' ? 'entry' : 'exit',
+        amount: amount,
+        note: note
+      })
+    }).done(function (result) {
+      if (!result.ok) {
+        window.alert(result.error || 'No se pudo registrar movimiento de efectivo.');
         return;
       }
-
-      const product = res.data[0];
-      const delta = type === 'entrada' ? qty : -qty;
-      $.ajax({
-        url: '../api/inventario.php',
-        method: 'PATCH',
-        contentType: 'application/json',
-        data: JSON.stringify({ action: 'adjust_stock', productId: product.id, delta: delta, movementType: type === 'entrada' ? 'entry' : 'exit' })
-      }).done(function (result) {
-        if (!result.ok) {
-          window.alert(result.error || 'Error de stock');
-          return;
-        }
-        closeModal('#modal-stock');
-        window.alert('Stock actualizado: ' + product.name);
-      });
+      closeModal('#modal-stock');
+      window.alert((result?.data?.message || 'Movimiento registrado correctamente.') + '\nCantidad: ' + formatMoney(amount));
+      focusCodigoInput(true);
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo registrar movimiento de efectivo.';
+      window.alert(backendError);
     });
   }
 
   function applyWholesaleIfNeeded() {
     state.items.forEach(applyWholesaleForItem);
+    renderGrid();
+  }
+
+  function promptChangePrice(index) {
+    const item = state.items[index];
+    if (!item) return;
+    const nextPriceStr = window.prompt('Precio de venta:', Number(item.price || 0).toFixed(2));
+    if (nextPriceStr === null) return;
+    const nextPrice = parseFloat(nextPriceStr);
+    if (!Number.isFinite(nextPrice) || nextPrice < 0) {
+      window.alert('Precio inválido');
+      return;
+    }
+    item.price = Number(nextPrice.toFixed(2));
+    item.customPrice = true;
+    renderGrid();
+  }
+
+  function openDiscountModal() {
+    $('#sale-discount-pct').val(Number(state.saleDiscountPct || 0).toFixed(2));
+    $('#modal-discount').addClass('active');
+    $('#sale-discount-pct').focus();
+    $('#sale-discount-pct').select();
+  }
+
+  function applySaleDiscount() {
+    const raw = ($('#sale-discount-pct').val() || '0').toString();
+    const pct = Number(raw);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      window.alert('Ingrese un descuento válido entre 0 y 100.');
+      return;
+    }
+    state.saleDiscountPct = Number(pct.toFixed(2));
+    closeModal('#modal-discount');
+    renderGrid();
+  }
+
+  function clearSaleDiscount() {
+    state.saleDiscountPct = 0;
+    closeModal('#modal-discount');
     renderGrid();
   }
 
@@ -746,6 +990,10 @@
     const nextQty = parseInt(nextQtyStr, 10);
     if (!Number.isFinite(nextQty) || nextQty <= 0) {
       window.alert('Cantidad invalida');
+      return;
+    }
+    if (!String(item.id || '').startsWith('tmp-') && nextQty > Number(item.stock || 0)) {
+      window.alert('Stock insuficiente para ' + (item.name || 'el producto') + '. Existencia: ' + Number(item.stock || 0));
       return;
     }
     item.qty = nextQty;
@@ -937,8 +1185,9 @@
   function bindUI() {
     $('#codigo-form').on('submit', function (e) {
       e.preventDefault();
-      addItemByCode($('#codigo').val().toString().trim());
+      processCodigoInput();
     });
+    $('#btn-varios').on('click', function () { focusCodigoInput(true); });
     $('#btn-del').on('click', deleteSelected);
     $('#btn-common').on('click', openCommonItemModal);
     $('#btn-buscar').on('click', openBuscarModal);
@@ -954,15 +1203,31 @@
     });
     $('#btn-cliente').on('click', openCustomerModal);
     $('#btn-reimprimir').on('click', openReprintLastTicket);
+    $('#btn-descuento').on('click', openDiscountModal);
     $('#btn-ventas-dia').on('click', function () { openSalesHistoryModal('view'); });
     $('#btn-devoluciones').on('click', function () { openSalesHistoryModal('return'); });
     $('#modal-common .btn-primary').on('click', confirmCommonItem);
     $('#modal-common .btn-secondary').on('click', function () { closeModal('#modal-common'); });
     $('#btn-pay-cancel').on('click', function () { closeModal('#modal-pago'); });
     $('#btn-pay-note').on('click', capturePaymentNote);
-    $('#modal-pago [name=metodoPago]').on('change', updatePaymentMethod);
+    $('#pay-method-picker .pay-method-option').on('click', function () {
+      const method = ($(this).data('payment-method') || '').toString();
+      setPaymentMethod(method);
+      updatePaymentMethod();
+
+      if (isMixedPayment()) {
+        $('#modal-pago [name=pagoConEfectivo]').focus();
+      } else if (isAutoPaidMethod()) {
+        $('#modal-pago [name=transferRef]').focus();
+      } else if (isCreditPayment()) {
+        $('#pay-method-picker .pay-method-option.active').focus();
+      } else {
+        $('#modal-pago [name=pagoCon]').focus();
+      }
+    });
     $('#modal-pago [name=pagoCon]').on('input', updateCambio);
     $('#modal-pago [name=pagoConEfectivo], #modal-pago [name=pagoConTarjeta]').on('input', updateCambio);
+    $('#modal-pago [name=transferRef], #modal-pago [name=transferPhone]').on('input', updateCambio);
     $('#btn-pay-confirm').on('click', function () { confirmSale({ printTicket: false }); });
     $('#btn-pay-confirm-print').on('click', function () { confirmSale({ printTicket: true }); });
     $('#modal-buscar .btn-secondary').on('click', function () { closeModal('#modal-buscar'); });
@@ -976,6 +1241,24 @@
     $('#sales-day-date').on('change', loadSalesByDay);
     $('#sales-day-q').on('input', renderSalesList);
     $('#sales-day-return-btn').on('click', returnSelectedItem);
+    $('#sale-discount-cancel').on('click', function () { closeModal('#modal-discount'); });
+    $('#sale-discount-apply').on('click', applySaleDiscount);
+    $('#sale-discount-clear').on('click', clearSaleDiscount);
+    $('#sale-discount-pct').on('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applySaleDiscount();
+      }
+    });
+
+    $('#codigo').on('blur', function () {
+      window.setTimeout(function () { focusCodigoInput(false); }, 0);
+    });
+
+    $(document).on('click', function (e) {
+      if ($(e.target).closest('.modal.active, #codigo').length > 0) return;
+      window.setTimeout(function () { focusCodigoInput(false); }, 0);
+    });
 
     $(window).on('keydown', function (e) {
       const key = e.key.toLowerCase();
@@ -999,6 +1282,8 @@
         if (e.key === 'F4' || e.key === 'f4') { e.preventDefault(); capturePaymentNote(); return; }
         if (e.key === 'ArrowLeft') { e.preventDefault(); cyclePaymentMethod(-1); return; }
         if (e.key === 'ArrowRight') { e.preventDefault(); cyclePaymentMethod(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); cyclePaymentMethod(-1); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); cyclePaymentMethod(1); return; }
         if (e.key === 'Enter' && !isTextControl) { e.preventDefault(); confirmSale({ printTicket: false }); return; }
 
         // Evita choques con atajos de módulos mientras se está cobrando.
@@ -1011,7 +1296,7 @@
       if (e.key === 'F4' || e.key === 'f4') { e.preventDefault(); window.location.href = 'index.php?mod=inventario'; return; }
 
       if (e.ctrlKey && key === 'p') { e.preventDefault(); openCommonItemModal(); return; }
-      if (e.key === 'Enter' && !isTextControl) { e.preventDefault(); addItemByCode($('#codigo').val().toString().trim()); return; }
+      if (e.key === 'Enter' && !isTextControl) { e.preventDefault(); processCodigoInput(); return; }
       if (e.key === 'Delete') { e.preventDefault(); deleteSelected(); return; }
       if (e.key === 'F12' || e.key === 'f12') { e.preventDefault(); openPayModal(); return; }
       if (e.key === 'F10' || e.key === 'f10') { e.preventDefault(); openBuscarModal(); return; }
@@ -1031,5 +1316,6 @@
     restoreCartState();
     $('#clienteNombre').text(state.customer.name);
     renderGrid();
+    focusCodigoInput(true);
   });
 })();
