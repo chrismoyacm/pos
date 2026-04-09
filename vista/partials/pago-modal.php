@@ -27,8 +27,16 @@
         <label class="field">Efectivo
           <input type="number" step="0.01" min="0" name="pagoConEfectivo" placeholder="0.00">
         </label>
+        <label class="field">Transferencia
+          <input type="number" step="0.01" min="0" name="pagoConTransferencia" placeholder="0.00">
+        </label>
         <label class="field">Crédito
           <input type="number" step="0.01" min="0" name="pagoConCredito" placeholder="0.00">
+        </label>
+      </div>
+      <div id="pay-mixed-transfer-ref" hidden>
+        <label class="field">Referencia de transferencia
+          <input type="text" name="mixedTransferRef" placeholder="Número de referencia">
         </label>
       </div>
       <div id="pay-credit-picker" hidden>
