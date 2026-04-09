@@ -19,6 +19,7 @@ if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
 
 $request = getRequestInfo();
 $method = strtoupper((string)($request['method'] ?? 'GET'));
+$contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
 
 function facturacionProductSnapshot(): array
 {
@@ -124,7 +125,7 @@ if ($method === 'GET') {
     errorResponse('Accion no soportada', 400);
 }
 
-$body = $request['body'];
+$body = str_contains($contentType, 'multipart/form-data') ? $_POST : $request['body'];
 if (!is_array($body)) {
     errorResponse('Cuerpo invalido', 400);
 }
@@ -139,7 +140,40 @@ if ($method === 'POST') {
                 break;
 
             case 'save_signature':
+                if (str_contains($contentType, 'multipart/form-data')) {
+                    if (isset($_FILES['certificatePath']) && is_array($_FILES['certificatePath'])) {
+                        $body['certificatePath'] = facturacionStoreUploadedCertificate($_FILES['certificatePath'], (string)(facturacionLoadSignature()['certificatePath'] ?? ''));
+                    }
+                }
                 ok(facturacionSaveSignature($body));
+                break;
+
+            case 'test_signature':
+                $currentSignature = facturacionLoadSignature();
+                $certificatePath = trim((string)($body['certificatePath'] ?? $currentSignature['certificatePath'] ?? ''));
+                $certificatePassword = (string)($body['certificatePassword'] ?? $currentSignature['certificatePassword'] ?? '');
+                $tempPath = '';
+
+                if (str_contains($contentType, 'multipart/form-data') && isset($_FILES['certificatePath']) && is_array($_FILES['certificatePath'])) {
+                    $upload = $_FILES['certificatePath'];
+                    if ((int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                        $tempPath = facturacionStoreUploadedCertificate($upload, '');
+                        $certificatePath = $tempPath;
+                    }
+                }
+
+                try {
+                    $meta = facturacionReadCertificateMetadata($certificatePath, $certificatePassword);
+                    ok([
+                        'valid' => true,
+                        'message' => 'Certificado valido y listo para firma.',
+                        'meta' => $meta,
+                    ]);
+                } finally {
+                    if ($tempPath !== '' && file_exists($tempPath)) {
+                        @unlink($tempPath);
+                    }
+                }
                 break;
 
             case 'save_point':

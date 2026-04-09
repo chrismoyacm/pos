@@ -1,3 +1,7 @@
-storage/*.json
-vendor/
-.env
+<<<<<<< HEAD
+storage/facturacion/certificados/
+storage/facturacion/xml/
+storage/facturacion/pdf/
+storage/facturacion/*.json
+*.mp4
+>>>>>>> a568938 (estabilizar cambios)

@@ -1,0 +1,202 @@
+[
+    {
+        "id": "log-20260408075224-3475",
+        "level": "info",
+        "message": "XML firmado en modo mock",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T07:52:24+02:00"
+    },
+    {
+        "id": "log-20260408075224-3457",
+        "level": "info",
+        "message": "Envío SRI mock ejecutado",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T07:52:24+02:00"
+    },
+    {
+        "id": "log-20260408075224-3525",
+        "level": "info",
+        "message": "Autorización mock generada",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T07:52:24+02:00"
+    },
+    {
+        "id": "log-20260408075224-1561",
+        "level": "info",
+        "message": "Representación impresa generada en HTML fallback",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T07:52:24+02:00"
+    },
+    {
+        "id": "log-20260408075224-5967",
+        "level": "info",
+        "message": "Correo de comprobante registrado",
+        "context": {
+            "documentId": "doc-000001",
+            "to": "crissmoya.cm@gmail.com"
+        },
+        "createdAt": "2026-04-08T07:52:24+02:00"
+    },
+    {
+        "id": "log-20260408080158-8933",
+        "level": "info",
+        "message": "XML firmado en modo mock",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T08:01:58+02:00"
+    },
+    {
+        "id": "log-20260408080158-2042",
+        "level": "info",
+        "message": "Envío SRI mock ejecutado",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T08:01:58+02:00"
+    },
+    {
+        "id": "log-20260408080158-2892",
+        "level": "info",
+        "message": "Autorización mock generada",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T08:01:58+02:00"
+    },
+    {
+        "id": "log-20260408080158-2716",
+        "level": "info",
+        "message": "Representación impresa generada en HTML fallback",
+        "context": {
+            "documentId": "doc-000001"
+        },
+        "createdAt": "2026-04-08T08:01:58+02:00"
+    },
+    {
+        "id": "log-20260408080158-5239",
+        "level": "info",
+        "message": "Correo de comprobante registrado",
+        "context": {
+            "documentId": "doc-000001",
+            "to": "crissmoya.cm@gmail.com"
+        },
+        "createdAt": "2026-04-08T08:01:58+02:00"
+    },
+    {
+        "id": "log-20260408032524-6288",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:25:24-05:00"
+    },
+    {
+        "id": "log-20260408032528-3677",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:25:28-05:00"
+    },
+    {
+        "id": "log-20260408032528-6454",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:25:28-05:00"
+    },
+    {
+        "id": "log-20260408032529-8128",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:25:29-05:00"
+    },
+    {
+        "id": "log-20260408032609-6448",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:09-05:00"
+    },
+    {
+        "id": "log-20260408032611-9400",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:11-05:00"
+    },
+    {
+        "id": "log-20260408032611-7168",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:11-05:00"
+    },
+    {
+        "id": "log-20260408032654-3760",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:54-05:00"
+    },
+    {
+        "id": "log-20260408032656-4531",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:56-05:00"
+    },
+    {
+        "id": "log-20260408032657-2700",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:57-05:00"
+    },
+    {
+        "id": "log-20260408032658-1793",
+        "level": "error",
+        "message": "No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(166): facturacionReadCertificateMetadata('C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 {main}"
+        },
+        "createdAt": "2026-04-08T03:26:58-05:00"
+    },
+    {
+        "id": "log-20260408032827-3083",
+        "level": "error",
+        "message": "No se pudo abrir el certificado digital. Revise el archivo .p12/.pfx y su clave. Detalle OpenSSL: error:0308010C:digital envelope routines::unsupported",
+        "context": {
+            "trace": "#0 C:\\xampp\\htdocs\\pos\\facturacion\\firmar_xml.php(309): facturacionPrepareRealSignature('C:\\\\xampp\\\\htdocs...', 'C:\\\\xampp\\\\htdocs...', 'NANlq2')\n#1 C:\\xampp\\htdocs\\pos\\api\\facturacion.php(202): firmarXML(Array)\n#2 {main}"
+        },
+        "createdAt": "2026-04-08T03:28:27-05:00"
+    }
+]

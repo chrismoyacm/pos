@@ -1,0 +1,22 @@
+[
+    {
+        "id": "mail-000001",
+        "documentId": "doc-000001",
+        "to": "crissmoya.cm@gmail.com",
+        "mode": "mock",
+        "xml": "C:\\xampp\\htdocs\\pos\\storage\\facturacion\\xml\\autorizados\\0804202601100440896700110000000000000011348893911.xml",
+        "pdf": "C:\\xampp\\htdocs\\pos\\storage\\facturacion\\pdf\\0804202601100440896700110000000000000011348893911.html",
+        "createdAt": "2026-04-08T07:52:24+02:00",
+        "status": "queued_mock"
+    },
+    {
+        "id": "mail-000002",
+        "documentId": "doc-000001",
+        "to": "crissmoya.cm@gmail.com",
+        "mode": "mock",
+        "xml": "C:\\xampp\\htdocs\\pos\\storage\\facturacion\\xml\\autorizados\\0804202601100440896700110000000000000011348893911.xml",
+        "pdf": "C:\\xampp\\htdocs\\pos\\storage\\facturacion\\pdf\\0804202601100440896700110000000000000011348893911.html",
+        "createdAt": "2026-04-08T08:01:58+02:00",
+        "status": "queued_mock"
+    }
+]

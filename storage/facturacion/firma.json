@@ -1,0 +1,12 @@
+{
+    "signatureMode": "real",
+    "certificatePath": "C:\\xampp\\htdocs\\pos\\storage\\facturacion\\certificados\\1004408967.p12",
+    "certificatePassword": "NANlq2",
+    "emailMode": "mock",
+    "smtpHost": "",
+    "smtpPort": "587",
+    "smtpUser": "",
+    "smtpPassword": "",
+    "fromEmail": "",
+    "fromName": ""
+}

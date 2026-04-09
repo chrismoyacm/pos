@@ -18,6 +18,17 @@ function enviarSRI(array $document): array
         throw new RuntimeException('Primero debe firmarse el XML.');
     }
 
+    $validation = facturacionValidateSignedXmlStructure($signedPath);
+    if (!($validation['ok'] ?? false)) {
+        $errors = array_values(array_filter((array)($validation['errors'] ?? []), static fn($e) => trim((string)$e) !== ''));
+        $message = 'El XML firmado no cumple la estructura minima SRI/XAdES-BES: ' . implode(' | ', $errors);
+        facturacionAppendLog('error', $message, [
+            'documentId' => $document['id'] ?? null,
+            'signedXml' => $signedPath,
+        ]);
+        throw new RuntimeException($message);
+    }
+
     if (($signature['signatureMode'] ?? 'mock') === 'mock') {
         $document['sri']['receptionStatus'] = 'RECIBIDA';
         $document['sri']['response'] = ['mode' => 'mock', 'message' => 'Comprobante recibido en modo de prueba'];
