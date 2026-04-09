@@ -39,6 +39,7 @@ function creditPaymentMethodLabel(string $method): string
     return match ($method) {
         'card' => 'Tarjeta de Crédito',
         'credit' => 'Crédito',
+        'mixed' => 'Mixto',
         'voucher' => 'Vales de Despensa',
         'transfer' => 'Transferencia',
         'check' => 'Cheque',
@@ -52,7 +53,7 @@ function creditPaymentMethodLabel(string $method): string
 function normalizeSalePaymentMethod(array $sale): string
 {
     $method = strtolower(trim((string)($sale['paymentMethod'] ?? 'cash')));
-    return in_array($method, ['cash', 'card', 'credit', 'voucher', 'transfer', 'check'], true) ? $method : 'cash';
+    return in_array($method, ['cash', 'card', 'credit', 'mixed', 'voucher', 'transfer', 'check'], true) ? $method : 'cash';
 }
 
 /**
@@ -153,7 +154,9 @@ function buildCreditLedgers(): array
             continue;
         }
 
-        if (normalizeSalePaymentMethod($sale) !== 'credit') {
+        $paymentMethod = normalizeSalePaymentMethod($sale);
+        $pending = round((float)($sale['amountPending'] ?? 0), 2);
+        if ($paymentMethod !== 'credit' && !($paymentMethod === 'mixed' && $pending > 0)) {
             continue;
         }
 
@@ -215,7 +218,10 @@ function buildCreditLedgers(): array
             $formattedDate = $date->format('d/m/Y H:i');
 
             if ($kind === 'sale') {
-                $amount = round((float)($payload['total'] ?? 0), 2);
+                $paymentMethod = normalizeSalePaymentMethod($payload);
+                $amount = $paymentMethod === 'mixed'
+                    ? round((float)($payload['amountPending'] ?? 0), 2)
+                    : round((float)($payload['total'] ?? 0), 2);
                 if ($amount <= 0) {
                     continue;
                 }
@@ -241,7 +247,7 @@ function buildCreditLedgers(): array
                         'fechaHora' => $formattedDate,
                         'items' => $ticketItems,
                         'total' => $amount,
-                        'pagoCon' => 'Crédito',
+                        'pagoCon' => $paymentMethod === 'mixed' ? 'Mixto (crédito)' : 'Crédito',
                         'montoPendiente' => $runningBalance,
                     ],
                 ];

@@ -192,6 +192,10 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   font-size:12px;
   padding:8px 10px;
 }
+.pay-credit-table-wrap{max-height:190px;overflow:auto;border:1px solid #dbe2ea;border-radius:6px}
+.pay-credit-row{cursor:pointer}
+.pay-credit-row:hover td{background:#eef6ff}
+.pay-credit-row.selected td{background:#dbeafe}
 .pay-note-preview{
   border:1px dashed #cbd5e1;
   border-radius:6px;
