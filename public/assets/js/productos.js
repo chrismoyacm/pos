@@ -51,6 +51,8 @@
     importRows: []
   };
 
+  const NEW_DEPARTMENT_OPTION_VALUE = '__new_department__';
+
   function navigateToProductSub(view) {
     if (view === 'departments') {
       window.location.href = 'index.php?mod=productos&sub=departamentos';
@@ -77,12 +79,22 @@
 
   function setDepartmentOptions() {
     const $sel = $('#prod-department').empty();
+    const currentValue = ($sel.data('selected') || $sel.val() || 'Sin Departamento').toString();
     state.departments.forEach(dep => {
       $sel.append(`<option value="${escapeHtml(dep.name)}">${escapeHtml(dep.name)}</option>`);
     });
     if ($('#prod-department option').length === 0) {
       $sel.append('<option value="Sin Departamento">Sin Departamento</option>');
     }
+    const hasCurrent = $sel.find('option').toArray().some(function (opt) {
+      return ($(opt).val() || '').toString() === currentValue;
+    });
+    if (!hasCurrent) {
+      $sel.append(`<option value="${escapeHtml(currentValue)}">${escapeHtml(currentValue)}</option>`);
+    }
+    $sel.append('<option value="' + NEW_DEPARTMENT_OPTION_VALUE + '">+ Crear nuevo departamento...</option>');
+    $sel.val(currentValue);
+    $sel.data('selected', currentValue);
   }
 
   function setCatalogDepartmentOptions() {
@@ -162,6 +174,7 @@
     $('#prod-special-price').val(Number(data.specialPrice || 0).toFixed(2));
     $('#prod-wholesale').val(Number(data.wholesalePrice).toFixed(2));
     $('#prod-department').val(data.department);
+    $('#prod-department').data('selected', data.department);
     $('#prod-iva').val(normalizeIvaLabel(data.iva));
     $('input[name="prod-unit-type"][value="' + data.unitType + '"]').prop('checked', true);
     $('#prod-inventory-enabled').prop('checked', !!data.inventoryEnabled);
@@ -631,6 +644,10 @@
       window.alert('La descripción es requerida.');
       return;
     }
+    if ((payload.department || '') === NEW_DEPARTMENT_OPTION_VALUE) {
+      window.alert('Seleccione un departamento válido.');
+      return;
+    }
 
     const duplicate = state.products.find(function (product) {
       const sameBarcode = (product?.barcode || '').toString().trim() !== ''
@@ -719,6 +736,47 @@
       loadDepartments().done(() => {
         resetDepartmentForm();
       });
+    });
+  }
+
+  function createDepartmentInlineFromSelect() {
+    const $select = $('#prod-department');
+    const previous = ($select.data('selected') || 'Sin Departamento').toString();
+    const rawName = window.prompt('Nuevo departamento:', '');
+
+    if (rawName === null) {
+      $select.val(previous);
+      return;
+    }
+
+    const name = rawName.toString().trim();
+    if (!name) {
+      window.alert('El nombre del departamento es requerido.');
+      $select.val(previous);
+      return;
+    }
+
+    $.ajax({
+      url: '../api/departments.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ name })
+    }).done(function (res) {
+      if (!res.ok) {
+        window.alert(res.error || 'No se pudo guardar el departamento.');
+        $select.val(previous);
+        return;
+      }
+
+      const selectedName = (res.data?.name || name).toString();
+      loadDepartments().done(function () {
+        $('#prod-department').val(selectedName);
+        $('#prod-department').data('selected', selectedName);
+      });
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo guardar el departamento.';
+      window.alert(backendError);
+      $select.val(previous);
     });
   }
 
@@ -817,6 +875,14 @@
 
     $('#prod-save-btn').on('click', saveProduct);
     $('#prod-delete-btn').on('click', deleteProduct);
+    $('#prod-department').on('change', function () {
+      const value = ($(this).val() || '').toString();
+      if (value === NEW_DEPARTMENT_OPTION_VALUE) {
+        createDepartmentInlineFromSelect();
+        return;
+      }
+      $(this).data('selected', value || 'Sin Departamento');
+    });
     $('input[name="prod-unit-type"]').on('change', function () {
       state.selectedPackageIndex = -1;
       syncInventoryControls();
