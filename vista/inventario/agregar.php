@@ -33,7 +33,7 @@ declare(strict_types=1);
         </div>
         <label class="catalog-filter inv-field-grow">
           <span>Descripción</span>
-          <input type="text" id="inv-add-name" readonly>
+          <input type="text" id="inv-add-name">
         </label>
         <label class="catalog-filter">
           <span>Hay</span>
@@ -49,11 +49,11 @@ declare(strict_types=1);
         </label>
         <label class="catalog-filter">
           <span>Precio venta</span>
-          <input type="text" id="inv-add-price" readonly>
+          <input type="number" id="inv-add-price" min="0" step="0.01" value="0.00">
         </label>
         <label class="catalog-filter">
           <span>Precio mayoreo</span>
-          <input type="text" id="inv-add-wholesale" readonly>
+          <input type="number" id="inv-add-wholesale" min="0" step="0.01" placeholder="0.00">
         </label>
         <label class="catalog-filter inv-field-grow">
           <span>Motivo</span>

@@ -108,6 +108,11 @@ if ($method === 'PATCH' || $method === 'POST') {
     $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
     $marginPctRaw = $body['marginPct'] ?? null;
     $marginPct = is_numeric($marginPctRaw) ? (float)$marginPctRaw : null;
+    $productNameInput = trim((string)($body['productName'] ?? ''));
+    $salePriceRaw = $body['salePrice'] ?? null;
+    $salePrice = is_numeric($salePriceRaw) ? (float)$salePriceRaw : null;
+    $wholesalePriceRaw = $body['wholesalePrice'] ?? null;
+    $wholesalePrice = is_numeric($wholesalePriceRaw) ? (float)$wholesalePriceRaw : null;
     $note = trim((string)($body['note'] ?? ''));
     $source = trim((string)($body['source'] ?? 'inventario'));
     if ($productId === '' || $delta === 0) {
@@ -149,10 +154,31 @@ if ($method === 'PATCH' || $method === 'POST') {
             }
             $newPrice = $newCost * (1 + ($marginValue / 100));
 
+            if ($salePrice !== null && $salePrice >= 0) {
+                $newPrice = $salePrice;
+                if ($newCost > 0) {
+                    $marginValue = (($newPrice - $newCost) / $newCost) * 100;
+                }
+            }
+
             $p['stock'] = $next;
+            if ($productNameInput !== '') {
+                $p['name'] = $productNameInput;
+            }
             $p['margin'] = round2Inv(max(0, $marginValue));
             $p['cost'] = round2Inv($newCost);
             $p['price'] = round2Inv(max(0, $newPrice));
+            if ($wholesalePrice !== null && $wholesalePrice >= 0) {
+                $currentWholesale = $p['wholesale'] ?? [];
+                if (!is_array($currentWholesale)) {
+                    $currentWholesale = [];
+                }
+                $minQty = (int)($currentWholesale['minQty'] ?? 0);
+                $p['wholesale'] = [
+                    'minQty' => $minQty > 0 ? $minQty : 1,
+                    'price' => round2Inv($wholesalePrice),
+                ];
+            }
             $beforeQty = $current;
             $afterQty = $next;
             $beforeCost = round2Inv($currentCost);
