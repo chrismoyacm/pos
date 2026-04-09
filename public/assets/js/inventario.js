@@ -254,8 +254,8 @@
     invState.addSelectedId = null;
     $('#inv-add-name').val('');
     $('#inv-add-stock').val('');
-    $('#inv-add-cost').val('');
-    $('#inv-add-price').val('');
+    $('#inv-add-cost').val('0.00');
+    $('#inv-add-price').val('0.00');
     $('#inv-add-wholesale').val('');
     clearAddSuggestionsInv();
   }
@@ -267,12 +267,13 @@
     }
     invState.addSelectedId = (product.id || '').toString();
     $('#inv-add-name').val((product.name || '').toString());
-    $('#inv-add-stock').val(String(product.stock ?? 0));
+    const stockValue = (product.stock === null || product.stock === undefined) ? '' : String(product.stock);
+    $('#inv-add-stock').val(stockValue);
     $('#inv-add-cost').val(Number(product.cost || 0).toFixed(2));
-    $('#inv-add-price').val(formatMoneyInv(product.price || 0));
+    $('#inv-add-price').val(Number(product.price || 0).toFixed(2));
     const wholesale = product.wholesale && Number(product.wholesale.price || 0) > 0
-      ? formatMoneyInv(product.wholesale.price || 0)
-      : 'N/A';
+      ? Number(product.wholesale.price || 0).toFixed(2)
+      : '';
     $('#inv-add-wholesale').val(wholesale);
     clearAddSuggestionsInv();
   }
@@ -581,13 +582,14 @@
     });
   }
 
-  function applyMovementInv(productId, delta, type, note, entryCost, marginPct) {
+  function applyMovementInv(productId, delta, type, note, entryCost, marginPct, productUpdates) {
     const resolvedEntryCost = Number.isFinite(Number(entryCost))
       ? Number(entryCost)
       : Number($('#inv-adjust-entry-cost').val() || 0);
     const resolvedMarginPct = Number.isFinite(Number(marginPct))
       ? Number(marginPct)
       : null;
+    const updates = (productUpdates && typeof productUpdates === 'object') ? productUpdates : {};
     return $.ajax({
       url: '../api/inventario.php',
       method: 'POST',
@@ -599,6 +601,9 @@
         movementType: type,
         entryUnitCost: resolvedEntryCost,
         marginPct: resolvedMarginPct,
+        productName: (updates.name || '').toString(),
+        salePrice: Number.isFinite(Number(updates.salePrice)) ? Number(updates.salePrice) : null,
+        wholesalePrice: Number.isFinite(Number(updates.wholesalePrice)) ? Number(updates.wholesalePrice) : null,
         note: note || '',
         source: 'inventario'
       })
@@ -633,6 +638,10 @@
       const productId = (invState.addSelectedId || '').toString();
       const qty = Number($('#inv-add-qty').val() || 0);
       const addCost = Number($('#inv-add-cost').val() || 0);
+      const addName = ($('#inv-add-name').val() || '').toString().trim();
+      const addSalePrice = Number($('#inv-add-price').val() || 0);
+      const wholesaleRaw = ($('#inv-add-wholesale').val() || '').toString().trim();
+      const addWholesale = wholesaleRaw === '' ? null : Number(wholesaleRaw);
       const note = ($('#inv-add-note').val() || '').toString().trim();
       if (!productId || qty <= 0) {
         window.alert('Busque/cargue un producto y cantidad válida.');
@@ -642,7 +651,23 @@
         window.alert('Capture un precio costo válido.');
         return;
       }
-      applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, null).done(res => {
+      if (!addName) {
+        window.alert('Capture una descripción válida.');
+        return;
+      }
+      if (!Number.isFinite(addSalePrice) || addSalePrice < 0) {
+        window.alert('Capture un precio de venta válido.');
+        return;
+      }
+      if (addWholesale !== null && (!Number.isFinite(addWholesale) || addWholesale < 0)) {
+        window.alert('Capture un precio mayoreo válido.');
+        return;
+      }
+      applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, null, {
+        name: addName,
+        salePrice: addSalePrice,
+        wholesalePrice: addWholesale
+      }).done(res => {
         if (!res.ok) {
           window.alert(res.error || 'No se pudo registrar la entrada.');
           return;
@@ -663,9 +688,14 @@
 
       const exact = findAddProductInv(query);
       if (exact) {
+        fillAddFormInv(exact);
         clearAddSuggestionsInv();
         return;
       }
+
+      // Keep stock/value fields blank until user loads an existing product.
+      invState.addSelectedId = null;
+      $('#inv-add-stock').val('');
 
       invState.addSuggestions = addSuggestionsByQueryInv(query);
       invState.addSuggestionIndex = invState.addSuggestions.length > 0 ? 0 : -1;
@@ -723,7 +753,7 @@
         return;
       }
       const delta = kind === 'exit' ? -Math.abs(qty) : Math.abs(qty);
-      applyMovementInv(productId, delta, kind, note, entryCost, marginPct).done(res => {
+      applyMovementInv(productId, delta, kind, note, entryCost, marginPct, null).done(res => {
         if (!res.ok) {
           window.alert(res.error || 'No se pudo aplicar el ajuste.');
           return;
