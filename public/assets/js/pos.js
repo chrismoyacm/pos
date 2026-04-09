@@ -10,7 +10,7 @@
     paidWith: 0,
     change: 0,
     paymentMethod: 'cash',
-    mixedPayments: { cash: 0, card: 0 },
+    mixedPayments: { cash: 0, credit: 0 },
     paymentNote: '',
     transferMeta: { reference: '', phone: '' },
     saleDiscountPct: 0,
@@ -112,7 +112,7 @@
       const mixed = parsed.mixedPayments || {};
       state.mixedPayments = {
         cash: Number(mixed.cash || 0),
-        card: Number(mixed.card || 0)
+        credit: Number(mixed.credit ?? mixed.card ?? 0)
       };
       state.paymentNote = (parsed.paymentNote || '').toString();
       const transferMeta = parsed.transferMeta || {};
@@ -134,7 +134,7 @@
       state.paidWith = 0;
       state.change = 0;
       state.paymentMethod = 'cash';
-      state.mixedPayments = { cash: 0, card: 0 };
+      state.mixedPayments = { cash: 0, credit: 0 };
       state.paymentNote = '';
       state.transferMeta = { reference: '', phone: '' };
       state.saleDiscountPct = 0;
@@ -293,15 +293,17 @@
           '<td>' + (item.barcode || '') + '</td>' +
           '<td>' + escapeHtml(item.name || '') + '</td>' +
           '<td class="catalog-center"><button type="button" class="' + ivaButtonClass + '" data-iva-idx="' + index + '">' + escapeHtml(ivaLabel) + '</button></td>' +
-          '<td class="venta-price-cell" data-price-idx="' + index + '">' + formatMoney(item.price) + '</td>' +
+          '<td class="venta-price-cell" data-price-idx="' + index + '" title="Doble click para editar precio">' + formatMoney(item.price) + '</td>' +
           '<td class="qty">' + item.qty + '</td>' +
           '<td>' + formatMoney(getItemNetAmount(item)) + '</td>' +
           '<td>' + (item.stock ?? '') + '</td>' +
         '</tr>'
       );
       $tr.on('click', function () {
-        state.selectedIndex = index;
-        renderGrid();
+        if (state.selectedIndex !== index) {
+          state.selectedIndex = index;
+          renderGrid();
+        }
       });
       $tr.find('.qty').on('dblclick', function (e) {
         e.stopPropagation();
@@ -314,6 +316,7 @@
       });
 
       $tr.find('[data-price-idx]').on('dblclick', function (e) {
+        e.preventDefault();
         e.stopPropagation();
         promptChangePrice(index);
       });
@@ -479,38 +482,124 @@
     renderGrid();
   }
 
+  function hasAssignedCreditCustomer() {
+    return Boolean(state.customer && state.customer.id && state.customer.id !== 'c-001');
+  }
+
+  function applySelectedCustomer(customer) {
+    state.customer = {
+      id: (customer?.id || 'c-001').toString(),
+      name: (customer?.name || 'Publico en general').toString()
+    };
+    $('#clienteNombre').text(state.customer.name || 'Cliente');
+    renderPayCustomerSummary();
+    persistCartState();
+  }
+
+  function renderPayCustomerSummary() {
+    const method = (state.paymentMethod || 'cash').toString();
+    const requiresCreditCustomer = (method === 'credit' || method === 'mixed');
+    if (!requiresCreditCustomer) {
+      $('#pay-customer-summary').prop('hidden', true).hide().text('');
+      return;
+    }
+
+    const text = hasAssignedCreditCustomer()
+      ? ('Cliente seleccionado: ' + (state.customer.name || '') + ' (' + (state.customer.id || '') + ')')
+      : 'Debe seleccionar un cliente para registrar saldo pendiente.';
+
+    $('#pay-customer-summary').prop('hidden', false).show().text(text);
+  }
+
+  function loadPayCreditCustomers(query) {
+    const q = (query || '').toString();
+    $.getJSON('../api/customers.php', { q: q }).done(function (res) {
+      const $tbody = $('#pay-credit-customers-body').empty();
+      const customers = (res.ok && Array.isArray(res.data)) ? res.data : [];
+
+      customers
+        .filter(function (customer) {
+          return (customer?.id || '') !== 'c-001';
+        })
+        .slice(0, 50)
+        .forEach(function (customer) {
+          const isSelected = (state.customer?.id || '') === (customer.id || '');
+          const $tr = $(
+            '<tr class="pay-credit-row ' + (isSelected ? 'selected' : '') + '">' +
+              '<td>' + escapeHtml(customer.id || '') + '</td>' +
+              '<td>' + escapeHtml(customer.name || '') + '</td>' +
+              '<td>' + escapeHtml(customer.phone || '') + '</td>' +
+            '</tr>'
+          );
+          $tr.on('click', function () {
+            applySelectedCustomer(customer);
+            loadPayCreditCustomers($('#modal-pago [name=creditCustomerQ]').val());
+            updateCambio();
+          });
+          $tbody.append($tr);
+        });
+    });
+  }
+
   function updatePaymentMethod() {
     state.paymentMethod = ($('#modal-pago [name=metodoPago]').val() || state.paymentMethod || 'cash').toString();
     setPaymentMethod(state.paymentMethod);
-    const disableAmount = isCreditPayment() || isAutoPaidMethod();
-    const showMixed = isMixedPayment();
+    const showCash = state.paymentMethod === 'cash';
+    const showCredit = state.paymentMethod === 'credit';
+    const showMixed = state.paymentMethod === 'mixed';
     const showTransfer = state.paymentMethod === 'transfer';
-    const showCredit = isCreditPayment();
-    const showSingle = !showMixed && !showTransfer && !showCredit;
+    const disableAmount = !showCash;
 
-    $('#pay-mixed-grid').prop('hidden', !showMixed);
-    $('#pay-transfer-fields').prop('hidden', !showTransfer);
-    $('#pay-credit-info').prop('hidden', !showCredit);
-    $('#pay-single-field').prop('hidden', !showSingle);
-    $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount || !showSingle);
+    // Reset all method-specific sections first so only the current method fields remain visible.
+    $('#pay-single-field, #pay-mixed-grid, #pay-credit-picker, #pay-transfer-fields, #pay-credit-info, #pay-customer-summary')
+      .prop('hidden', true)
+      .hide();
+
+    if (showCash) {
+      $('#pay-single-field').prop('hidden', false).show();
+    }
+    if (showMixed) {
+      $('#pay-mixed-grid').prop('hidden', false).show();
+    }
+    if (showCredit) {
+      $('#pay-credit-picker').prop('hidden', false).show();
+    }
+    if (showTransfer) {
+      $('#pay-transfer-fields').prop('hidden', false).show();
+    }
+    if (showCredit || showMixed) {
+      $('#pay-credit-info').prop('hidden', false).show();
+    }
+    if (showCredit) {
+      $('#pay-credit-info').text('Venta a crédito: seleccione cliente y el total se registra como saldo pendiente.');
+    } else if (showMixed) {
+      $('#pay-credit-info').text('Pago mixto: efectivo + crédito (cliente seleccionado previamente).');
+    }
+    $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount);
 
     if (showCredit) {
       $('#modal-pago [name=pagoCon]').val('0.00');
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
-      $('#modal-pago [name=pagoConTarjeta]').val('0.00');
-      state.mixedPayments = { cash: 0, card: 0 };
+      $('#modal-pago [name=pagoConCredito]').val('0.00');
+      state.mixedPayments = { cash: 0, credit: 0 };
+      loadPayCreditCustomers($('#modal-pago [name=creditCustomerQ]').val());
     } else if (showTransfer) {
       $('#modal-pago [name=pagoCon]').val(isAutoPaidMethod() ? state.total.toFixed(2) : '0.00');
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
-      $('#modal-pago [name=pagoConTarjeta]').val('0.00');
-      state.mixedPayments = { cash: 0, card: 0 };
+      $('#modal-pago [name=pagoConCredito]').val('0.00');
+      state.mixedPayments = { cash: 0, credit: 0 };
+    } else if (showCash) {
+      $('#modal-pago [name=pagoConEfectivo]').val('0.00');
+      $('#modal-pago [name=pagoConCredito]').val('0.00');
+      state.mixedPayments = { cash: 0, credit: 0 };
     }
 
     if (showMixed) {
       $('#modal-pago [name=pagoConEfectivo]').val(state.mixedPayments.cash ? state.mixedPayments.cash.toFixed(2) : '');
-      $('#modal-pago [name=pagoConTarjeta]').val(state.mixedPayments.card ? state.mixedPayments.card.toFixed(2) : '');
+      $('#modal-pago [name=pagoConCredito]').val(state.mixedPayments.credit ? state.mixedPayments.credit.toFixed(2) : '');
     }
 
+    renderPayCustomerSummary();
     updateCambio();
   }
 
@@ -522,15 +611,16 @@
     setPaymentMethod(state.paymentMethod);
     $('#modal-pago [name=pagoCon]').val(isCreditPayment() ? '0.00' : '');
     $('#modal-pago [name=pagoConEfectivo]').val(state.mixedPayments.cash ? state.mixedPayments.cash.toFixed(2) : '');
-    $('#modal-pago [name=pagoConTarjeta]').val(state.mixedPayments.card ? state.mixedPayments.card.toFixed(2) : '');
+    $('#modal-pago [name=pagoConCredito]').val(state.mixedPayments.credit ? state.mixedPayments.credit.toFixed(2) : '');
     $('#modal-pago [name=transferRef]').val(state.transferMeta.reference || '');
     $('#modal-pago [name=transferPhone]').val(state.transferMeta.phone || '');
+    $('#modal-pago [name=creditCustomerQ]').val('');
     $('#pay-note-preview').text('Nota: ' + (state.paymentNote ? state.paymentNote : '-'));
     $('#modal-pago [data-cambio]').text(formatMoney(0));
     $('#modal-pago').addClass('active');
     updatePaymentMethod();
     if (isCreditPayment()) {
-      $('#pay-method-picker .pay-method-option.active').focus();
+      $('#modal-pago [name=creditCustomerQ]').focus();
     } else if (isMixedPayment()) {
       $('#modal-pago [name=pagoConEfectivo]').focus();
     } else if (isAutoPaidMethod()) {
@@ -570,14 +660,14 @@
 
     if (isMixedPayment()) {
       const cashPart = parseFloat($('#modal-pago [name=pagoConEfectivo]').val().toString()) || 0;
-      const cardPart = parseFloat($('#modal-pago [name=pagoConTarjeta]').val().toString()) || 0;
-      const paidWithMixed = Math.max(0, cashPart) + Math.max(0, cardPart);
-      const changeMixed = Math.max(0, paidWithMixed - state.total);
+      const creditPart = parseFloat($('#modal-pago [name=pagoConCredito]').val().toString()) || 0;
+      const totalCovered = Math.max(0, cashPart) + Math.max(0, creditPart);
+      const changeMixed = Math.max(0, totalCovered - state.total);
       state.mixedPayments = {
         cash: Math.max(0, cashPart),
-        card: Math.max(0, cardPart)
+        credit: Math.max(0, creditPart)
       };
-      state.paidWith = paidWithMixed;
+      state.paidWith = Math.max(0, cashPart);
       state.change = changeMixed;
       $('#modal-pago [data-cambio]').text(formatMoney(changeMixed));
       recalc();
@@ -617,9 +707,9 @@
     }).join('');
 
     const paymentMethod = paymentMethodLabel(String(safeSale.paymentMethod || 'cash'));
-    const mixed = safeSale.mixedPayments || { cash: 0, card: 0 };
+    const mixed = safeSale.mixedPayments || { cash: 0, credit: 0 };
     const mixedInfo = String(safeSale.paymentMethod || '') === 'mixed'
-      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Transferencia: ' + formatMoney(Number(mixed.card || 0)) + '</div>'
+      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Crédito: ' + formatMoney(Number(mixed.credit || mixed.card || 0)) + '</div>'
       : '';
 
     const html = [
@@ -713,18 +803,42 @@
       return;
     }
 
-    if (isCreditPayment() && (!state.customer || !state.customer.id || state.customer.id === 'c-001')) {
-      window.alert('Asigne un cliente antes de registrar una venta a credito');
+    if ((isCreditPayment() || isMixedPayment()) && !hasAssignedCreditCustomer()) {
+      window.alert('Asigne un cliente antes de registrar saldo pendiente.');
       return;
     }
 
-    if (!isCreditPayment() && !(state.paidWith >= state.total)) {
-      window.alert('Pago insuficiente');
-      return;
-    }
-
-    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.card <= 0) {
+    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.credit <= 0) {
       window.alert('Ingrese montos para pago mixto.');
+      return;
+    }
+
+    if (isMixedPayment()) {
+      const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.credit || 0);
+      if (covered < state.total) {
+        window.alert('En pago mixto, Efectivo + Crédito debe cubrir el total.');
+        return;
+      }
+      if (state.mixedPayments.credit <= 0) {
+        window.alert('En pago mixto debe registrar una parte a crédito.');
+        return;
+      }
+      if (state.mixedPayments.cash < 0) {
+        window.alert('Monto de efectivo inválido.');
+        return;
+      }
+    }
+
+    if (isAutoPaidMethod()) {
+      const ref = (state.transferMeta.reference || '').toString().trim();
+      if (ref === '') {
+        window.alert('Ingrese referencia para transferencia.');
+        return;
+      }
+    }
+
+    if (!isCreditPayment() && !isMixedPayment() && !isAutoPaidMethod() && !(state.paidWith >= state.total)) {
+      window.alert('Pago insuficiente');
       return;
     }
 
@@ -754,7 +868,7 @@
       paymentMethod: state.paymentMethod,
       mixedPayments: isMixedPayment() ? state.mixedPayments : null,
       paymentNote: paymentNotePayload,
-      amountPending: isCreditPayment() ? state.total : 0,
+      amountPending: isCreditPayment() ? state.total : (isMixedPayment() ? Number(state.mixedPayments.credit || 0) : 0),
       customerId: state.customer?.id || null,
       customerName: state.customer?.name || ''
     };
@@ -790,7 +904,7 @@
         paidWith: state.paidWith,
         change: state.change,
         paymentMethod: state.paymentMethod,
-        mixedPayments: state.paymentMethod === 'mixed' ? { cash: state.mixedPayments.cash, card: state.mixedPayments.card } : null,
+        mixedPayments: state.paymentMethod === 'mixed' ? { cash: state.mixedPayments.cash, credit: state.mixedPayments.credit } : null,
         customerName: state.customer?.name || 'Publico en general',
         paymentNote: paymentNotePayload
       };
@@ -801,7 +915,7 @@
       state.paidWith = 0;
       state.change = 0;
       state.paymentMethod = 'cash';
-      state.mixedPayments = { cash: 0, card: 0 };
+      state.mixedPayments = { cash: 0, credit: 0 };
       state.paymentNote = '';
       state.transferMeta = { reference: '', phone: '' };
       state.saleDiscountPct = 0;
@@ -873,9 +987,7 @@
           '</tr>'
         );
         $tr.on('click', function () {
-          state.customer = { id: customer.id, name: customer.name };
-          $('#clienteNombre').text(customer.name || 'Cliente');
-          persistCartState();
+          applySelectedCustomer(customer);
           closeModal('#modal-cliente');
         });
         $tbody.append($tr);
@@ -1220,14 +1332,17 @@
       } else if (isAutoPaidMethod()) {
         $('#modal-pago [name=transferRef]').focus();
       } else if (isCreditPayment()) {
-        $('#pay-method-picker .pay-method-option.active').focus();
+        $('#modal-pago [name=creditCustomerQ]').focus();
       } else {
         $('#modal-pago [name=pagoCon]').focus();
       }
     });
     $('#modal-pago [name=pagoCon]').on('input', updateCambio);
-    $('#modal-pago [name=pagoConEfectivo], #modal-pago [name=pagoConTarjeta]').on('input', updateCambio);
+    $('#modal-pago [name=pagoConEfectivo], #modal-pago [name=pagoConCredito]').on('input', updateCambio);
     $('#modal-pago [name=transferRef], #modal-pago [name=transferPhone]').on('input', updateCambio);
+    $('#modal-pago [name=creditCustomerQ]').on('input', function () {
+      loadPayCreditCustomers($(this).val().toString());
+    });
     $('#btn-pay-confirm').on('click', function () { confirmSale({ printTicket: false }); });
     $('#btn-pay-confirm-print').on('click', function () { confirmSale({ printTicket: true }); });
     $('#modal-buscar .btn-secondary').on('click', function () { closeModal('#modal-buscar'); });

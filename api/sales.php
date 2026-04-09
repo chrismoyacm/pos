@@ -189,7 +189,6 @@ $mixedPaymentsBody = $body['mixedPayments'] ?? null;
 $paymentNote = trim((string)($body['paymentNote'] ?? ''));
 $mixedPayments = [
     'cash' => 0.0,
-    'transfer' => 0.0,
     'credit' => 0.0,
 ];
 $amountPending = round((float)($body['amountPending'] ?? 0), 2);
@@ -201,7 +200,6 @@ if (!in_array($paymentMethod, ['cash', 'card', 'mixed', 'credit', 'voucher', 'tr
 
 if (is_array($mixedPaymentsBody)) {
     $mixedPayments['cash'] = round((float)($mixedPaymentsBody['cash'] ?? 0), 2);
-    $mixedPayments['transfer'] = round((float)($mixedPaymentsBody['transfer'] ?? 0), 2);
     $mixedPayments['credit'] = round((float)($mixedPaymentsBody['credit'] ?? ($mixedPaymentsBody['card'] ?? 0)), 2);
 }
 
@@ -209,22 +207,21 @@ if ($paymentMethod === 'credit') {
     $paidWith = 0.0;
     $change = 0.0;
     $amountPending = round($total, 2);
-    $mixedPayments = ['cash' => 0.0, 'transfer' => 0.0, 'credit' => 0.0];
+    $mixedPayments = ['cash' => 0.0, 'credit' => 0.0];
 } elseif ($paymentMethod === 'mixed') {
     $cashPart = max(0.0, round((float)$mixedPayments['cash'], 2));
-    $transferPart = max(0.0, round((float)$mixedPayments['transfer'], 2));
     $creditPart = max(0.0, round((float)$mixedPayments['credit'], 2));
-    $covered = round($cashPart + $transferPart + $creditPart, 2);
+    $covered = round($cashPart + $creditPart, 2);
     if ($covered + 0.009 < $total) {
-        errorResponse('Pago mixto insuficiente: efectivo + transferencia + crédito debe cubrir el total', 400);
+        errorResponse('Pago mixto insuficiente: efectivo + crédito debe cubrir el total', 400);
     }
 
-    $paidWith = round($cashPart + $transferPart, 2);
+    $paidWith = $cashPart;
     $change = max(0.0, round($covered - $total, 2));
     $amountPending = $creditPart;
 } else {
     $amountPending = 0.0;
-    $mixedPayments = ['cash' => 0.0, 'transfer' => 0.0, 'credit' => 0.0];
+    $mixedPayments = ['cash' => 0.0, 'credit' => 0.0];
 }
 
 if (($paymentMethod === 'credit' || ($paymentMethod === 'mixed' && $amountPending > 0)) && ($customerId === '' || $customerId === 'c-001')) {
