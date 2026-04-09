@@ -189,7 +189,7 @@ $mixedPaymentsBody = $body['mixedPayments'] ?? null;
 $paymentNote = trim((string)($body['paymentNote'] ?? ''));
 $mixedPayments = [
     'cash' => 0.0,
-    'card' => 0.0,
+    'credit' => 0.0,
 ];
 $amountPending = round((float)($body['amountPending'] ?? 0), 2);
 $cashier = trim((string)($_SESSION['name'] ?? $_SESSION['username'] ?? 'Cajero'));
@@ -200,21 +200,32 @@ if (!in_array($paymentMethod, ['cash', 'card', 'mixed', 'credit', 'voucher', 'tr
 
 if (is_array($mixedPaymentsBody)) {
     $mixedPayments['cash'] = round((float)($mixedPaymentsBody['cash'] ?? 0), 2);
-    $mixedPayments['card'] = round((float)($mixedPaymentsBody['card'] ?? 0), 2);
+    $mixedPayments['credit'] = round((float)($mixedPaymentsBody['credit'] ?? ($mixedPaymentsBody['card'] ?? 0)), 2);
 }
 
 if ($paymentMethod === 'credit') {
     $paidWith = 0.0;
     $change = 0.0;
     $amountPending = round($total, 2);
-    $mixedPayments = ['cash' => 0.0, 'card' => 0.0];
+    $mixedPayments = ['cash' => 0.0, 'credit' => 0.0];
 } elseif ($paymentMethod === 'mixed') {
-    $paidWith = round((float)$mixedPayments['cash'] + (float)$mixedPayments['card'], 2);
-    $change = max(0.0, round($paidWith - $total, 2));
-    $amountPending = 0.0;
+    $cashPart = max(0.0, round((float)$mixedPayments['cash'], 2));
+    $creditPart = max(0.0, round((float)$mixedPayments['credit'], 2));
+    $covered = round($cashPart + $creditPart, 2);
+    if ($covered + 0.009 < $total) {
+        errorResponse('Pago mixto insuficiente: efectivo + crédito debe cubrir el total', 400);
+    }
+
+    $paidWith = $cashPart;
+    $change = max(0.0, round($covered - $total, 2));
+    $amountPending = $creditPart;
 } else {
     $amountPending = 0.0;
-    $mixedPayments = ['cash' => 0.0, 'card' => 0.0];
+    $mixedPayments = ['cash' => 0.0, 'credit' => 0.0];
+}
+
+if (($paymentMethod === 'credit' || ($paymentMethod === 'mixed' && $amountPending > 0)) && ($customerId === '' || $customerId === 'c-001')) {
+    errorResponse('Seleccione un cliente para registrar saldo pendiente', 400);
 }
 
 if ($customerName === '') {

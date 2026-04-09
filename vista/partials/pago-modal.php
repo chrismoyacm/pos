@@ -27,9 +27,26 @@
         <label class="field">Efectivo
           <input type="number" step="0.01" min="0" name="pagoConEfectivo" placeholder="0.00">
         </label>
-        <label class="field">Transferencia
-          <input type="number" step="0.01" min="0" name="pagoConTarjeta" placeholder="0.00">
+        <label class="field">Crédito
+          <input type="number" step="0.01" min="0" name="pagoConCredito" placeholder="0.00">
         </label>
+      </div>
+      <div id="pay-credit-picker" hidden>
+        <label class="field">Buscar cliente
+          <input type="text" name="creditCustomerQ" placeholder="Nombre, teléfono o ID">
+        </label>
+        <div class="pay-credit-table-wrap">
+          <table class="grid grid-compact" style="margin:0">
+            <thead>
+              <tr>
+                <th style="width:110px">ID</th>
+                <th>Cliente</th>
+                <th style="width:120px">Teléfono</th>
+              </tr>
+            </thead>
+            <tbody id="pay-credit-customers-body"></tbody>
+          </table>
+        </div>
       </div>
       <div id="pay-transfer-fields" hidden>
         <label class="field">Referencia
@@ -42,6 +59,7 @@
       <div class="pay-credit-info" id="pay-credit-info" hidden>
         Venta a crédito: asigne un cliente y la venta se registra como saldo pendiente.
       </div>
+      <div class="pay-credit-info" id="pay-customer-summary" hidden></div>
       <div class="pay-note-preview" id="pay-note-preview">Nota: -</div>
       <div><strong>Cambio:</strong> <span data-cambio>$0.00</span></div>
     </section>
