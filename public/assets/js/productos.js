@@ -51,6 +51,8 @@
     importRows: []
   };
 
+  const NEW_DEPARTMENT_OPTION_VALUE = '__new_department__';
+
   function navigateToProductSub(view) {
     if (view === 'departments') {
       window.location.href = 'index.php?mod=productos&sub=departamentos';
@@ -77,12 +79,22 @@
 
   function setDepartmentOptions() {
     const $sel = $('#prod-department').empty();
+    const currentValue = ($sel.data('selected') || $sel.val() || 'Sin Departamento').toString();
     state.departments.forEach(dep => {
       $sel.append(`<option value="${escapeHtml(dep.name)}">${escapeHtml(dep.name)}</option>`);
     });
     if ($('#prod-department option').length === 0) {
       $sel.append('<option value="Sin Departamento">Sin Departamento</option>');
     }
+    const hasCurrent = $sel.find('option').toArray().some(function (opt) {
+      return ($(opt).val() || '').toString() === currentValue;
+    });
+    if (!hasCurrent) {
+      $sel.append(`<option value="${escapeHtml(currentValue)}">${escapeHtml(currentValue)}</option>`);
+    }
+    $sel.append('<option value="' + NEW_DEPARTMENT_OPTION_VALUE + '">+ Crear nuevo departamento...</option>');
+    $sel.val(currentValue);
+    $sel.data('selected', currentValue);
   }
 
   function setCatalogDepartmentOptions() {
@@ -101,6 +113,7 @@
       cost: 0,
       margin: 20,
       price: 0,
+      specialPrice: 0,
       wholesalePrice: 0,
       department: 'Sin Departamento',
       iva: 'No',
@@ -121,6 +134,7 @@
       cost: Number(product?.cost || 0),
       margin: Number(product?.margin || 20),
       price: Number(product?.price || 0),
+      specialPrice: Number(product?.specialPrice || 0),
       wholesalePrice: Number(product?.wholesale?.price || 0),
       department: product?.department || 'Sin Departamento',
       iva: normalizeIvaLabel(product?.iva),
@@ -157,19 +171,51 @@
     $('#prod-cost').val(Number(data.cost).toFixed(2));
     $('#prod-margin').val(Number(data.margin).toFixed(2));
     $('#prod-price').val(Number(data.price).toFixed(2));
+    $('#prod-special-price').val(Number(data.specialPrice || 0).toFixed(2));
     $('#prod-wholesale').val(Number(data.wholesalePrice).toFixed(2));
     $('#prod-department').val(data.department);
+    $('#prod-department').data('selected', data.department);
     $('#prod-iva').val(normalizeIvaLabel(data.iva));
     $('input[name="prod-unit-type"][value="' + data.unitType + '"]').prop('checked', true);
     $('#prod-inventory-enabled').prop('checked', !!data.inventoryEnabled);
     $('#prod-stock').val(String(data.stock));
     $('#prod-min-stock').val(String(data.minStock));
     $('#prod-max-stock').val(String(data.maxStock));
+    syncInventoryControls();
     syncPackagePanelVisibility();
     renderPackageItems();
   }
 
+  function recalcSalePriceFromMargin() {
+    const cost = parseFloat($('#prod-cost').val().toString()) || 0;
+    const margin = parseFloat($('#prod-margin').val().toString()) || 0;
+    const salePrice = Math.max(0, cost * (1 + (margin / 100)));
+    $('#prod-price').val(Number(salePrice).toFixed(2));
+  }
+
+  function syncInventoryControls() {
+    const isKit = isPackageProduct();
+    const $enabled = $('#prod-inventory-enabled');
+    const $stockInputs = $('#prod-stock, #prod-min-stock, #prod-max-stock');
+
+    if (isKit) {
+      $enabled.prop('checked', false).prop('disabled', true);
+      $stockInputs.val('0').prop('disabled', true);
+      return;
+    }
+
+    $enabled.prop('disabled', false);
+    const enabled = $enabled.is(':checked');
+    $stockInputs.prop('disabled', !enabled);
+  }
+
   function readForm() {
+    const isKit = ($('input[name="prod-unit-type"]:checked').val()?.toString() || 'unit') === 'package';
+    const inventoryEnabled = isKit ? false : $('#prod-inventory-enabled').is(':checked');
+    const stock = inventoryEnabled ? (parseInt($('#prod-stock').val().toString(), 10) || 0) : 0;
+    const minStock = inventoryEnabled ? (parseInt($('#prod-min-stock').val().toString(), 10) || 0) : 0;
+    const maxStock = inventoryEnabled ? (parseInt($('#prod-max-stock').val().toString(), 10) || 0) : 0;
+
     return {
       id: $('#prod-form').data('product-id') || '',
       barcode: $('#prod-barcode').val().toString().trim(),
@@ -177,6 +223,7 @@
       cost: parseFloat($('#prod-cost').val().toString()) || 0,
       margin: parseFloat($('#prod-margin').val().toString()) || 0,
       price: parseFloat($('#prod-price').val().toString()) || 0,
+      specialPrice: parseFloat($('#prod-special-price').val().toString()) || 0,
       wholesalePrice: parseFloat($('#prod-wholesale').val().toString()) || 0,
       department: $('#prod-department').val().toString(),
       iva: normalizeIvaLabel($('#prod-iva').val()),
@@ -189,10 +236,10 @@
           qty: Number(item.qty || 1)
         };
       }),
-      inventoryEnabled: $('#prod-inventory-enabled').is(':checked'),
-      stock: parseInt($('#prod-stock').val().toString(), 10) || 0,
-      minStock: parseInt($('#prod-min-stock').val().toString(), 10) || 0,
-      maxStock: parseInt($('#prod-max-stock').val().toString(), 10) || 0
+      inventoryEnabled: inventoryEnabled,
+      stock: stock,
+      minStock: minStock,
+      maxStock: maxStock
     };
   }
 
@@ -597,6 +644,22 @@
       window.alert('La descripción es requerida.');
       return;
     }
+    if ((payload.department || '') === NEW_DEPARTMENT_OPTION_VALUE) {
+      window.alert('Seleccione un departamento válido.');
+      return;
+    }
+
+    const duplicate = state.products.find(function (product) {
+      const sameBarcode = (product?.barcode || '').toString().trim() !== ''
+        && (product?.barcode || '').toString().trim() === payload.barcode;
+      if (!sameBarcode) return false;
+      if (state.mode === 'new') return true;
+      return (product?.id || '') !== (payload.id || '');
+    });
+    if (duplicate) {
+      window.alert('Ya existe otro producto con el mismo código de barras.');
+      return;
+    }
 
     const isNew = state.mode === 'new';
     const method = isNew ? 'POST' : 'PATCH';
@@ -673,6 +736,47 @@
       loadDepartments().done(() => {
         resetDepartmentForm();
       });
+    });
+  }
+
+  function createDepartmentInlineFromSelect() {
+    const $select = $('#prod-department');
+    const previous = ($select.data('selected') || 'Sin Departamento').toString();
+    const rawName = window.prompt('Nuevo departamento:', '');
+
+    if (rawName === null) {
+      $select.val(previous);
+      return;
+    }
+
+    const name = rawName.toString().trim();
+    if (!name) {
+      window.alert('El nombre del departamento es requerido.');
+      $select.val(previous);
+      return;
+    }
+
+    $.ajax({
+      url: '../api/departments.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ name })
+    }).done(function (res) {
+      if (!res.ok) {
+        window.alert(res.error || 'No se pudo guardar el departamento.');
+        $select.val(previous);
+        return;
+      }
+
+      const selectedName = (res.data?.name || name).toString();
+      loadDepartments().done(function () {
+        $('#prod-department').val(selectedName);
+        $('#prod-department').data('selected', selectedName);
+      });
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo guardar el departamento.';
+      window.alert(backendError);
+      $select.val(previous);
     });
   }
 
@@ -771,11 +875,22 @@
 
     $('#prod-save-btn').on('click', saveProduct);
     $('#prod-delete-btn').on('click', deleteProduct);
+    $('#prod-department').on('change', function () {
+      const value = ($(this).val() || '').toString();
+      if (value === NEW_DEPARTMENT_OPTION_VALUE) {
+        createDepartmentInlineFromSelect();
+        return;
+      }
+      $(this).data('selected', value || 'Sin Departamento');
+    });
     $('input[name="prod-unit-type"]').on('change', function () {
       state.selectedPackageIndex = -1;
+      syncInventoryControls();
       syncPackagePanelVisibility();
       renderPackageItems();
     });
+    $('#prod-inventory-enabled').on('change', syncInventoryControls);
+    $('#prod-cost, #prod-margin').on('input', recalcSalePriceFromMargin);
     let previewTimer = null;
     $('#prod-package-code').on('input', function () {
       if (previewTimer) {

@@ -111,6 +111,12 @@ switch ($mod) {
     case 'facturas':
         $content = $vistaDir . '/facturas/modulo.php';
         break;
+    case 'configuracion':
+        $content = $vistaDir . '/configuracion/modulo.php';
+        break;
+    case 'reportes':
+        $content = $vistaDir . '/reportes/modulo.php';
+        break;
     default:
         $content = $vistaDir . '/en-construccion.php';
         break;
@@ -124,7 +130,7 @@ switch ($mod) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>POS Minimarket</title>
     <link rel="stylesheet" href="assets/css/pos.css?v=<?php echo urlencode(assetVersion('assets/css/pos.css')); ?>">
-  <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+    <script src="assets/js/vendor/jquery-3.7.1.min.js?v=<?php echo urlencode(assetVersion('assets/js/vendor/jquery-3.7.1.min.js')); ?>"></script>
     <script src="assets/js/pos.js?v=<?php echo urlencode(assetVersion('assets/js/pos.js')); ?>" defer></script>
     <script src="assets/js/clientes.js?v=<?php echo urlencode(assetVersion('assets/js/clientes.js')); ?>" defer></script>
     <script src="assets/js/creditos.js?v=<?php echo urlencode(assetVersion('assets/js/creditos.js')); ?>" defer></script>
@@ -134,6 +140,8 @@ switch ($mod) {
     <script src="assets/js/inventario.js?v=<?php echo urlencode(assetVersion('assets/js/inventario.js')); ?>" defer></script>
     <script src="assets/js/corte.js?v=<?php echo urlencode(assetVersion('assets/js/corte.js')); ?>" defer></script>
     <script src="assets/js/facturas.js?v=<?php echo urlencode(assetVersion('assets/js/facturas.js')); ?>" defer></script>
+    <script src="assets/js/configuracion.js?v=<?php echo urlencode(assetVersion('assets/js/configuracion.js')); ?>" defer></script>
+    <script src="assets/js/reportes.js?v=<?php echo urlencode(assetVersion('assets/js/reportes.js')); ?>" defer></script>
 </head>
 <body>
 <div class="app-chrome">

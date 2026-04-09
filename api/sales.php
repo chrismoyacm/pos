@@ -262,6 +262,11 @@ foreach ($items as $it) {
         errorResponse('Producto no existe: ' . $id, 409);
     }
     $pIdx = $productIdToIndex[$id];
+    $inventoryEnabled = (bool)($products[$pIdx]['inventoryEnabled'] ?? true);
+    $unitType = strtolower(trim((string)($products[$pIdx]['unitType'] ?? 'unit')));
+    if (!$inventoryEnabled || $unitType === 'package') {
+        continue;
+    }
     $current = (int)($products[$pIdx]['stock'] ?? 0);
     $next = $current - $qty;
     if ($next < 0) {

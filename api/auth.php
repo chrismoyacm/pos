@@ -7,6 +7,96 @@ require_once __DIR__ . '/../utils/cash_shift.php';
 
 session_start();
 
+/**
+ * @return array<string, bool>
+ */
+function defaultPermissionsForRole(string $role): array
+{
+    $base = [
+        // Configuracion
+        'config_options_enabled' => false,
+        'config_cashiers' => false,
+        'config_modify_folios' => false,
+        'config_manage_boxes' => false,
+        'config_logo' => false,
+        'config_ticket' => false,
+        'config_taxes' => false,
+        'config_corte' => false,
+        'config_units' => false,
+        'config_ticket_printer' => false,
+        'config_barcode_reader' => false,
+
+        // Ventas
+        'ventas_use_common_product' => false,
+        'ventas_apply_wholesale' => false,
+        'ventas_apply_discount' => false,
+        'ventas_view_sales_history' => false,
+        'ventas_register_cash_in' => false,
+        'ventas_register_cash_out' => false,
+        'ventas_charge_ticket' => false,
+        'ventas_charge_credit' => false,
+        'ventas_cancel_tickets' => false,
+        'ventas_delete_sale_items' => false,
+        'ventas_invoice' => false,
+        'ventas_sell_service' => false,
+        'ventas_sell_recharges' => false,
+        'ventas_use_product_search' => false,
+
+        // Clientes
+        'clientes_create_edit_delete' => false,
+        'clientes_assign_to_sale' => false,
+        'clientes_assign_credit' => false,
+        'clientes_view_credit_accounts' => false,
+
+        // Productos
+        'productos_create' => false,
+        'productos_edit' => false,
+        'productos_delete' => false,
+        'productos_view_reports' => false,
+        'productos_create_promotions' => false,
+        'productos_modify_varios' => false,
+
+        // Inventario
+        'inventario_add_stock' => false,
+        'inventario_view_minimum_reports' => false,
+        'inventario_view_movements' => false,
+        'inventario_adjust' => false,
+
+        // Otros
+        'otros_access_reports' => false,
+        'otros_access_facturas' => false,
+        'otros_access_corte' => false,
+    ];
+
+    if ($role === 'admin') {
+        foreach ($base as $key => $value) {
+            $base[$key] = true;
+        }
+    }
+
+    return $base;
+}
+
+/**
+ * @param mixed $raw
+ * @return array<string, bool>
+ */
+function normalizePermissions(mixed $raw, string $role): array
+{
+    $defaults = defaultPermissionsForRole($role);
+    if (!is_array($raw)) {
+        return $defaults;
+    }
+
+    foreach ($defaults as $key => $value) {
+        if (array_key_exists($key, $raw)) {
+            $defaults[$key] = (bool)$raw[$key];
+        }
+    }
+
+    return $defaults;
+}
+
 $action = (string)($_GET['action'] ?? $_POST['action'] ?? '');
 
 if ($action === 'login') {
@@ -48,6 +138,7 @@ if ($action === 'login') {
     $_SESSION['username'] = $user['username'] ?? null;
     $_SESSION['name'] = $user['name'] ?? null;
     $_SESSION['role'] = $user['role'] ?? 'user';
+    $_SESSION['permissions'] = normalizePermissions($user['permissions'] ?? null, (string)($_SESSION['role'] ?? 'user'));
     $_SESSION['logged_in'] = true;
     $_SESSION['login_time'] = time();
     $openShift = findOpenShiftForUser(readCashOpenings(), $user['id'] ?? null);
@@ -84,7 +175,8 @@ if ($action === 'check') {
             'user' => [
                 'username' => $_SESSION['username'] ?? null,
                 'name' => $_SESSION['name'] ?? null,
-                'role' => $_SESSION['role'] ?? 'user'
+                'role' => $_SESSION['role'] ?? 'user',
+                'permissions' => is_array($_SESSION['permissions'] ?? null) ? $_SESSION['permissions'] : defaultPermissionsForRole((string)($_SESSION['role'] ?? 'user')),
             ]
         ]);
     } else {

@@ -43,6 +43,13 @@ function round2Inv(float $value): float
     return round($value, 2);
 }
 
+function isInventoryManagedProductInv(array $product): bool
+{
+    $unitType = strtolower(trim((string)($product['unitType'] ?? 'unit')));
+    $inventoryEnabled = (bool)($product['inventoryEnabled'] ?? true);
+    return $inventoryEnabled && $unitType !== 'package';
+}
+
 if ($method === 'GET') {
     $action = strtolower(trim((string)($_GET['action'] ?? 'products')));
 
@@ -55,7 +62,9 @@ if ($method === 'GET') {
     }
 
     $q = strtolower(trim((string)($_GET['q'] ?? '')));
-    $products = readJsonFile($productsPath);
+    $products = array_values(array_filter(readJsonFile($productsPath), static function ($p) {
+        return is_array($p) && isInventoryManagedProductInv($p);
+    }));
 
     if ($q === '') {
         ok(array_slice($products, 0, 200));
@@ -131,6 +140,9 @@ if ($method === 'PATCH' || $method === 'POST') {
     $margin = 0.0;
     foreach ($products as &$p) {
         if ((string)($p['id'] ?? '') === $productId) {
+            if (!isInventoryManagedProductInv($p)) {
+                errorResponse('El producto no maneja inventario (kit o inventario desactivado)', 409);
+            }
             $current = (int)($p['stock'] ?? 0);
             $next = $current + $delta;
             if ($next < 0) {
