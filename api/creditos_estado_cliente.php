@@ -4,6 +4,77 @@ declare(strict_types=1);
 require_once __DIR__ . '/../utils/json_store.php';
 require_once __DIR__ . '/../utils/credit_ledger.php';
 
+/**
+ * Build a valid date clamped to the last day of month when needed.
+ */
+function buildSafeDate(int $year, int $month, int $day): DateTimeImmutable
+{
+    $month = max(1, min(12, $month));
+    $day = max(1, min(31, $day));
+    $lastDay = cal_days_in_month(CAL_GREGORIAN, $month, $year);
+    $safeDay = min($day, $lastDay);
+    return new DateTimeImmutable(sprintf('%04d-%02d-%02d', $year, $month, $safeDay));
+}
+
+/**
+ * Calculate next due date using existing customer schedule.
+ *
+ * Priority:
+ * 1) Existing paymentDueDate day-of-month
+ * 2) paymentDueDay recurring day
+ * 3) Current day as fallback
+ */
+function nextDueDateForCustomer(array $customer): string
+{
+    $today = new DateTimeImmutable('today');
+
+    $paymentDueDateRaw = trim((string)($customer['paymentDueDate'] ?? ''));
+    $paymentDueDate = null;
+    if ($paymentDueDateRaw !== '') {
+        $tmp = DateTimeImmutable::createFromFormat('Y-m-d', $paymentDueDateRaw);
+        if ($tmp instanceof DateTimeImmutable && $tmp->format('Y-m-d') === $paymentDueDateRaw) {
+            $paymentDueDate = $tmp;
+        }
+    }
+
+    if ($paymentDueDate instanceof DateTimeImmutable) {
+        $year = (int)$paymentDueDate->format('Y');
+        $month = (int)$paymentDueDate->format('m') + 1;
+        if ($month > 12) {
+            $month = 1;
+            $year += 1;
+        }
+        $day = (int)$paymentDueDate->format('d');
+        return buildSafeDate($year, $month, $day)->format('Y-m-d');
+    }
+
+    $paymentDueDayRaw = $customer['paymentDueDay'] ?? null;
+    $paymentDueDay = is_numeric($paymentDueDayRaw) ? (int)$paymentDueDayRaw : null;
+    if ($paymentDueDay !== null && $paymentDueDay >= 1 && $paymentDueDay <= 31) {
+        $year = (int)$today->format('Y');
+        $month = (int)$today->format('m');
+        $thisMonthDue = buildSafeDate($year, $month, $paymentDueDay);
+
+        $nextYear = (int)$thisMonthDue->format('Y');
+        $nextMonth = (int)$thisMonthDue->format('m') + 1;
+        if ($nextMonth > 12) {
+            $nextMonth = 1;
+            $nextYear += 1;
+        }
+
+        return buildSafeDate($nextYear, $nextMonth, $paymentDueDay)->format('Y-m-d');
+    }
+
+    $fallbackYear = (int)$today->format('Y');
+    $fallbackMonth = (int)$today->format('m') + 1;
+    if ($fallbackMonth > 12) {
+        $fallbackMonth = 1;
+        $fallbackYear += 1;
+    }
+    $fallbackDay = (int)$today->format('d');
+    return buildSafeDate($fallbackYear, $fallbackMonth, $fallbackDay)->format('Y-m-d');
+}
+
 $customersPath = storagePath('customers.json');
 $creditPaymentsPath = storagePath('credit_payments.json');
 $request = getRequestInfo();
@@ -80,8 +151,22 @@ if ($method === 'POST') {
     $payments[] = $payment;
     writeJsonFile($creditPaymentsPath, $payments);
 
+    // Move due date to the next month after any registered payment.
+    foreach ($customers as &$customer) {
+        if (!is_array($customer)) {
+            continue;
+        }
+        if ((string)($customer['id'] ?? '') !== $cid) {
+            continue;
+        }
+        $customer['paymentDueDate'] = nextDueDateForCustomer($customer);
+        break;
+    }
+    unset($customer);
+    writeJsonFile($customersPath, $customers);
+
     $freshLedgers = buildCreditLedgers();
-    $freshBalance = round((float)(($freshLedgers[$cid]['summary']['balance'] ?? 0)), 2);
+    $freshBalance = round((float)($freshLedgers[$cid]['summary']['balance'] ?? 0), 2);
 
     ok([
         'payment' => $payment,
