@@ -293,15 +293,17 @@
           '<td>' + (item.barcode || '') + '</td>' +
           '<td>' + escapeHtml(item.name || '') + '</td>' +
           '<td class="catalog-center"><button type="button" class="' + ivaButtonClass + '" data-iva-idx="' + index + '">' + escapeHtml(ivaLabel) + '</button></td>' +
-          '<td class="venta-price-cell" data-price-idx="' + index + '">' + formatMoney(item.price) + '</td>' +
+          '<td class="venta-price-cell" data-price-idx="' + index + '" title="Doble click para editar precio">' + formatMoney(item.price) + '</td>' +
           '<td class="qty">' + item.qty + '</td>' +
           '<td>' + formatMoney(getItemNetAmount(item)) + '</td>' +
           '<td>' + (item.stock ?? '') + '</td>' +
         '</tr>'
       );
       $tr.on('click', function () {
-        state.selectedIndex = index;
-        renderGrid();
+        if (state.selectedIndex !== index) {
+          state.selectedIndex = index;
+          renderGrid();
+        }
       });
       $tr.find('.qty').on('dblclick', function (e) {
         e.stopPropagation();
@@ -314,6 +316,7 @@
       });
 
       $tr.find('[data-price-idx]').on('dblclick', function (e) {
+        e.preventDefault();
         e.stopPropagation();
         promptChangePrice(index);
       });

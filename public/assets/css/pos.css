@@ -120,10 +120,10 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
 .grid tbody tr:hover td{background:#f8fbff}
-.venta-price-cell{cursor:pointer;position:relative}
+.venta-price-cell{cursor:pointer;position:relative;user-select:none}
 .venta-price-cell:hover{background:#eef6ff}
 .venta-price-cell::after{
-  content:'ed';
+  content:'';
   font-size:10px;
   color:#64748b;
   margin-left:6px;
