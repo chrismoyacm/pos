@@ -121,6 +121,7 @@ function normalizeProduct(array $body, ?array $existing = null): array
     $cost = round((float)($body['cost'] ?? ($existing['cost'] ?? 0)), 2);
     $margin = round((float)($body['margin'] ?? ($existing['margin'] ?? 20)), 2);
     $price = round((float)($body['price'] ?? ($existing['price'] ?? 0)), 2);
+    $specialPrice = round((float)($body['specialPrice'] ?? ($existing['specialPrice'] ?? 0)), 2);
     $wholesalePrice = round((float)($body['wholesalePrice'] ?? ($existing['wholesale']['price'] ?? 0)), 2);
     $wholesaleMinQty = (int)($body['wholesaleMinQty'] ?? ($existing['wholesale']['minQty'] ?? 6));
     $stock = (int)($body['stock'] ?? ($existing['stock'] ?? 0));
@@ -161,8 +162,15 @@ function normalizeProduct(array $body, ?array $existing = null): array
     if ($name === '') {
         errorResponse('Nombre requerido', 400);
     }
-    if ($price < 0 || $cost < 0 || $wholesalePrice < 0) {
+    if ($price < 0 || $specialPrice < 0 || $cost < 0 || $wholesalePrice < 0) {
         errorResponse('Precios inválidos', 400);
+    }
+
+    if ($unitType === 'package') {
+        $inventoryEnabled = false;
+        $stock = 0;
+        $minStock = 0;
+        $maxStock = 0;
     }
 
     $product = [
@@ -172,6 +180,7 @@ function normalizeProduct(array $body, ?array $existing = null): array
         'cost' => $cost,
         'margin' => $margin,
         'price' => $price,
+        'specialPrice' => $specialPrice,
         'stock' => $stock,
         'minStock' => $minStock,
         'maxStock' => $maxStock,
@@ -193,6 +202,30 @@ function normalizeProduct(array $body, ?array $existing = null): array
     }
 
     return $product;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $products
+ */
+function barcodeExists(array $products, string $barcode, ?string $excludeId = null): bool
+{
+    $needle = trim(strtolower($barcode));
+    if ($needle === '') {
+        return false;
+    }
+
+    foreach ($products as $product) {
+        $id = (string)($product['id'] ?? '');
+        if ($excludeId !== null && $excludeId !== '' && $id === $excludeId) {
+            continue;
+        }
+        $candidate = trim(strtolower((string)($product['barcode'] ?? '')));
+        if ($candidate !== '' && $candidate === $needle) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 if ($method === 'GET') {
@@ -338,6 +371,9 @@ if ($method === 'POST') {
 
     $products = readJsonFile($productsPath);
     $product = normalizeProduct($body);
+    if (barcodeExists($products, (string)($product['barcode'] ?? ''))) {
+        errorResponse('Ya existe un producto con ese código de barras', 409);
+    }
     $product['id'] = nextProductId($products);
     $products[] = $product;
     writeJsonFile($productsPath, $products);
@@ -395,6 +431,9 @@ if ($method === 'PATCH') {
             continue;
         }
         $nextProduct = normalizeProduct($body, $product);
+        if (barcodeExists($products, (string)($nextProduct['barcode'] ?? ''), $id)) {
+            errorResponse('Ya existe un producto con ese código de barras', 409);
+        }
         $nextProduct['id'] = $id;
         $products[$idx] = $nextProduct;
         $updated = $nextProduct;

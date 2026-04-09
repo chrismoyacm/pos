@@ -84,7 +84,11 @@ declare(strict_types=1);
                   </label>
                   <label class="prod-field">
                     <span>Precio Venta</span>
-                    <input type="number" step="0.01" min="0" id="prod-price">
+                    <input type="number" step="0.01" min="0" id="prod-price" readonly>
+                  </label>
+                  <label class="prod-field">
+                    <span>Precio Especial</span>
+                    <input type="number" step="0.01" min="0" id="prod-special-price">
                   </label>
                   <label class="prod-field">
                     <span>Precio Mayoreo</span>
