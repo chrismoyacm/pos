@@ -10,7 +10,7 @@
     paidWith: 0,
     change: 0,
     paymentMethod: 'cash',
-    mixedPayments: { cash: 0, credit: 0 },
+    mixedPayments: { cash: 0, transfer: 0, credit: 0 },
     paymentNote: '',
     transferMeta: { reference: '', phone: '' },
     saleDiscountPct: 0,
@@ -112,6 +112,7 @@
       const mixed = parsed.mixedPayments || {};
       state.mixedPayments = {
         cash: Number(mixed.cash || 0),
+        transfer: Number(mixed.transfer || 0),
         credit: Number(mixed.credit ?? mixed.card ?? 0)
       };
       state.paymentNote = (parsed.paymentNote || '').toString();
@@ -134,7 +135,7 @@
       state.paidWith = 0;
       state.change = 0;
       state.paymentMethod = 'cash';
-      state.mixedPayments = { cash: 0, credit: 0 };
+      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
       state.paymentNote = '';
       state.transferMeta = { reference: '', phone: '' };
       state.saleDiscountPct = 0;
@@ -201,12 +202,17 @@
 
   function buildPaymentNote() {
     const baseNote = (state.paymentNote || '').toString().trim();
-    if (state.paymentMethod !== 'transfer') {
+    if (state.paymentMethod !== 'transfer' && state.paymentMethod !== 'mixed') {
       return baseNote;
     }
 
-    const ref = ($('#modal-pago [name=transferRef]').val() || '').toString().trim();
-    const phone = ($('#modal-pago [name=transferPhone]').val() || '').toString().trim();
+    const isMixed = state.paymentMethod === 'mixed';
+    const ref = isMixed
+      ? ($('#modal-pago [name=mixedTransferRef]').val() || '').toString().trim()
+      : ($('#modal-pago [name=transferRef]').val() || '').toString().trim();
+    const phone = isMixed
+      ? ''
+      : ($('#modal-pago [name=transferPhone]').val() || '').toString().trim();
     state.transferMeta.reference = ref;
     state.transferMeta.phone = phone;
 
@@ -215,7 +221,7 @@
     }
 
     const parts = [];
-    if (ref) parts.push('Ref: ' + ref);
+    if (ref) parts.push(isMixed ? ('Ref transfer (mixto): ' + ref) : ('Ref: ' + ref));
     if (phone) parts.push('Tel: ' + phone);
     const transferNote = parts.join(' | ');
     return baseNote ? (baseNote + ' | ' + transferNote) : transferNote;
@@ -551,7 +557,7 @@
     const disableAmount = !showCash;
 
     // Reset all method-specific sections first so only the current method fields remain visible.
-    $('#pay-single-field, #pay-mixed-grid, #pay-credit-picker, #pay-transfer-fields, #pay-credit-info, #pay-customer-summary')
+    $('#pay-single-field, #pay-mixed-grid, #pay-mixed-transfer-ref, #pay-credit-picker, #pay-transfer-fields, #pay-credit-info, #pay-customer-summary')
       .prop('hidden', true)
       .hide();
 
@@ -560,6 +566,7 @@
     }
     if (showMixed) {
       $('#pay-mixed-grid').prop('hidden', false).show();
+      $('#pay-mixed-transfer-ref').prop('hidden', false).show();
     }
     if (showCredit) {
       $('#pay-credit-picker').prop('hidden', false).show();
@@ -573,30 +580,38 @@
     if (showCredit) {
       $('#pay-credit-info').text('Venta a crédito: seleccione cliente y el total se registra como saldo pendiente.');
     } else if (showMixed) {
-      $('#pay-credit-info').text('Pago mixto: efectivo + crédito (cliente seleccionado previamente).');
+      $('#pay-credit-info').text('Pago mixto: efectivo + transferencia + crédito (si usa crédito, cliente seleccionado).');
     }
     $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount);
 
     if (showCredit) {
       $('#modal-pago [name=pagoCon]').val('0.00');
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
+      $('#modal-pago [name=pagoConTransferencia]').val('0.00');
       $('#modal-pago [name=pagoConCredito]').val('0.00');
-      state.mixedPayments = { cash: 0, credit: 0 };
+      $('#modal-pago [name=mixedTransferRef]').val('');
+      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
       loadPayCreditCustomers($('#modal-pago [name=creditCustomerQ]').val());
     } else if (showTransfer) {
       $('#modal-pago [name=pagoCon]').val(isAutoPaidMethod() ? state.total.toFixed(2) : '0.00');
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
+      $('#modal-pago [name=pagoConTransferencia]').val('0.00');
       $('#modal-pago [name=pagoConCredito]').val('0.00');
-      state.mixedPayments = { cash: 0, credit: 0 };
+      $('#modal-pago [name=mixedTransferRef]').val('');
+      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
     } else if (showCash) {
       $('#modal-pago [name=pagoConEfectivo]').val('0.00');
+      $('#modal-pago [name=pagoConTransferencia]').val('0.00');
       $('#modal-pago [name=pagoConCredito]').val('0.00');
-      state.mixedPayments = { cash: 0, credit: 0 };
+      $('#modal-pago [name=mixedTransferRef]').val('');
+      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
     }
 
     if (showMixed) {
       $('#modal-pago [name=pagoConEfectivo]').val(state.mixedPayments.cash ? state.mixedPayments.cash.toFixed(2) : '');
+      $('#modal-pago [name=pagoConTransferencia]').val(state.mixedPayments.transfer ? state.mixedPayments.transfer.toFixed(2) : '');
       $('#modal-pago [name=pagoConCredito]').val(state.mixedPayments.credit ? state.mixedPayments.credit.toFixed(2) : '');
+      $('#modal-pago [name=mixedTransferRef]').val(state.transferMeta.reference || '');
     }
 
     renderPayCustomerSummary();
@@ -611,9 +626,11 @@
     setPaymentMethod(state.paymentMethod);
     $('#modal-pago [name=pagoCon]').val(isCreditPayment() ? '0.00' : '');
     $('#modal-pago [name=pagoConEfectivo]').val(state.mixedPayments.cash ? state.mixedPayments.cash.toFixed(2) : '');
+    $('#modal-pago [name=pagoConTransferencia]').val(state.mixedPayments.transfer ? state.mixedPayments.transfer.toFixed(2) : '');
     $('#modal-pago [name=pagoConCredito]').val(state.mixedPayments.credit ? state.mixedPayments.credit.toFixed(2) : '');
     $('#modal-pago [name=transferRef]').val(state.transferMeta.reference || '');
     $('#modal-pago [name=transferPhone]').val(state.transferMeta.phone || '');
+    $('#modal-pago [name=mixedTransferRef]').val(state.transferMeta.reference || '');
     $('#modal-pago [name=creditCustomerQ]').val('');
     $('#pay-note-preview').text('Nota: ' + (state.paymentNote ? state.paymentNote : '-'));
     $('#modal-pago [data-cambio]').text(formatMoney(0));
@@ -660,14 +677,17 @@
 
     if (isMixedPayment()) {
       const cashPart = parseFloat($('#modal-pago [name=pagoConEfectivo]').val().toString()) || 0;
+      const transferPart = parseFloat($('#modal-pago [name=pagoConTransferencia]').val().toString()) || 0;
       const creditPart = parseFloat($('#modal-pago [name=pagoConCredito]').val().toString()) || 0;
-      const totalCovered = Math.max(0, cashPart) + Math.max(0, creditPart);
+      state.transferMeta.reference = ($('#modal-pago [name=mixedTransferRef]').val() || '').toString().trim();
+      const totalCovered = Math.max(0, cashPart) + Math.max(0, transferPart) + Math.max(0, creditPart);
       const changeMixed = Math.max(0, totalCovered - state.total);
       state.mixedPayments = {
         cash: Math.max(0, cashPart),
+        transfer: Math.max(0, transferPart),
         credit: Math.max(0, creditPart)
       };
-      state.paidWith = Math.max(0, cashPart);
+      state.paidWith = Math.max(0, cashPart) + Math.max(0, transferPart);
       state.change = changeMixed;
       $('#modal-pago [data-cambio]').text(formatMoney(changeMixed));
       recalc();
@@ -707,9 +727,9 @@
     }).join('');
 
     const paymentMethod = paymentMethodLabel(String(safeSale.paymentMethod || 'cash'));
-    const mixed = safeSale.mixedPayments || { cash: 0, credit: 0 };
+    const mixed = safeSale.mixedPayments || { cash: 0, transfer: 0, credit: 0 };
     const mixedInfo = String(safeSale.paymentMethod || '') === 'mixed'
-      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Crédito: ' + formatMoney(Number(mixed.credit || mixed.card || 0)) + '</div>'
+      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Transferencia: ' + formatMoney(Number(mixed.transfer || 0)) + ' | Crédito: ' + formatMoney(Number(mixed.credit || mixed.card || 0)) + '</div>'
       : '';
 
     const html = [
@@ -803,28 +823,36 @@
       return;
     }
 
-    if ((isCreditPayment() || isMixedPayment()) && !hasAssignedCreditCustomer()) {
+    if (isCreditPayment() && !hasAssignedCreditCustomer()) {
       window.alert('Asigne un cliente antes de registrar saldo pendiente.');
       return;
     }
 
-    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.credit <= 0) {
+    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.transfer <= 0 && state.mixedPayments.credit <= 0) {
       window.alert('Ingrese montos para pago mixto.');
       return;
     }
 
     if (isMixedPayment()) {
-      const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.credit || 0);
+      const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.transfer || 0) + Number(state.mixedPayments.credit || 0);
       if (covered < state.total) {
-        window.alert('En pago mixto, Efectivo + Crédito debe cubrir el total.');
-        return;
-      }
-      if (state.mixedPayments.credit <= 0) {
-        window.alert('En pago mixto debe registrar una parte a crédito.');
+        window.alert('En pago mixto, Efectivo + Transferencia + Crédito debe cubrir el total.');
         return;
       }
       if (state.mixedPayments.cash < 0) {
         window.alert('Monto de efectivo inválido.');
+        return;
+      }
+      if (state.mixedPayments.transfer < 0) {
+        window.alert('Monto de transferencia inválido.');
+        return;
+      }
+      if (state.mixedPayments.transfer > 0 && (state.transferMeta.reference || '').toString().trim() === '') {
+        window.alert('Ingrese referencia de transferencia en pago mixto.');
+        return;
+      }
+      if (state.mixedPayments.credit > 0 && !hasAssignedCreditCustomer()) {
+        window.alert('Seleccione cliente cuando haya parte a crédito en pago mixto.');
         return;
       }
     }
@@ -904,7 +932,7 @@
         paidWith: state.paidWith,
         change: state.change,
         paymentMethod: state.paymentMethod,
-        mixedPayments: state.paymentMethod === 'mixed' ? { cash: state.mixedPayments.cash, credit: state.mixedPayments.credit } : null,
+        mixedPayments: state.paymentMethod === 'mixed' ? { cash: state.mixedPayments.cash, transfer: state.mixedPayments.transfer, credit: state.mixedPayments.credit } : null,
         customerName: state.customer?.name || 'Publico en general',
         paymentNote: paymentNotePayload
       };
@@ -915,7 +943,7 @@
       state.paidWith = 0;
       state.change = 0;
       state.paymentMethod = 'cash';
-      state.mixedPayments = { cash: 0, credit: 0 };
+      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
       state.paymentNote = '';
       state.transferMeta = { reference: '', phone: '' };
       state.saleDiscountPct = 0;
@@ -1338,7 +1366,8 @@
       }
     });
     $('#modal-pago [name=pagoCon]').on('input', updateCambio);
-    $('#modal-pago [name=pagoConEfectivo], #modal-pago [name=pagoConCredito]').on('input', updateCambio);
+    $('#modal-pago [name=pagoConEfectivo], #modal-pago [name=pagoConTransferencia], #modal-pago [name=pagoConCredito]').on('input', updateCambio);
+    $('#modal-pago [name=mixedTransferRef]').on('input', updateCambio);
     $('#modal-pago [name=transferRef], #modal-pago [name=transferPhone]').on('input', updateCambio);
     $('#modal-pago [name=creditCustomerQ]').on('input', function () {
       loadPayCreditCustomers($(this).val().toString());

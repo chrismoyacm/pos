@@ -183,7 +183,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   border-color:#3b6ea5;
   color:#1e3a8a;
 }
-.pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pay-mixed-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .pay-credit-info{
   border:1px solid #bfdbfe;
   border-radius:6px;
@@ -213,8 +213,12 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 
 @media (max-width: 900px){
   .pay-method-picker{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .pay-mixed-grid{grid-template-columns:1fr}
+  .pay-mixed-grid{grid-template-columns:1fr 1fr}
   .modal-sales-grid{grid-template-columns:1fr}
+}
+
+@media (max-width: 600px){
+  .pay-mixed-grid{grid-template-columns:1fr}
 }
 .btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary-2);border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-secondary{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;cursor:pointer}
