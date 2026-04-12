@@ -13,6 +13,11 @@
     const permissionTabs = Array.from(root.querySelectorAll('.config-perm-tab'));
     const permissionPanels = Array.from(root.querySelectorAll('.config-perm-panel'));
     const ticketPreviewNode = document.getElementById('cfg-ticket-preview');
+    const readerTestInput = document.getElementById('cfg-reader-test-input');
+    const readerTestStatus = document.getElementById('cfg-reader-test-status');
+    const readerTestSpeed = document.getElementById('cfg-reader-test-speed');
+    const readerTestLast = document.getElementById('cfg-reader-test-last');
+    const readerTestLogBody = document.querySelector('#cfg-reader-test-log tbody');
 
     const state = {
         settings: null,
@@ -20,6 +25,12 @@
         currentUser: null,
         selectedUserId: 0,
         userFilter: '',
+        scannerProbe: {
+            buffer: '',
+            deltas: [],
+            lastTs: 0,
+            timer: null,
+        },
     };
 
     function setStatus(message, isError) {
@@ -143,6 +154,8 @@
 
         $('#cfg-box-require-opening').prop('checked', !!boxes.require_opening);
         $('#cfg-box-close-diff').prop('checked', !!boxes.allow_close_with_difference);
+        $('#cfg-box-drawer-printer-model').val((boxes.drawer_printer_model || '').toString());
+        $('#cfg-box-drawer-connection').val((boxes.drawer_connection || 'USB').toString());
 
         $('#cfg-brand-store-name').val(branding.store_name || '');
         $('#cfg-brand-logo-text').val(branding.logo_text || '');
@@ -179,6 +192,8 @@
 
         const printer = devices.ticket_printer || {};
         $('#cfg-printer-enabled').prop('checked', !!printer.enabled);
+        $('#cfg-printer-model').val((printer.model || printer.name || 'POS-80C').toString());
+        $('#cfg-printer-connection').val((printer.connection || 'USB').toString());
         $('#cfg-printer-name').val(printer.name || '');
         $('#cfg-printer-font-family').val(printer.font_family || 'Consolas');
         $('#cfg-printer-font-size').val(Number(printer.font_size || 10));
@@ -188,8 +203,13 @@
 
         const reader = devices.barcode_reader || {};
         $('#cfg-reader-enabled').prop('checked', !!reader.enabled);
+        $('#cfg-reader-model').val((reader.model || 'SU13').toString());
         $('#cfg-reader-name').val(reader.name || '');
+        $('#cfg-reader-suffix-key').val((reader.suffix_key || 'ENTER').toString());
         $('#cfg-reader-serial-enabled').prop('checked', !!reader.serial_enabled);
+        $('#cfg-reader-serial-port').val((reader.serial_port || '').toString());
+        $('#cfg-reader-serial-baud').val(String(reader.serial_baud || 9600));
+        updateReaderSerialVisibility();
 
         renderTicketPreview();
     }
@@ -212,6 +232,8 @@
             boxes: {
                 require_opening: $('#cfg-box-require-opening').is(':checked'),
                 allow_close_with_difference: $('#cfg-box-close-diff').is(':checked'),
+                drawer_printer_model: ($('#cfg-box-drawer-printer-model').val() || '').toString().trim(),
+                drawer_connection: ($('#cfg-box-drawer-connection').val() || 'USB').toString().trim(),
             },
             branding: {
                 store_name: ($('#cfg-brand-store-name').val() || '').toString().trim(),
@@ -256,6 +278,8 @@
             devices: {
                 ticket_printer: {
                     enabled: $('#cfg-printer-enabled').is(':checked'),
+                    model: ($('#cfg-printer-model').val() || 'POS-80C').toString().trim(),
+                    connection: ($('#cfg-printer-connection').val() || 'USB').toString().trim(),
                     name: ($('#cfg-printer-name').val() || '').toString().trim(),
                     font_family: ($('#cfg-printer-font-family').val() || 'Consolas').toString().trim(),
                     font_size: Number($('#cfg-printer-font-size').val() || 10),
@@ -265,15 +289,175 @@
                 },
                 barcode_reader: {
                     enabled: $('#cfg-reader-enabled').is(':checked'),
+                    model: ($('#cfg-reader-model').val() || 'SU13').toString().trim(),
                     name: ($('#cfg-reader-name').val() || '').toString().trim(),
+                    suffix_key: ($('#cfg-reader-suffix-key').val() || 'ENTER').toString().trim(),
                     serial_enabled: $('#cfg-reader-serial-enabled').is(':checked'),
+                    serial_port: ($('#cfg-reader-serial-port').val() || '').toString().trim(),
+                    serial_baud: Number($('#cfg-reader-serial-baud').val() || 9600),
                 },
             },
         };
     }
 
+    function updateReaderSerialVisibility() {
+        const enabled = $('#cfg-reader-serial-enabled').is(':checked');
+        const serialPort = $('#cfg-reader-serial-port').closest('label');
+        const serialBaud = $('#cfg-reader-serial-baud').closest('label');
+
+        if (enabled) {
+            serialPort.show();
+            serialBaud.show();
+        } else {
+            serialPort.hide();
+            serialBaud.hide();
+        }
+    }
+
     function getSelectedUser() {
         return state.users.find(function (u) { return Number(u.id) === Number(state.selectedUserId); }) || null;
+    }
+
+    function scannerReset() {
+        if (state.scannerProbe.timer) {
+            window.clearTimeout(state.scannerProbe.timer);
+        }
+        state.scannerProbe.buffer = '';
+        state.scannerProbe.deltas = [];
+        state.scannerProbe.lastTs = 0;
+        state.scannerProbe.timer = null;
+    }
+
+    function scannerSetStatus(text, isError) {
+        if (readerTestStatus) {
+            readerTestStatus.textContent = text;
+            readerTestStatus.style.color = isError ? '#b91c1c' : '#1f3b6b';
+        }
+    }
+
+    function scannerAppendLog(entry) {
+        if (!readerTestLogBody) {
+            return;
+        }
+
+        const row = '<tr>' +
+            '<td>' + escapeHtml(entry.time) + '</td>' +
+            '<td>' + escapeHtml(entry.code) + '</td>' +
+            '<td>' + entry.length + '</td>' +
+            '<td>' + entry.avgMs + '</td>' +
+            '<td>' + escapeHtml(entry.classification) + '</td>' +
+            '</tr>';
+
+        readerTestLogBody.insertAdjacentHTML('afterbegin', row);
+    }
+
+    function scannerFinalize(reason) {
+        const code = state.scannerProbe.buffer.trim();
+        if (!code) {
+            scannerReset();
+            return;
+        }
+
+        const deltas = state.scannerProbe.deltas;
+        const avg = deltas.length ? (deltas.reduce(function (acc, v) { return acc + v; }, 0) / deltas.length) : 0;
+        const looksScanner = code.length >= 6 && avg > 0 && avg <= 45;
+        const classification = looksScanner ? 'Lector (probable)' : 'Manual / indeterminado';
+
+        if (readerTestSpeed) {
+            readerTestSpeed.textContent = avg > 0 ? ('Promedio: ' + avg.toFixed(1) + ' ms/tecla') : '';
+        }
+        if (readerTestLast) {
+            readerTestLast.textContent = 'Último código (' + reason + '): ' + code;
+        }
+
+        scannerSetStatus(looksScanner ? 'Lectura detectada correctamente.' : 'Lectura lenta: parece ingreso manual.', !looksScanner);
+        scannerAppendLog({
+            time: new Date().toLocaleTimeString('es-EC'),
+            code: code,
+            length: code.length,
+            avgMs: avg > 0 ? avg.toFixed(1) : '-',
+            classification: classification,
+        });
+
+        scannerReset();
+        if (readerTestInput) {
+            readerTestInput.value = '';
+        }
+    }
+
+    function initScannerProbe() {
+        if (!readerTestInput) {
+            return;
+        }
+
+        scannerSetStatus('Esperando lectura...', false);
+
+        readerTestInput.addEventListener('keydown', function (event) {
+            const now = window.performance ? window.performance.now() : Date.now();
+
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                scannerFinalize('enter');
+                return;
+            }
+
+            if (event.key === 'Tab') {
+                scannerFinalize('tab');
+                return;
+            }
+
+            if (event.key === 'Backspace') {
+                state.scannerProbe.buffer = state.scannerProbe.buffer.slice(0, -1);
+                return;
+            }
+
+            if (event.key.length === 1) {
+                if (state.scannerProbe.lastTs > 0) {
+                    state.scannerProbe.deltas.push(now - state.scannerProbe.lastTs);
+                }
+                state.scannerProbe.lastTs = now;
+                state.scannerProbe.buffer += event.key;
+
+                if (state.scannerProbe.timer) {
+                    window.clearTimeout(state.scannerProbe.timer);
+                }
+                state.scannerProbe.timer = window.setTimeout(function () {
+                    scannerFinalize('timeout');
+                }, 90);
+            }
+        });
+
+        $('#cfg-reader-start-test').on('click', function () {
+            scannerReset();
+            if (readerTestInput) {
+                readerTestInput.value = '';
+                readerTestInput.focus();
+            }
+            if (readerTestLast) {
+                readerTestLast.textContent = '';
+            }
+            if (readerTestSpeed) {
+                readerTestSpeed.textContent = '';
+            }
+            scannerSetStatus('Prueba iniciada. Escanea un código...', false);
+        });
+
+        $('#cfg-reader-clear-test').on('click', function () {
+            scannerReset();
+            if (readerTestInput) {
+                readerTestInput.value = '';
+            }
+            if (readerTestLogBody) {
+                readerTestLogBody.innerHTML = '';
+            }
+            if (readerTestLast) {
+                readerTestLast.textContent = '';
+            }
+            if (readerTestSpeed) {
+                readerTestSpeed.textContent = '';
+            }
+            scannerSetStatus('Esperando lectura...', false);
+        });
     }
 
     function renderTicketPreview() {
@@ -330,6 +514,25 @@
         win.document.close();
         win.focus();
         win.print();
+    }
+
+    function testDrawerOpen() {
+        const printerEnabled = $('#cfg-printer-enabled').is(':checked');
+        const drawerStatus = document.getElementById('cfg-box-drawer-status');
+
+        if (!drawerStatus) {
+            return;
+        }
+
+        if (!printerEnabled) {
+            drawerStatus.textContent = 'Activa la impresora de tickets antes de probar el cajon.';
+            drawerStatus.style.color = '#b91c1c';
+            return;
+        }
+
+        drawerStatus.textContent = 'Se abrio prueba de impresion. Si el cajon esta conectado al puerto RJ11 de la impresora, deberia abrirse.';
+        drawerStatus.style.color = '#1f3b6b';
+        printTicketPreview();
     }
 
     function renderUsers() {
@@ -496,6 +699,9 @@
         $('#cfg-save-printer').on('click', function () { saveSettingsSection('devices'); });
         $('#cfg-save-reader').on('click', function () { saveSettingsSection('devices'); });
         $('#cfg-ticket-test-print').on('click', printTicketPreview);
+        $('#cfg-printer-test').on('click', printTicketPreview);
+        $('#cfg-box-drawer-test').on('click', testDrawerOpen);
+        $('#cfg-reader-serial-enabled').on('change', updateReaderSerialVisibility);
 
         $('#cfg-user-new').on('click', function () {
             resetUserEditor();
@@ -554,6 +760,7 @@
             fillUserEditor(getSelectedUser());
             bindEvents();
             enforcePermissionVisibility();
+            initScannerProbe();
             setStatus('', false);
         } catch (err) {
             setStatus(err.message || 'No se pudo cargar Configuración', true);

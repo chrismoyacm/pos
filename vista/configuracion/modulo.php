@@ -184,6 +184,33 @@
                     <label class="config-check-row"><input type="checkbox" id="cfg-box-require-opening"> Requerir apertura de caja</label>
                     <label class="config-check-row"><input type="checkbox" id="cfg-box-close-diff"> Permitir cierre con diferencia</label>
                 </div>
+
+                <div class="config-device-card">
+                    <h4>CAJON / GAVETA DE DINERO</h4>
+                    <p class="muted">Elige la impresora a la cual esta conectado el cajon y el tipo de conexion.</p>
+                    <div class="config-form-grid">
+                        <label>Modelo de impresora para cajon
+                            <select id="cfg-box-drawer-printer-model">
+                                <option value="">Seleccionar...</option>
+                                <option value="Epson TM-U220">Epson TM-U220</option>
+                                <option value="POS-80C">POS-80C</option>
+                                <option value="Generic ESC/POS">Generic ESC/POS</option>
+                            </select>
+                        </label>
+                        <label>Tipo de conexion
+                            <select id="cfg-box-drawer-connection">
+                                <option value="USB">USB</option>
+                                <option value="SERIAL">SERIAL</option>
+                                <option value="LAN">LAN</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="config-reader-test-controls">
+                        <button class="btn-secondary" type="button" id="cfg-box-drawer-test">Probar apertura del cajon</button>
+                    </div>
+                    <div id="cfg-box-drawer-status" class="config-device-status"></div>
+                </div>
+
                 <div class="config-actions">
                     <button class="btn-primary" type="button" id="cfg-save-boxes">Guardar cajas</button>
                 </div>
@@ -317,12 +344,36 @@
                 <h3>Impresora de tickets</h3>
                 <div class="config-form-grid">
                     <label class="config-check-row"><input type="checkbox" id="cfg-printer-enabled"> Habilitada</label>
-                    <label>Nombre del dispositivo<input type="text" id="cfg-printer-name"></label>
-                    <label>Fuente de impresión normal<input type="text" id="cfg-printer-font-family"></label>
+                    <label>Impresora de tickets
+                        <select id="cfg-printer-model">
+                            <option value="POS-80C">POS-80C</option>
+                            <option value="Epson TM-U220">Epson TM-U220</option>
+                            <option value="Generic ESC/POS">Generic ESC/POS</option>
+                        </select>
+                    </label>
+                    <label>Conexion
+                        <select id="cfg-printer-connection">
+                            <option value="USB">USB</option>
+                            <option value="SERIAL">SERIAL</option>
+                            <option value="LAN">LAN</option>
+                        </select>
+                    </label>
+                    <label>Nombre de cola del sistema<input type="text" id="cfg-printer-name" placeholder="Ej. POS-80C"></label>
+                    <label>Fuente de impresion normal
+                        <select id="cfg-printer-font-family">
+                            <option value="Consolas">Consolas</option>
+                            <option value="HoloLens MDL2 Assets">HoloLens MDL2 Assets</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Lucida Console">Lucida Console</option>
+                        </select>
+                    </label>
                     <label>Tamaño de fuente<input type="number" id="cfg-printer-font-size" min="8" max="20"></label>
                     <label>Columnas<input type="number" id="cfg-printer-columns" min="20" max="80"></label>
                     <label class="config-check-row"><input type="checkbox" id="cfg-printer-use-normal-totals"> Usar fuente normal para los totales</label>
                     <label class="config-check-row"><input type="checkbox" id="cfg-printer-bold-letters"> Poner todas las letras en negrita</label>
+                </div>
+                <div class="config-reader-test-controls">
+                    <button class="btn-secondary" type="button" id="cfg-printer-test">Probar impresion</button>
                 </div>
                 <div class="config-actions">
                     <button class="btn-primary" type="button" id="cfg-save-printer">Guardar impresora</button>
@@ -334,9 +385,65 @@
                 <p class="muted">Si cuentas con lector de código de barras con emulación de teclado, no es necesario configurar el lector.</p>
                 <div class="config-form-grid">
                     <label class="config-check-row"><input type="checkbox" id="cfg-reader-enabled"> Habilitado</label>
-                    <label>Nombre del dispositivo<input type="text" id="cfg-reader-name"></label>
+                    <label>Modelo del lector
+                        <select id="cfg-reader-model">
+                            <option value="SU13">SU13</option>
+                            <option value="H-300">H-300</option>
+                            <option value="GENERIC_2D">Generico 2D</option>
+                            <option value="GENERIC_1D">Generico 1D</option>
+                        </select>
+                    </label>
+                    <label>Nombre del dispositivo<input type="text" id="cfg-reader-name" placeholder="Ej. Barcode Scanner"></label>
+                    <label>Tecla de cierre del escaneo
+                        <select id="cfg-reader-suffix-key">
+                            <option value="ENTER">Enter</option>
+                            <option value="TAB">Tab</option>
+                            <option value="NONE">Ninguna</option>
+                        </select>
+                    </label>
                     <label class="config-check-row"><input type="checkbox" id="cfg-reader-serial-enabled"> Utilizo un lector de código de barras serial</label>
+                    <label>Puerto serial (opcional)<input type="text" id="cfg-reader-serial-port" placeholder="Ej. COM3"></label>
+                    <label>Baudios serial
+                        <select id="cfg-reader-serial-baud">
+                            <option value="9600">9600</option>
+                            <option value="19200">19200</option>
+                            <option value="38400">38400</option>
+                            <option value="115200">115200</option>
+                        </select>
+                    </label>
                 </div>
+
+                <div class="config-reader-test" id="cfg-reader-test">
+                    <h4>Prueba de lector de código de barras</h4>
+                    <p class="muted">Haz click en Iniciar prueba, escanea un código y verificamos si la captura parece lector (rápida) o teclado manual.</p>
+                    <div class="config-reader-test-controls">
+                        <button class="btn-secondary" type="button" id="cfg-reader-start-test">Iniciar prueba</button>
+                        <button class="btn-secondary" type="button" id="cfg-reader-clear-test">Limpiar resultados</button>
+                    </div>
+                    <label>Campo de prueba
+                        <input type="text" id="cfg-reader-test-input" autocomplete="off" placeholder="Escanea aquí...">
+                    </label>
+                    <div class="config-reader-test-meta">
+                        <span id="cfg-reader-test-status">Esperando lectura...</span>
+                        <span id="cfg-reader-test-speed"></span>
+                    </div>
+                    <div id="cfg-reader-test-last" class="config-reader-test-last"></div>
+                    <div class="config-reader-test-log-wrap">
+                        <table class="grid" id="cfg-reader-test-log">
+                            <thead>
+                            <tr>
+                                <th>Hora</th>
+                                <th>Código</th>
+                                <th>Longitud</th>
+                                <th>Promedio ms/tecla</th>
+                                <th>Clasificación</th>
+                            </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div class="config-actions">
                     <button class="btn-primary" type="button" id="cfg-save-reader">Guardar lector</button>
                 </div>
