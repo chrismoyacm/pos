@@ -122,6 +122,8 @@ function defaultSettings(): array
         'boxes' => [
             'require_opening' => true,
             'allow_close_with_difference' => true,
+            'drawer_printer_model' => 'Epson TM-U220',
+            'drawer_connection' => 'USB',
         ],
         'branding' => [
             'store_name' => 'POS Minimarket',
@@ -159,6 +161,8 @@ function defaultSettings(): array
         'devices' => [
             'ticket_printer' => [
                 'enabled' => true,
+                'model' => 'POS-80C',
+                'connection' => 'USB',
                 'name' => 'Impresora tickets',
                 'font_family' => 'Consolas',
                 'font_size' => 10,
@@ -168,11 +172,44 @@ function defaultSettings(): array
             ],
             'barcode_reader' => [
                 'enabled' => true,
+                'model' => 'SU13',
                 'name' => 'Lector codigo barras',
+                'suffix_key' => 'ENTER',
                 'serial_enabled' => false,
+                'serial_port' => '',
+                'serial_baud' => 9600,
             ],
         ],
     ];
+}
+
+/**
+ * @param array<string, mixed> $defaults
+ * @param mixed $current
+ * @return array<string, mixed>
+ */
+function mergeSettingsDefaults(array $defaults, mixed $current): array
+{
+    if (!is_array($current)) {
+        return $defaults;
+    }
+
+    $merged = $defaults;
+    foreach ($defaults as $key => $defaultValue) {
+        if (!array_key_exists($key, $current)) {
+            continue;
+        }
+
+        $currentValue = $current[$key];
+        if (is_array($defaultValue)) {
+            $merged[$key] = mergeSettingsDefaults($defaultValue, $currentValue);
+            continue;
+        }
+
+        $merged[$key] = $currentValue;
+    }
+
+    return $merged;
 }
 
 function requireAdmin(): void
@@ -217,12 +254,20 @@ function readUsers(): array
  */
 function readSettings(): array
 {
+    $defaults = defaultSettings();
     $settings = readJsonFile(settingsPath());
     if (!is_array($settings) || $settings === []) {
-        $settings = defaultSettings();
+        $settings = $defaults;
         writeJsonFile(settingsPath(), $settings);
+        return $settings;
     }
-    return $settings;
+
+    $merged = mergeSettingsDefaults($defaults, $settings);
+    if ($merged !== $settings) {
+        writeJsonFile(settingsPath(), $merged);
+    }
+
+    return $merged;
 }
 
 /**
