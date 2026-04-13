@@ -160,25 +160,45 @@
       var form = document.getElementById('facturacion-firma-form');
       var payload = new FormData(form);
       payload.append('action', 'test_signature');
+      setStatus('#facturacion-firma-status', 'Validando certificado...');
       $.ajax({
         url: '../api/facturacion.php',
         method: 'POST',
         data: payload,
         processData: false,
-        contentType: false
+        contentType: false,
+        dataType: 'json'
       }).done(function (res) {
-        if (!res.ok) {
-          setStatus('#facturacion-firma-status', res.error || 'No se pudo validar el certificado.', true);
+        if (!res.ok || (res.data && res.data.valid === false)) {
+          var errorMessage = (res.data && res.data.message) || res.error || 'No se pudo validar el certificado.';
+          setStatus('#facturacion-firma-status', errorMessage, true);
+          window.alert('Error de certificado:\n' + errorMessage);
           return;
         }
         var meta = (res.data || {}).meta || {};
         var subject = meta.subject && (meta.subject.CN || meta.subject.O || '');
         var issuer = meta.issuer && (meta.issuer.CN || meta.issuer.O || '');
         var validTo = (meta.validTo || '').toString();
+        var viaLegacy = meta.usedLegacyProvider ? ' (compatibilidad legacy activada)' : '';
+        var successMessage =
+          'Certificado valido. Titular: ' + (subject || 'N/D') + ' | Emisor: ' + (issuer || 'N/D') + ' | Vigencia hasta: ' + (validTo || 'N/D') + viaLegacy;
         setStatus(
           '#facturacion-firma-status',
-          'Certificado valido. Titular: ' + (subject || 'N/D') + ' | Emisor: ' + (issuer || 'N/D') + ' | Vigencia hasta: ' + (validTo || 'N/D')
+          successMessage
         );
+        window.alert('Certificado validado correctamente.' + (viaLegacy ? '\nSe uso modo de compatibilidad legacy de OpenSSL.' : ''));
+      }).fail(function (xhr) {
+        var msg = 'No se pudo validar el certificado.';
+        try {
+          var body = xhr && xhr.responseJSON;
+          if (body && (body.error || body.message)) {
+            msg = body.error || body.message;
+          } else if (xhr && xhr.responseText) {
+            msg = xhr.responseText;
+          }
+        } catch (e) {}
+        setStatus('#facturacion-firma-status', msg, true);
+        window.alert('Error de certificado:\n' + msg);
       });
     });
   }

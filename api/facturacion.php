@@ -163,12 +163,32 @@ if ($method === 'POST') {
                 }
 
                 try {
-                    $meta = facturacionReadCertificateMetadata($certificatePath, $certificatePassword);
-                    ok([
-                        'valid' => true,
-                        'message' => 'Certificado valido y listo para firma.',
-                        'meta' => $meta,
-                    ]);
+                    try {
+                        $meta = facturacionReadCertificateMetadata($certificatePath, $certificatePassword);
+                        ok([
+                            'valid' => true,
+                            'message' => 'Certificado valido y listo para firma.',
+                            'meta' => $meta,
+                        ]);
+                    } catch (Throwable $e) {
+                        facturacionAppendLog('error', $e->getMessage(), [
+                            'trace' => $e->getTraceAsString(),
+                            'runtime' => [
+                                'phpBinary' => PHP_BINARY,
+                                'phpSapi' => PHP_SAPI,
+                                'openssl' => defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : '',
+                            ],
+                        ]);
+                        ok([
+                            'valid' => false,
+                            'message' => $e->getMessage(),
+                            'runtime' => [
+                                'phpBinary' => PHP_BINARY,
+                                'phpSapi' => PHP_SAPI,
+                                'openssl' => defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : '',
+                            ],
+                        ]);
+                    }
                 } finally {
                     if ($tempPath !== '' && file_exists($tempPath)) {
                         @unlink($tempPath);

@@ -78,19 +78,6 @@ function facturacionCreateDigestValue(string $binary, string $algorithm = 'sha1'
     return base64_encode(hash($algorithm, $binary, true));
 }
 
-function facturacionOpenSslErrors(): string
-{
-    $messages = [];
-    while (true) {
-        $error = openssl_error_string();
-        if ($error === false) {
-            break;
-        }
-        $messages[] = $error;
-    }
-    return implode(' | ', array_values(array_unique($messages)));
-}
-
 function facturacionCreateElement(DOMDocument $dom, DOMElement $parent, string $namespace, string $qualifiedName, ?string $value = null): DOMElement
 {
     $node = $dom->createElementNS($namespace, $qualifiedName);
@@ -222,32 +209,8 @@ function facturacionBuildSignedProperties(
 
 function facturacionPrepareRealSignature(string $source, string $certificatePath, string $certificatePassword): array
 {
-    $pkcs12 = file_get_contents($certificatePath);
-    if ($pkcs12 === false) {
-        throw new RuntimeException('No se pudo leer el certificado digital.');
-    }
-
-    $certStore = [];
-    $passwordAttempts = [$certificatePassword];
-    $trimmedPassword = trim($certificatePassword);
-    if ($trimmedPassword !== $certificatePassword) {
-        $passwordAttempts[] = $trimmedPassword;
-    }
-
-    $opened = false;
-    foreach ($passwordAttempts as $candidatePassword) {
-        $certStore = [];
-        if (openssl_pkcs12_read($pkcs12, $certStore, $candidatePassword)) {
-            $opened = true;
-            break;
-        }
-    }
-
-    if (!$opened) {
-        $opensslDetail = facturacionOpenSslErrors();
-        $suffix = $opensslDetail !== '' ? (' Detalle OpenSSL: ' . $opensslDetail) : '';
-        throw new RuntimeException('No se pudo abrir el certificado digital. Revise el archivo .p12/.pfx y su clave.' . $suffix);
-    }
+    $result = facturacionReadPkcs12Store($certificatePath, $certificatePassword);
+    $certStore = (array)($result['certStore'] ?? []);
 
     $privateKey = (string) ($certStore['pkey'] ?? '');
     $certificatePem = (string) ($certStore['cert'] ?? '');
@@ -323,9 +286,13 @@ function firmarXML(array $document): array
     $signingTime = date('c');
 
     $dsig = new XMLSecurityDSig('ds');
-    $dsig->setCanonicalMethod(XMLSecurityDSig::C14N);
     $dsig->idKeys[] = 'id';
-    $dsig->appendSignature($factura);
+    $appendedSignature = $dsig->appendSignature($factura);
+    if (!$appendedSignature instanceof DOMElement) {
+        throw new RuntimeException('No se pudo anexar el nodo Signature al comprobante.');
+    }
+    $dsig->sigNode = $appendedSignature;
+    $dsig->setCanonicalMethod(XMLSecurityDSig::C14N);
 
     $signatureNode = $dsig->sigNode;
     if (!$signatureNode instanceof DOMElement) {

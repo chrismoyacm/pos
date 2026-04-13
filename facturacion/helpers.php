@@ -697,7 +697,121 @@ function facturacionOpenSslErrorMessages(): string
     return implode(' | ', array_values(array_unique($messages)));
 }
 
-function facturacionReadCertificateMetadata(string $certificatePath, string $certificatePassword): array
+function facturacionLegacyOpenSslConfigPath(): string
+{
+    $path = facturacionStoragePath('openssl-legacy.cnf');
+    if (!file_exists($path)) {
+        $content = "openssl_conf = openssl_init\n\n"
+            . "[openssl_init]\n"
+            . "providers = provider_sect\n\n"
+            . "[provider_sect]\n"
+            . "default = default_sect\n"
+            . "legacy = legacy_sect\n\n"
+            . "[default_sect]\n"
+            . "activate = 1\n\n"
+            . "[legacy_sect]\n"
+            . "activate = 1\n";
+        file_put_contents($path, $content);
+    }
+    return $path;
+}
+
+function facturacionDetectOpenSslModulesDir(): string
+{
+    $candidates = [
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl' . DIRECTORY_SEPARATOR . 'ossl-modules',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'ossl-modules',
+        dirname(PHP_BINARY),
+        'C:\\php-8.3.6\\extras\\ssl',
+        'C:\\php-8.3.6\\extras\\ssl\\ossl-modules',
+    ];
+    foreach ($candidates as $dir) {
+        if ($dir !== '' && is_dir($dir) && file_exists($dir . DIRECTORY_SEPARATOR . 'legacy.dll')) {
+            return $dir;
+        }
+    }
+    return '';
+}
+
+function facturacionReadPkcs12WithLegacySubprocess(string $certificatePath, string $password, string $configPath, string $modulesDir): array
+{
+    if (!function_exists('proc_open')) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'proc_open no disponible'];
+    }
+
+    $scriptPath = __DIR__ . DIRECTORY_SEPARATOR . 'pkcs12_legacy_probe.php';
+    if (!file_exists($scriptPath)) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No existe el script de compatibilidad legacy'];
+    }
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $env = $_ENV;
+    if (!is_array($env)) {
+        $env = [];
+    }
+    $env['OPENSSL_CONF'] = $configPath;
+    if ($modulesDir !== '') {
+        $env['OPENSSL_MODULES'] = $modulesDir;
+    }
+
+    $phpBinary = PHP_BINARY;
+    $binaryCandidates = [
+        $phpBinary,
+        PHP_BINDIR . DIRECTORY_SEPARATOR . 'php.exe',
+        'C:\\xampp\\php\\php.exe',
+        'C:\\php-8.3.6\\php.exe',
+    ];
+    foreach ($binaryCandidates as $candidate) {
+        $base = strtolower(basename((string)$candidate));
+        $isPhpCli = str_starts_with($base, 'php') && str_ends_with($base, '.exe') && $base !== 'httpd.exe';
+        if ($candidate !== '' && $isPhpCli && file_exists($candidate)) {
+            $phpBinary = $candidate;
+            break;
+        }
+    }
+
+    $process = proc_open([$phpBinary, $scriptPath, $certificatePath], $descriptors, $pipes, dirname(__DIR__), $env);
+    if (!is_resource($process)) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No se pudo iniciar el proceso de prueba legacy (php=' . $phpBinary . ')'];
+    }
+
+    fwrite($pipes[0], $password . PHP_EOL);
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    $decoded = is_string($stdout) ? json_decode($stdout, true) : null;
+    if (!is_array($decoded)) {
+        $detail = trim((string)$stderr);
+        return ['ok' => false, 'certStore' => [], 'error' => ($detail !== '' ? $detail : 'Respuesta inválida del subproceso legacy')];
+    }
+    if (!empty($decoded['ok']) && is_array($decoded['certStore'] ?? null)) {
+        return ['ok' => true, 'certStore' => (array)$decoded['certStore'], 'error' => ''];
+    }
+
+    $error = trim((string)($decoded['error'] ?? ''));
+    if ($error === '') {
+        $error = trim((string)$stderr);
+    }
+    if ($error === '') {
+        $error = 'No se pudo abrir el certificado en modo legacy';
+    }
+    if ($exitCode !== 0 && $stderr !== '') {
+        $error .= ' | ' . trim((string)$stderr);
+    }
+
+    return ['ok' => false, 'certStore' => [], 'error' => $error];
+}
+
+function facturacionReadPkcs12Store(string $certificatePath, string $certificatePassword): array
 {
     if ($certificatePath === '' || !file_exists($certificatePath)) {
         throw new RuntimeException('No se encontro el archivo de certificado para validar.');
@@ -714,21 +828,87 @@ function facturacionReadCertificateMetadata(string $certificatePath, string $cer
         $attempts[] = $trimmed;
     }
 
-    $certStore = [];
-    $opened = false;
-    foreach ($attempts as $candidatePassword) {
+    $readWithAttempts = static function () use ($pkcs12, $attempts): array {
         $certStore = [];
-        if (openssl_pkcs12_read($pkcs12, $certStore, $candidatePassword)) {
-            $opened = true;
-            break;
+        foreach ($attempts as $candidatePassword) {
+            $certStore = [];
+            if (openssl_pkcs12_read($pkcs12, $certStore, $candidatePassword)) {
+                return [true, $certStore];
+            }
+        }
+        return [false, []];
+    };
+
+    [$opened, $certStore] = $readWithAttempts();
+    $firstDetail = facturacionOpenSslErrorMessages();
+    $usedLegacyProvider = false;
+    $legacyProbeErrors = [];
+
+    if (!$opened && stripos($firstDetail, 'unsupported') !== false) {
+        $previousOpenSslConf = getenv('OPENSSL_CONF');
+        $previousOpenSslModules = getenv('OPENSSL_MODULES');
+        $modulesDir = facturacionDetectOpenSslModulesDir();
+        $configPath = facturacionLegacyOpenSslConfigPath();
+        putenv('OPENSSL_CONF=' . $configPath);
+        if ($modulesDir !== '') {
+            putenv('OPENSSL_MODULES=' . $modulesDir);
+        }
+        [$opened, $certStore] = $readWithAttempts();
+        if ($opened) {
+            $usedLegacyProvider = true;
+        } else {
+            foreach ($attempts as $candidatePassword) {
+                $probe = facturacionReadPkcs12WithLegacySubprocess($certificatePath, (string)$candidatePassword, $configPath, $modulesDir);
+                if (!empty($probe['ok'])) {
+                    $opened = true;
+                    $certStore = (array)($probe['certStore'] ?? []);
+                    $usedLegacyProvider = true;
+                    break;
+                }
+                $legacyProbeErrors[] = trim((string)($probe['error'] ?? ''));
+            }
+        }
+        if ($previousOpenSslConf === false || $previousOpenSslConf === '') {
+            putenv('OPENSSL_CONF');
+        } else {
+            putenv('OPENSSL_CONF=' . $previousOpenSslConf);
+        }
+        if ($previousOpenSslModules === false || $previousOpenSslModules === '') {
+            putenv('OPENSSL_MODULES');
+        } else {
+            putenv('OPENSSL_MODULES=' . $previousOpenSslModules);
         }
     }
 
     if (!$opened) {
         $detail = facturacionOpenSslErrorMessages();
+        if ($detail === '') {
+            $detail = $firstDetail;
+        }
         $suffix = $detail !== '' ? (' Detalle OpenSSL: ' . $detail) : '';
-        throw new RuntimeException('No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx.' . $suffix);
+        $hint = '';
+        if (stripos($detail, 'unsupported') !== false) {
+            $hint = ' Sugerencia: el .p12 parece usar cifrado legacy; intente reexportarlo con OpenSSL legacy o usar OpenSSL 1.1 para convertirlo.';
+        }
+        $probeInfo = '';
+        $legacyProbeErrors = array_values(array_filter(array_unique($legacyProbeErrors), static fn($e) => $e !== ''));
+        if ($legacyProbeErrors !== []) {
+            $probeInfo = ' ProbeLegacy: ' . implode(' | ', $legacyProbeErrors);
+        }
+        throw new RuntimeException('No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx.' . $suffix . $hint . $probeInfo);
     }
+
+    return [
+        'certStore' => $certStore,
+        'usedLegacyProvider' => $usedLegacyProvider,
+    ];
+}
+
+function facturacionReadCertificateMetadata(string $certificatePath, string $certificatePassword): array
+{
+    $result = facturacionReadPkcs12Store($certificatePath, $certificatePassword);
+    $certStore = (array)($result['certStore'] ?? []);
+    $usedLegacyProvider = !empty($result['usedLegacyProvider']);
 
     $certificatePem = (string)($certStore['cert'] ?? '');
     $privateKeyPem = (string)($certStore['pkey'] ?? '');
@@ -754,6 +934,7 @@ function facturacionReadCertificateMetadata(string $certificatePath, string $cer
         'validTo' => (string)date('Y-m-d H:i:s', (int)($data['validTo_time_t'] ?? 0)),
         'certificatePath' => $certificatePath,
         'hasPrivateKey' => true,
+        'usedLegacyProvider' => $usedLegacyProvider,
     ];
 }
 
