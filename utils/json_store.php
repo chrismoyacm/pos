@@ -2,10 +2,24 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/response.php';
+require_once __DIR__ . '/../models/legacy_store.php';
 
 function storagePath(string $fileName): string
 {
     return dirname(__DIR__) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . $fileName;
+}
+
+function storageFileKey(string $path): string
+{
+    $storageRoot = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR;
+    $normalizedPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+    $normalizedRoot = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $storageRoot);
+    if (str_starts_with(strtolower($normalizedPath), strtolower($normalizedRoot))) {
+        $relative = substr($normalizedPath, strlen($normalizedRoot));
+        return str_replace('\\', '/', (string)$relative);
+    }
+
+    return basename($path);
 }
 
 /**
@@ -13,6 +27,11 @@ function storagePath(string $fileName): string
  */
 function readJsonFile(string $path): array
 {
+    $mapped = legacyMappedRead(storageFileKey($path));
+    if (is_array($mapped)) {
+        return $mapped;
+    }
+
     if (!file_exists($path)) {
         return [];
     }
@@ -29,6 +48,10 @@ function readJsonFile(string $path): array
 
 function writeJsonFile(string $path, array $data): void
 {
+    if (legacyMappedWrite(storageFileKey($path), $data)) {
+        return;
+    }
+
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0777, true);

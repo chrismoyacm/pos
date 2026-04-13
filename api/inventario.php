@@ -117,6 +117,10 @@ if ($method === 'PATCH' || $method === 'POST') {
     $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
     $marginPctRaw = $body['marginPct'] ?? null;
     $marginPct = is_numeric($marginPctRaw) ? (float)$marginPctRaw : null;
+    $salePriceRaw = $body['salePrice'] ?? null;
+    $salePrice = is_numeric($salePriceRaw) ? (float)$salePriceRaw : null;
+    $wholesalePriceRaw = $body['wholesalePrice'] ?? null;
+    $wholesalePrice = is_numeric($wholesalePriceRaw) ? (float)$wholesalePriceRaw : null;
     $note = trim((string)($body['note'] ?? ''));
     $source = trim((string)($body['source'] ?? 'inventario'));
     if ($productId === '' || $delta === 0) {
