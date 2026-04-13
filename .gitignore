@@ -4,6 +4,7 @@
 
 # JSON dinámicos del POS
 storage/*.json
+storage/data.sql
 storage/facturacion/*.json
 
 # Archivos sensibles facturación electrónica
