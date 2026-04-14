@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
 
+date_default_timezone_set('America/Guayaquil');
+
 function facturacionStorageDir(): string
 {
     $dir = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'facturacion';
@@ -112,6 +114,47 @@ function facturacionSaveEmitter(array $data): array
 function facturacionLoadSignature(): array
 {
     return array_merge(facturacionDefaultSignature(), facturacionReadJson('firma.json', []));
+}
+
+function facturacionCertificatesDir(): string
+{
+    $dir = facturacionStoragePath('certificados');
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
+    return $dir;
+}
+
+function facturacionStoreUploadedCertificate(array $file, string $previousPath = ''): string
+{
+    $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($error === UPLOAD_ERR_NO_FILE) {
+        return $previousPath;
+    }
+    if ($error !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('No se pudo cargar el certificado digital.');
+    }
+
+    $originalName = (string)($file['name'] ?? '');
+    $tmpPath = (string)($file['tmp_name'] ?? '');
+    $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+    if (!in_array($extension, ['p12', 'pfx'], true)) {
+        throw new RuntimeException('El certificado debe estar en formato .p12 o .pfx.');
+    }
+    if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        throw new RuntimeException('Archivo de certificado inválido.');
+    }
+
+    $target = facturacionCertificatesDir() . DIRECTORY_SEPARATOR . 'cert-' . date('YmdHis') . '-' . bin2hex(random_bytes(4)) . '.' . $extension;
+    if (!move_uploaded_file($tmpPath, $target)) {
+        throw new RuntimeException('No se pudo guardar el certificado en el sistema.');
+    }
+
+    if ($previousPath !== '' && file_exists($previousPath) && str_starts_with($previousPath, facturacionCertificatesDir())) {
+        @unlink($previousPath);
+    }
+
+    return $target;
 }
 
 function facturacionSaveSignature(array $data): array
@@ -503,6 +546,18 @@ function facturacionBuildInvoiceDocument(array $payload): array
 
     $buyer = $payload['buyer'] ?? [];
     $additionalFields = [];
+    $buyerEmail = trim((string)($buyer['email'] ?? ''));
+    $buyerAddress = trim((string)($buyer['address'] ?? ''));
+    $buyerPhone = trim((string)($buyer['phone'] ?? ''));
+    if ($buyerEmail !== '') {
+        $additionalFields[] = ['name' => 'Email', 'value' => $buyerEmail];
+    }
+    if ($buyerAddress !== '') {
+        $additionalFields[] = ['name' => 'Direccion', 'value' => $buyerAddress];
+    }
+    if ($buyerPhone !== '') {
+        $additionalFields[] = ['name' => 'Telefono', 'value' => $buyerPhone];
+    }
     foreach (($payload['additionalFields'] ?? []) as $field) {
         if (!is_array($field)) {
             continue;
@@ -512,7 +567,16 @@ function facturacionBuildInvoiceDocument(array $payload): array
         if ($name === '' || $value === '') {
             continue;
         }
-        $additionalFields[] = ['name' => $name, 'value' => $value];
+        $duplicate = false;
+        foreach ($additionalFields as $currentField) {
+            if (strcasecmp((string)$currentField['name'], $name) === 0) {
+                $duplicate = true;
+                break;
+            }
+        }
+        if (!$duplicate) {
+            $additionalFields[] = ['name' => $name, 'value' => $value];
+        }
     }
 
     $documentId = facturacionNextDocumentId($documents);
@@ -615,5 +679,333 @@ function facturacionFindDocument(string $id): ?array
         }
     }
     return null;
+}
+
+function facturacionOpenSslErrorMessages(): string
+{
+    $messages = [];
+    while (true) {
+        $error = openssl_error_string();
+        if ($error === false) {
+            break;
+        }
+        $messages[] = $error;
+    }
+    if ($messages === []) {
+        return '';
+    }
+    return implode(' | ', array_values(array_unique($messages)));
+}
+
+function facturacionLegacyOpenSslConfigPath(): string
+{
+    $path = facturacionStoragePath('openssl-legacy.cnf');
+    if (!file_exists($path)) {
+        $content = "openssl_conf = openssl_init\n\n"
+            . "[openssl_init]\n"
+            . "providers = provider_sect\n\n"
+            . "[provider_sect]\n"
+            . "default = default_sect\n"
+            . "legacy = legacy_sect\n\n"
+            . "[default_sect]\n"
+            . "activate = 1\n\n"
+            . "[legacy_sect]\n"
+            . "activate = 1\n";
+        file_put_contents($path, $content);
+    }
+    return $path;
+}
+
+function facturacionDetectOpenSslModulesDir(): string
+{
+    $candidates = [
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl' . DIRECTORY_SEPARATOR . 'ossl-modules',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'ossl-modules',
+        dirname(PHP_BINARY),
+        'C:\\php-8.3.6\\extras\\ssl',
+        'C:\\php-8.3.6\\extras\\ssl\\ossl-modules',
+    ];
+    foreach ($candidates as $dir) {
+        if ($dir !== '' && is_dir($dir) && file_exists($dir . DIRECTORY_SEPARATOR . 'legacy.dll')) {
+            return $dir;
+        }
+    }
+    return '';
+}
+
+function facturacionReadPkcs12WithLegacySubprocess(string $certificatePath, string $password, string $configPath, string $modulesDir): array
+{
+    if (!function_exists('proc_open')) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'proc_open no disponible'];
+    }
+
+    $scriptPath = __DIR__ . DIRECTORY_SEPARATOR . 'pkcs12_legacy_probe.php';
+    if (!file_exists($scriptPath)) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No existe el script de compatibilidad legacy'];
+    }
+
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $env = $_ENV;
+    if (!is_array($env)) {
+        $env = [];
+    }
+    $env['OPENSSL_CONF'] = $configPath;
+    if ($modulesDir !== '') {
+        $env['OPENSSL_MODULES'] = $modulesDir;
+    }
+
+    $phpBinary = PHP_BINARY;
+    $binaryCandidates = [
+        $phpBinary,
+        PHP_BINDIR . DIRECTORY_SEPARATOR . 'php.exe',
+        'C:\\xampp\\php\\php.exe',
+        'C:\\php-8.3.6\\php.exe',
+    ];
+    foreach ($binaryCandidates as $candidate) {
+        $base = strtolower(basename((string)$candidate));
+        $isPhpCli = str_starts_with($base, 'php') && str_ends_with($base, '.exe') && $base !== 'httpd.exe';
+        if ($candidate !== '' && $isPhpCli && file_exists($candidate)) {
+            $phpBinary = $candidate;
+            break;
+        }
+    }
+
+    $process = proc_open([$phpBinary, $scriptPath, $certificatePath], $descriptors, $pipes, dirname(__DIR__), $env);
+    if (!is_resource($process)) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No se pudo iniciar el proceso de prueba legacy (php=' . $phpBinary . ')'];
+    }
+
+    fwrite($pipes[0], $password . PHP_EOL);
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+
+    $decoded = is_string($stdout) ? json_decode($stdout, true) : null;
+    if (!is_array($decoded)) {
+        $detail = trim((string)$stderr);
+        return ['ok' => false, 'certStore' => [], 'error' => ($detail !== '' ? $detail : 'Respuesta inválida del subproceso legacy')];
+    }
+    if (!empty($decoded['ok']) && is_array($decoded['certStore'] ?? null)) {
+        return ['ok' => true, 'certStore' => (array)$decoded['certStore'], 'error' => ''];
+    }
+
+    $error = trim((string)($decoded['error'] ?? ''));
+    if ($error === '') {
+        $error = trim((string)$stderr);
+    }
+    if ($error === '') {
+        $error = 'No se pudo abrir el certificado en modo legacy';
+    }
+    if ($exitCode !== 0 && $stderr !== '') {
+        $error .= ' | ' . trim((string)$stderr);
+    }
+
+    return ['ok' => false, 'certStore' => [], 'error' => $error];
+}
+
+function facturacionReadPkcs12Store(string $certificatePath, string $certificatePassword): array
+{
+    if ($certificatePath === '' || !file_exists($certificatePath)) {
+        throw new RuntimeException('No se encontro el archivo de certificado para validar.');
+    }
+
+    $pkcs12 = file_get_contents($certificatePath);
+    if ($pkcs12 === false) {
+        throw new RuntimeException('No se pudo leer el archivo de certificado.');
+    }
+
+    $attempts = [$certificatePassword];
+    $trimmed = trim($certificatePassword);
+    if ($trimmed !== $certificatePassword) {
+        $attempts[] = $trimmed;
+    }
+
+    $readWithAttempts = static function () use ($pkcs12, $attempts): array {
+        $certStore = [];
+        foreach ($attempts as $candidatePassword) {
+            $certStore = [];
+            if (openssl_pkcs12_read($pkcs12, $certStore, $candidatePassword)) {
+                return [true, $certStore];
+            }
+        }
+        return [false, []];
+    };
+
+    [$opened, $certStore] = $readWithAttempts();
+    $firstDetail = facturacionOpenSslErrorMessages();
+    $usedLegacyProvider = false;
+    $legacyProbeErrors = [];
+
+    if (!$opened && stripos($firstDetail, 'unsupported') !== false) {
+        $previousOpenSslConf = getenv('OPENSSL_CONF');
+        $previousOpenSslModules = getenv('OPENSSL_MODULES');
+        $modulesDir = facturacionDetectOpenSslModulesDir();
+        $configPath = facturacionLegacyOpenSslConfigPath();
+        putenv('OPENSSL_CONF=' . $configPath);
+        if ($modulesDir !== '') {
+            putenv('OPENSSL_MODULES=' . $modulesDir);
+        }
+        [$opened, $certStore] = $readWithAttempts();
+        if ($opened) {
+            $usedLegacyProvider = true;
+        } else {
+            foreach ($attempts as $candidatePassword) {
+                $probe = facturacionReadPkcs12WithLegacySubprocess($certificatePath, (string)$candidatePassword, $configPath, $modulesDir);
+                if (!empty($probe['ok'])) {
+                    $opened = true;
+                    $certStore = (array)($probe['certStore'] ?? []);
+                    $usedLegacyProvider = true;
+                    break;
+                }
+                $legacyProbeErrors[] = trim((string)($probe['error'] ?? ''));
+            }
+        }
+        if ($previousOpenSslConf === false || $previousOpenSslConf === '') {
+            putenv('OPENSSL_CONF');
+        } else {
+            putenv('OPENSSL_CONF=' . $previousOpenSslConf);
+        }
+        if ($previousOpenSslModules === false || $previousOpenSslModules === '') {
+            putenv('OPENSSL_MODULES');
+        } else {
+            putenv('OPENSSL_MODULES=' . $previousOpenSslModules);
+        }
+    }
+
+    if (!$opened) {
+        $detail = facturacionOpenSslErrorMessages();
+        if ($detail === '') {
+            $detail = $firstDetail;
+        }
+        $suffix = $detail !== '' ? (' Detalle OpenSSL: ' . $detail) : '';
+        $hint = '';
+        if (stripos($detail, 'unsupported') !== false) {
+            $hint = ' Sugerencia: el .p12 parece usar cifrado legacy; intente reexportarlo con OpenSSL legacy o usar OpenSSL 1.1 para convertirlo.';
+        }
+        $probeInfo = '';
+        $legacyProbeErrors = array_values(array_filter(array_unique($legacyProbeErrors), static fn($e) => $e !== ''));
+        if ($legacyProbeErrors !== []) {
+            $probeInfo = ' ProbeLegacy: ' . implode(' | ', $legacyProbeErrors);
+        }
+        throw new RuntimeException('No se pudo abrir el certificado. Revise la clave del archivo .p12/.pfx.' . $suffix . $hint . $probeInfo);
+    }
+
+    return [
+        'certStore' => $certStore,
+        'usedLegacyProvider' => $usedLegacyProvider,
+    ];
+}
+
+function facturacionReadCertificateMetadata(string $certificatePath, string $certificatePassword): array
+{
+    $result = facturacionReadPkcs12Store($certificatePath, $certificatePassword);
+    $certStore = (array)($result['certStore'] ?? []);
+    $usedLegacyProvider = !empty($result['usedLegacyProvider']);
+
+    $certificatePem = (string)($certStore['cert'] ?? '');
+    $privateKeyPem = (string)($certStore['pkey'] ?? '');
+    if ($certificatePem === '' || $privateKeyPem === '') {
+        throw new RuntimeException('El certificado no contiene una llave privada utilizable.');
+    }
+
+    $data = openssl_x509_parse($certificatePem);
+    if (!is_array($data)) {
+        throw new RuntimeException('No se pudo interpretar el contenido del certificado X509.');
+    }
+
+    $serial = (string)($data['serialNumber'] ?? '');
+    if ($serial === '' && isset($data['serialNumberHex'])) {
+        $serial = (string)$data['serialNumberHex'];
+    }
+
+    return [
+        'subject' => (array)($data['subject'] ?? []),
+        'issuer' => (array)($data['issuer'] ?? []),
+        'serialNumber' => $serial,
+        'validFrom' => (string)date('Y-m-d H:i:s', (int)($data['validFrom_time_t'] ?? 0)),
+        'validTo' => (string)date('Y-m-d H:i:s', (int)($data['validTo_time_t'] ?? 0)),
+        'certificatePath' => $certificatePath,
+        'hasPrivateKey' => true,
+        'usedLegacyProvider' => $usedLegacyProvider,
+    ];
+}
+
+function facturacionValidateSignedXmlStructure(string $xmlPath): array
+{
+    if ($xmlPath === '' || !file_exists($xmlPath)) {
+        return ['ok' => false, 'errors' => ['No existe el XML firmado para validar.']];
+    }
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $dom->preserveWhiteSpace = false;
+    if (!$dom->load($xmlPath)) {
+        return ['ok' => false, 'errors' => ['No se pudo cargar el XML firmado.']];
+    }
+
+    $errors = [];
+    $root = $dom->documentElement;
+    if (!$root || $root->localName !== 'factura') {
+        $errors[] = 'El XML no tiene nodo raiz factura.';
+    }
+    if (!$root || strtolower((string)$root->getAttribute('id')) !== 'comprobante') {
+        $errors[] = 'El nodo factura debe tener id=comprobante.';
+    }
+
+    $xpath = new DOMXPath($dom);
+    $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+    $xpath->registerNamespace('etsi', 'http://uri.etsi.org/01903/v1.3.2#');
+
+    $requiredXPath = [
+        '/factura/infoTributaria' => 'Falta infoTributaria.',
+        '/factura/infoFactura' => 'Falta infoFactura.',
+        '/factura/detalles' => 'Falta detalles.',
+        '/factura/ds:Signature' => 'Falta ds:Signature.',
+        '/factura/ds:Signature/ds:SignedInfo' => 'Falta SignedInfo.',
+        '/factura/ds:Signature/ds:SignatureValue' => 'Falta SignatureValue.',
+        '/factura/ds:Signature/ds:KeyInfo/ds:X509Data/ds:X509Certificate' => 'Falta X509Certificate en KeyInfo.',
+        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties' => 'Falta QualifyingProperties.',
+        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties' => 'Falta SignedProperties.',
+        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties/etsi:SignedSignatureProperties/etsi:SigningTime' => 'Falta SigningTime.',
+        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties/etsi:SignedSignatureProperties/etsi:SigningCertificate' => 'Falta SigningCertificate.',
+    ];
+    foreach ($requiredXPath as $query => $message) {
+        $node = $xpath->query($query);
+        if ($node === false || $node->length === 0) {
+            $errors[] = $message;
+        }
+    }
+
+    $signedPropertiesRef = $xpath->query('/factura/ds:Signature/ds:SignedInfo/ds:Reference[@Type="http://uri.etsi.org/01903#SignedProperties"]');
+    if ($signedPropertiesRef === false || $signedPropertiesRef->length === 0) {
+        $errors[] = 'Falta referencia Type=SignedProperties en SignedInfo.';
+    }
+
+    $comprobanteRef = $xpath->query('/factura/ds:Signature/ds:SignedInfo/ds:Reference[@URI="#comprobante"]');
+    if ($comprobanteRef === false || $comprobanteRef->length === 0) {
+        $errors[] = 'Falta referencia URI=#comprobante en SignedInfo.';
+    } else {
+        $transform = $xpath->query('./ds:Transforms/ds:Transform[@Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"]', $comprobanteRef->item(0));
+        if ($transform === false || $transform->length === 0) {
+            $errors[] = 'La referencia del comprobante no tiene transform enveloped-signature.';
+        }
+    }
+
+    $xmlRaw = file_get_contents($xmlPath);
+    if ($xmlRaw === false || stripos($xmlRaw, 'encoding="UTF-8"') === false) {
+        $errors[] = 'El XML firmado debe declararse en UTF-8.';
+    }
+
+    return [
+        'ok' => $errors === [],
+        'errors' => $errors,
+    ];
 }
 

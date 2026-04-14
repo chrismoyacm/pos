@@ -92,7 +92,11 @@
 
   function fillForm($form, data) {
     Object.keys(data || {}).forEach(function (key) {
-      $form.find('[name="' + key + '"]').val(data[key]);
+      var $field = $form.find('[name="' + key + '"]');
+      if (!$field.length || (($field.attr('type') || '').toLowerCase() === 'file')) {
+        return;
+      }
+      $field.val(data[key]);
     });
   }
 
@@ -127,17 +131,74 @@
     apiGet('signature').done(function (res) {
       if (!res.ok) return;
       fillForm($('#facturacion-firma-form'), res.data || {});
+      var current = ((res.data || {}).certificatePath || '').toString();
+      $('#facturacion-certificate-current').text(current ? ('Certificado actual: ' + current.split(/[\\/]/).pop()) : 'No hay certificado cargado.');
     });
 
     $('#facturacion-firma-save').on('click', function () {
-      var payload = serializeForm($('#facturacion-firma-form'));
-      payload.action = 'save_signature';
-      apiPost(payload).done(function (res) {
+      var form = document.getElementById('facturacion-firma-form');
+      var payload = new FormData(form);
+      payload.append('action', 'save_signature');
+      $.ajax({
+        url: '../api/facturacion.php',
+        method: 'POST',
+        data: payload,
+        processData: false,
+        contentType: false
+      }).done(function (res) {
         if (!res.ok) {
           setStatus('#facturacion-firma-status', res.error || 'No se pudo guardar.', true);
           return;
         }
+        var current = ((res.data || {}).certificatePath || '').toString();
+        $('#facturacion-certificate-current').text(current ? ('Certificado actual: ' + current.split(/[\\/]/).pop()) : 'No hay certificado cargado.');
         setStatus('#facturacion-firma-status', 'Perfil y firma guardados correctamente.');
+      });
+    });
+
+    $('#facturacion-firma-test').on('click', function () {
+      var form = document.getElementById('facturacion-firma-form');
+      var payload = new FormData(form);
+      payload.append('action', 'test_signature');
+      setStatus('#facturacion-firma-status', 'Validando certificado...');
+      $.ajax({
+        url: '../api/facturacion.php',
+        method: 'POST',
+        data: payload,
+        processData: false,
+        contentType: false,
+        dataType: 'json'
+      }).done(function (res) {
+        if (!res.ok || (res.data && res.data.valid === false)) {
+          var errorMessage = (res.data && res.data.message) || res.error || 'No se pudo validar el certificado.';
+          setStatus('#facturacion-firma-status', errorMessage, true);
+          window.alert('Error de certificado:\n' + errorMessage);
+          return;
+        }
+        var meta = (res.data || {}).meta || {};
+        var subject = meta.subject && (meta.subject.CN || meta.subject.O || '');
+        var issuer = meta.issuer && (meta.issuer.CN || meta.issuer.O || '');
+        var validTo = (meta.validTo || '').toString();
+        var viaLegacy = meta.usedLegacyProvider ? ' (compatibilidad legacy activada)' : '';
+        var successMessage =
+          'Certificado valido. Titular: ' + (subject || 'N/D') + ' | Emisor: ' + (issuer || 'N/D') + ' | Vigencia hasta: ' + (validTo || 'N/D') + viaLegacy;
+        setStatus(
+          '#facturacion-firma-status',
+          successMessage
+        );
+        window.alert('Certificado validado correctamente.' + (viaLegacy ? '\nSe uso modo de compatibilidad legacy de OpenSSL.' : ''));
+      }).fail(function (xhr) {
+        var msg = 'No se pudo validar el certificado.';
+        try {
+          var body = xhr && xhr.responseJSON;
+          if (body && (body.error || body.message)) {
+            msg = body.error || body.message;
+          } else if (xhr && xhr.responseText) {
+            msg = xhr.responseText;
+          }
+        } catch (e) {}
+        setStatus('#facturacion-firma-status', msg, true);
+        window.alert('Error de certificado:\n' + msg);
       });
     });
   }

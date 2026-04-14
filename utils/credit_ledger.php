@@ -68,6 +68,28 @@ function creditSaleDateTime(array $sale): DateTimeImmutable
     }
 }
 
+function parseLegacyDateTime(string $raw): ?DateTimeImmutable
+{
+    $value = trim($raw);
+    if ($value === '') {
+        return null;
+    }
+
+    $formats = ['d/m/Y H:i:s', 'd/m/Y H:i', DateTimeInterface::ATOM, 'Y-m-d H:i:s'];
+    foreach ($formats as $format) {
+        $dt = DateTimeImmutable::createFromFormat($format, $value);
+        if ($dt instanceof DateTimeImmutable) {
+            return $dt;
+        }
+    }
+
+    try {
+        return new DateTimeImmutable($value);
+    } catch (Throwable) {
+        return null;
+    }
+}
+
 /**
  * @param array<string, mixed> $sale
  * @return array<int, array<string, mixed>>
@@ -144,6 +166,13 @@ function buildCreditLedgers(): array
     /** @var array<string, array<int, array<string, mixed>>> $eventsByCustomer */
     $eventsByCustomer = [];
 
+    foreach ($customersById as $customerId => $customer) {
+        $openingBalance = round((float)($customer['creditBalance'] ?? 0), 2);
+        if ($openingBalance > 0) {
+            $eventsByCustomer[$customerId] = $eventsByCustomer[$customerId] ?? [];
+        }
+    }
+
     foreach ($sales as $sale) {
         if (!is_array($sale)) {
             continue;
@@ -202,12 +231,46 @@ function buildCreditLedgers(): array
         });
 
         $customerName = creditCustomerName($customer);
-        $runningBalance = 0.0;
+        $openingBalance = round((float)($customer['creditBalance'] ?? 0), 2);
+        $runningBalance = $openingBalance;
         $movements = [];
         $lastPayment = null;
         $creditLimit = (float)($customer['creditLimit'] ?? 0);
         if ($creditLimit <= 0) {
             $creditLimit = 1000.0;
+        }
+
+        if ($openingBalance > 0) {
+            $legacyLast = parseLegacyDateTime((string)($customer['lastCreditPaymentAt'] ?? ''));
+            $openingDate = $legacyLast instanceof DateTimeImmutable
+                ? $legacyLast
+                : new DateTimeImmutable('-1 day');
+            $openingIso = $openingDate->format(DateTimeInterface::ATOM);
+
+            $movements[] = [
+                'fechaHora' => $openingDate->format('d/m/Y H:i'),
+                'folio' => 'SALDO-INI-' . strtoupper((string)($customerId)),
+                'movimiento' => 'SALDO_INICIAL',
+                'descripcion' => 'Saldo inicial migrado desde sistema anterior',
+                'monto' => $openingBalance,
+                'saldoActual' => $runningBalance,
+                'cajero' => 'Migración',
+                'createdAt' => $openingIso,
+                'ticket' => [
+                    'folio' => 'SALDO-INI-' . strtoupper((string)($customerId)),
+                    'cajero' => 'Migración',
+                    'cliente' => $customerName,
+                    'fechaHora' => $openingDate->format('d/m/Y H:i'),
+                    'items' => [[
+                        'cantidad' => 1,
+                        'descripcion' => 'Saldo inicial migrado',
+                        'importe' => $openingBalance,
+                    ]],
+                    'total' => $openingBalance,
+                    'pagoCon' => 'Crédito',
+                    'montoPendiente' => $runningBalance,
+                ],
+            ];
         }
 
         foreach ($events as $event) {

@@ -1,0 +1,20 @@
+{
+    "name": "andy/pos",
+    "description": "Sistema POS con módulo de facturación electrónica SRI Ecuador",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Andy\\Pos\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "chrismoyacm",
+            "email": "christyanmoya.cm@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "robrichards/xmlseclibs": "^3.1"
+    }
+}

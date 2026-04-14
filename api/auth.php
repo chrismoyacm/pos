@@ -128,8 +128,14 @@ if ($action === 'login') {
         errorResponse('Usuario o contraseña incorrectos', 401);
     }
     
-    // Verify password (using bcrypt)
-    if (!password_verify($password, $user['password'] ?? '')) {
+    // Verify password (bcrypt o valor legacy plano)
+    $storedPassword = (string)($user['password'] ?? '');
+    $passwordOk = false;
+    if ($storedPassword !== '') {
+        $passwordOk = password_verify($password, $storedPassword)
+            || hash_equals($storedPassword, $password);
+    }
+    if (!$passwordOk) {
         errorResponse('Usuario o contraseña incorrectos', 401);
     }
     

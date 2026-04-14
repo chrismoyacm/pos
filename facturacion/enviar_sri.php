@@ -18,13 +18,33 @@ function enviarSRI(array $document): array
         throw new RuntimeException('Primero debe firmarse el XML.');
     }
 
+    $validation = facturacionValidateSignedXmlStructure($signedPath);
+    if (!($validation['ok'] ?? false)) {
+        $errors = array_values(array_filter((array)($validation['errors'] ?? []), static fn($e) => trim((string)$e) !== ''));
+        $message = 'El XML firmado no cumple la estructura minima SRI/XAdES-BES: ' . implode(' | ', $errors);
+        facturacionAppendLog('error', $message, [
+            'documentId' => $document['id'] ?? null,
+            'signedXml' => $signedPath,
+        ]);
+        throw new RuntimeException($message);
+    }
+
     if (($signature['signatureMode'] ?? 'mock') === 'mock') {
         $document['sri']['receptionStatus'] = 'RECIBIDA';
         $document['sri']['response'] = ['mode' => 'mock', 'message' => 'Comprobante recibido en modo de prueba'];
         $document['status'] = 'sent';
         $document['updatedAt'] = date('c');
-        facturacionAppendLog('info', 'Envío SRI mock ejecutado', ['documentId' => $document['id'] ?? null]);
+        facturacionAppendLog('info', 'Envio SRI mock ejecutado', ['documentId' => $document['id'] ?? null]);
         return $document;
+    }
+
+    if (!class_exists('SoapClient')) {
+        $runtime = 'PHP=' . PHP_VERSION . ' | SAPI=' . PHP_SAPI . ' | BIN=' . PHP_BINARY;
+        throw new RuntimeException(
+            'No se puede enviar al SRI porque la extension SOAP no esta habilitada en el entorno web. '
+            . 'Active extension=soap en php.ini de Apache y reinicie el servidor. '
+            . '(' . $runtime . ')'
+        );
     }
 
     $soap = new SoapClient(facturacionReceptionWsdl((string)($document['environment'] ?? '1')), [
@@ -39,10 +59,45 @@ function enviarSRI(array $document): array
     }
 
     $response = $soap->validarComprobante(['xml' => base64_encode($xml)]);
-    $document['sri']['receptionStatus'] = 'RECIBIDA';
-    $document['sri']['response'] = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
-    $document['status'] = 'sent';
-    $document['updatedAt'] = date('c');
-    return $document;
-}
+    $responseArray = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
+    if (!is_array($responseArray)) {
+        $responseArray = [];
+    }
+    $root = (array)($responseArray['RespuestaRecepcionComprobante'] ?? []);
+    $estado = strtoupper(trim((string)($root['estado'] ?? 'RECIBIDA')));
 
+    $document['sri']['receptionStatus'] = $estado;
+    $document['sri']['response'] = $responseArray;
+    $document['status'] = $estado === 'RECIBIDA' ? 'sent' : 'error';
+    $document['updatedAt'] = date('c');
+
+    if ($estado === 'RECIBIDA') {
+        facturacionAppendLog('info', 'Comprobante recibido por SRI', [
+            'documentId' => $document['id'] ?? null,
+            'accessKey' => $document['accessKey'] ?? null,
+        ]);
+        return $document;
+    }
+
+    $mensajes = [];
+    $comprobantes = facturacionEnsureList($root['comprobantes']['comprobante'] ?? []);
+    foreach ($comprobantes as $comprobante) {
+        if (!is_array($comprobante)) {
+            continue;
+        }
+        $items = facturacionEnsureList($comprobante['mensajes']['mensaje'] ?? []);
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $mensajes[] = trim((string)($item['mensaje'] ?? ''));
+            $info = trim((string)($item['informacionAdicional'] ?? ''));
+            if ($info !== '') {
+                $mensajes[] = $info;
+            }
+        }
+    }
+    $mensajes = array_values(array_filter(array_unique($mensajes), static fn($m) => $m !== ''));
+    $texto = $mensajes !== [] ? implode(' | ', $mensajes) : 'El SRI devolvio el comprobante en recepcion.';
+    throw new RuntimeException('SRI recepcion estado ' . $estado . ': ' . $texto);
+}

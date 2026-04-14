@@ -703,6 +703,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .facturacion-form{padding:14px}
 .facturacion-grid-3{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px}
 .facturacion-grid-2{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}
+.facturacion-file-hint{font-size:12px;color:#64748b;margin-top:4px}
 .facturacion-card-footer{
   display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px;border-top:1px solid #edf0f3;background:#fcfcfd
 }
@@ -771,8 +772,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .promociones-main{grid-template-columns:1fr}
   .factura-grid--top,.factura-grid--buyer{grid-template-columns:repeat(2,minmax(220px,1fr))}
   .factura-bottom-grid{grid-template-columns:1fr}
-  .facturacion-grid-3{grid-template-columns:repeat(2,minmax(220px,1fr))}
-  .facturacion-split{grid-template-columns:1fr}
 }
 
 @media (max-width: 760px){
@@ -789,12 +788,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .factura-field--wide{grid-column:auto}
   .factura-inline-field,.factura-detail-toolbar,.factura-footer{flex-direction:column}
   .factura-field--grow{min-width:0}
-  .facturacion-topbar,.facturacion-nav-group,.facturacion-card-footer{flex-direction:column;align-items:flex-start}
-  .facturacion-nav-title{min-width:0;padding-top:0}
-  .facturacion-nav-select-wrap{min-width:0;max-width:none}
-  .facturacion-grid-3,.facturacion-grid-2{grid-template-columns:1fr}
-  .facturacion-toolbar{align-items:stretch}
-  .facturacion-toolbar input{width:100%}
 }
 
 /* Inventario */
@@ -1033,17 +1026,6 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .config-mini-table-wrap input[type=text],.config-mini-table-wrap input[type=number]{border:1px solid #cbd5e1;border-radius:4px;padding:6px 8px;font-family:inherit;width:100%}
 .config-form-grid--single{grid-template-columns:1fr;margin-top:10px}
 .config-units-list{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:6px;border:1px solid #e5e7eb;border-radius:6px;padding:8px;background:#fafafa;max-width:460px;margin-bottom:10px}
-.config-device-card{margin-top:12px;border:1px solid #dbe2ea;border-radius:6px;background:#f8fafc;padding:10px}
-.config-device-card h4{margin:0 0 6px 0;color:#1f3b6b;font-size:15px;font-weight:900}
-.config-device-status{margin-top:8px;padding:7px 8px;border:1px dashed #cbd5e1;border-radius:4px;font-size:12px;color:#334155;background:#fff}
-.config-reader-test{margin-top:12px;border:1px solid #dbe2ea;border-radius:6px;background:#f8fafc;padding:10px}
-.config-reader-test h4{margin:0 0 6px 0;color:#1f3b6b;font-size:15px;font-weight:900}
-.config-reader-test-controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-.config-reader-test input[type=text]{width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:8px 9px;font-family:inherit}
-.config-reader-test-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px;font-weight:700;color:#334155}
-.config-reader-test-last{margin-top:6px;padding:7px 8px;border:1px dashed #cbd5e1;border-radius:4px;font-size:12px;color:#1f2937;background:#fff}
-.config-reader-test-log-wrap{margin-top:8px;border:1px solid #dbe2ea;border-radius:6px;overflow:auto;max-height:220px;background:#fff}
-.config-reader-test-log-wrap .grid thead th,.config-reader-test-log-wrap .grid tbody td{font-size:12px;white-space:nowrap}
 .config-unit-item{position:relative;cursor:help}
 .config-unit-item::after{
   content:attr(data-unit-tip);

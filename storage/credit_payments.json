@@ -1,1 +1,12 @@
-[]
+[
+    {
+        "id": "cp-000001",
+        "folio": "P-000001",
+        "customerId": "c-004",
+        "amount": 25,
+        "paymentMethod": "cash",
+        "description": "Abono a deuda",
+        "cashier": "Cajero",
+        "createdAt": "2026-04-09T23:41:29+02:00"
+    }
+]

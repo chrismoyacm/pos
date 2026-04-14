@@ -117,7 +117,6 @@ if ($method === 'PATCH' || $method === 'POST') {
     $entryUnitCost = (float)($body['entryUnitCost'] ?? 0);
     $marginPctRaw = $body['marginPct'] ?? null;
     $marginPct = is_numeric($marginPctRaw) ? (float)$marginPctRaw : null;
-    $productNameInput = trim((string)($body['productName'] ?? ''));
     $salePriceRaw = $body['salePrice'] ?? null;
     $salePrice = is_numeric($salePriceRaw) ? (float)$salePriceRaw : null;
     $wholesalePriceRaw = $body['wholesalePrice'] ?? null;
@@ -174,9 +173,6 @@ if ($method === 'PATCH' || $method === 'POST') {
             }
 
             $p['stock'] = $next;
-            if ($productNameInput !== '') {
-                $p['name'] = $productNameInput;
-            }
             $p['margin'] = round2Inv(max(0, $marginValue));
             $p['cost'] = round2Inv($newCost);
             $p['price'] = round2Inv(max(0, $newPrice));

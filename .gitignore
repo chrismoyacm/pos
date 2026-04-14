@@ -1,0 +1,21 @@
+<<<<<<< HEAD
+/vendor/
+/.env
+
+# JSON dinámicos del POS
+storage/*.json
+storage/data.sql
+storage/facturacion/*.json
+
+# Archivos sensibles facturación electrónica
+storage/facturacion/certificados/
+storage/facturacion/xml/
+storage/facturacion/pdf/
+
+# logs y cache
+storage/logs/
+storage/cache/
+
+# videos locales
+*.mp4
+>>>>>>> a568938 (estabilizar cambios)

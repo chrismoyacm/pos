@@ -14,6 +14,7 @@
     <label class="factura-field factura-field--wide">
       <span>Ruta certificado .p12 / .pfx</span>
       <input type="file" name="certificatePath">
+      <small class="facturacion-file-hint" id="facturacion-certificate-current">No hay certificado cargado.</small>
     </label>
     <label class="factura-field">
       <span>Clave certificado</span>
@@ -56,6 +57,7 @@
   </div>
   <div class="facturacion-card-footer">
     <div class="facturacion-status" id="facturacion-firma-status"></div>
+    <button class="btn-secondary" type="button" id="facturacion-firma-test">Probar certificado</button>
     <button class="btn-primary" type="button" id="facturacion-firma-save">Guardar perfil y firma</button>
   </div>
 </section>
