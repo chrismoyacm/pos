@@ -23,6 +23,10 @@
     return '0%';
   }
 
+  function readUrlParam(key) {
+    return new URLSearchParams(window.location.search).get(key) || '';
+  }
+
   var state = {
     emitter: null,
     signature: null,
@@ -33,7 +37,8 @@
     details: [],
     payments: [],
     additionalFields: [],
-    paymentMethodDraft: 'cash'
+    paymentMethodDraft: 'cash',
+    originSaleId: ''
   };
 
   function apiGet(action, extra) {
@@ -365,8 +370,70 @@
       details: state.details.map(function (item) { return $.extend({}, item); }),
       payments: state.payments.map(function (item) { return $.extend({}, item); }),
       additionalFields: state.additionalFields.map(function (item) { return $.extend({}, item); }),
-      tip: ($('#factura-tip').val() || '').toString()
+      tip: ($('#factura-tip').val() || '').toString(),
+      saleId: (state.originSaleId || '').toString()
     };
+  }
+
+  function applyTicketPrefill(ticketId) {
+    var safeTicketId = (ticketId || '').toString().trim();
+    if (!safeTicketId) return;
+
+    apiGet('sale_context', { ticketId: safeTicketId }).done(function (res) {
+      if (!res.ok) {
+        setStatus('#factura-issue-status', res.error || 'No se pudo cargar la venta para facturar.', true);
+        return;
+      }
+
+      var data = res.data || {};
+      var buyer = data.buyer || {};
+      state.originSaleId = (data.ticketId || safeTicketId).toString();
+
+      $('#factura-buyer-identification').val((buyer.identification || '').toString());
+      $('#factura-buyer-id-type').val((buyer.identificationType || 'Consumidor final').toString());
+      $('#factura-buyer-name').val((buyer.razonSocial || '').toString());
+      $('#factura-buyer-address').val((buyer.address || '').toString());
+      $('#factura-buyer-phone').val((buyer.phone || '').toString());
+      $('#factura-buyer-email').val((buyer.email || '').toString());
+
+      state.details = (data.details || []).map(function (item) {
+        return {
+          productId: (item.productId || '').toString(),
+          codigoPrincipal: (item.codigoPrincipal || '').toString(),
+          codigoAuxiliar: (item.codigoAuxiliar || '').toString(),
+          cantidad: parseFloat(item.cantidad || 0) || 0,
+          descripcion: (item.descripcion || '').toString(),
+          precioUnitario: parseFloat(item.precioUnitario || 0) || 0,
+          iva: normalizeIva(item.iva),
+          descuento: parseFloat(item.descuento || 0) || 0,
+          valorICE: parseFloat(item.valorICE || 0) || 0
+        };
+      }).filter(function (item) { return item.cantidad > 0; });
+
+      state.payments = (data.payments || []).map(function (item) {
+        return {
+          method: (item.method || 'cash').toString(),
+          label: (item.label || 'Efectivo').toString(),
+          value: parseFloat(item.value || 0) || 0,
+          term: parseInt(item.term || 0, 10) || 0,
+          timeUnit: (item.timeUnit || 'dias').toString()
+        };
+      }).filter(function (item) { return item.value > 0; });
+
+      if (state.payments.length > 0) {
+        state.paymentMethodDraft = (state.payments[0].method || 'cash').toString();
+      }
+
+      renderFacturaDetails();
+      renderFacturaPayments();
+      setStatus('#factura-issue-status', 'Venta #' + safeTicketId + ' cargada en la factura.');
+    }).fail(function (xhr) {
+      var message = 'No se pudo cargar la venta para facturar.';
+      try {
+        message = (xhr && xhr.responseJSON && (xhr.responseJSON.error || xhr.responseJSON.message)) || message;
+      } catch (e) {}
+      setStatus('#factura-issue-status', message, true);
+    });
   }
 
   function recalcFacturaTotals() {
@@ -536,6 +603,8 @@
   }
 
   function bindInvoicePage() {
+    var ticketIdFromUrl = readUrlParam('ticketId');
+
     apiGet('invoice_defaults').done(function (res) {
       if (!res.ok) return;
       state.emitter = res.data.emitter || {};
@@ -554,6 +623,10 @@
         $estab.append('<option value="' + escapeHtml(row.id) + '">' + escapeHtml(row.estab + ' - ' + row.nombre) + '</option>');
         $point.append('<option value="' + escapeHtml(row.id) + '">' + escapeHtml(row.ptoEmi + ' - ' + row.nombre) + '</option>');
       });
+
+      if (ticketIdFromUrl) {
+        applyTicketPrefill(ticketIdFromUrl);
+      }
     });
 
     apiGet('product_services').done(function (res) {
@@ -668,16 +741,44 @@
             '<td>' + escapeHtml(row.status || '') + '</td>' +
             '<td>' + escapeHtml(row.accessKey || '') + '</td>' +
             '<td>' + fileList + '</td>' +
-            '<td><button class="btn-secondary" type="button">Reprocesar</button></td>' +
+            '<td>' +
+              '<button class="btn-secondary facturacion-reprocess" type="button">Reprocesar</button> ' +
+              '<button class="btn-secondary facturacion-refresh-auth" type="button">Consultar autorizacion ahora</button>' +
+            '</td>' +
           '</tr>'
         );
-        $tr.find('button').on('click', function () {
+        $tr.find('.facturacion-reprocess').on('click', function () {
           apiPost({ action: 'reprocess_document', id: row.id }).done(function (res) {
             if (!res.ok) {
               window.alert(res.error || 'No se pudo reprocesar.');
               return;
             }
             loadDocuments();
+          });
+        });
+        $tr.find('.facturacion-refresh-auth').on('click', function () {
+          apiPost({ action: 'refresh_authorization', id: row.id }).done(function (res) {
+            if (!res.ok) {
+              window.alert(res.error || 'No se pudo consultar autorizacion.');
+              return;
+            }
+            var auth = (((res.data || {}).sri || {}).authorizationStatus || '').toString();
+            if (auth === 'AUT') {
+              window.alert('Comprobante autorizado por SRI.');
+            } else if (auth === 'NAT') {
+              window.alert('Comprobante no autorizado por SRI.');
+            } else {
+              window.alert('SRI aun no responde autorizacion final (PPR).');
+            }
+            loadDocuments();
+          }).fail(function (xhr) {
+            var msg = 'No se pudo consultar autorizacion.';
+            try {
+              if (xhr && xhr.responseJSON && (xhr.responseJSON.error || xhr.responseJSON.message)) {
+                msg = xhr.responseJSON.error || xhr.responseJSON.message;
+              }
+            } catch (e) {}
+            window.alert(msg);
           });
         });
         $tbody.append($tr);

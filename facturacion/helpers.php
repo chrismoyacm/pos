@@ -29,9 +29,37 @@ function facturacionReadJson(string $relative, array $default = []): array
     return $data === [] ? $default : $data;
 }
 
+function facturacionReadJsonDisk(string $relative, array $default = []): array
+{
+    $path = facturacionStoragePath($relative);
+    if (!file_exists($path)) {
+        return $default;
+    }
+    $raw = file_get_contents($path);
+    if (!is_string($raw) || trim($raw) === '') {
+        return $default;
+    }
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : $default;
+}
+
 function facturacionWriteJson(string $relative, array $data): void
 {
     writeJsonFile(facturacionStoragePath($relative), $data);
+}
+
+function facturacionWriteJsonDisk(string $relative, array $data): void
+{
+    $path = facturacionStoragePath($relative);
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0777, true);
+    }
+    $encoded = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if (!is_string($encoded)) {
+        return;
+    }
+    file_put_contents($path, $encoded);
 }
 
 function facturacionAppendLog(string $level, string $message, array $context = []): void
@@ -48,6 +76,7 @@ function facturacionAppendLog(string $level, string $message, array $context = [
         $rows = array_slice($rows, -3000);
     }
     facturacionWriteJson('logs.json', $rows);
+    facturacionWriteJsonDisk('logs.json', $rows);
 }
 
 function facturacionDefaultEmitter(): array
@@ -75,10 +104,8 @@ function facturacionDefaultSignature(): array
         'certificatePath' => '',
         'certificatePassword' => '',
         'emailMode' => 'mock',
-        'smtpHost' => '',
-        'smtpPort' => '587',
-        'smtpUser' => '',
-        'smtpPassword' => '',
+        'brevoApiKey' => '',
+        'brevoEndpoint' => 'https://api.brevo.com/v3/smtp/email',
         'fromEmail' => '',
         'fromName' => '',
     ];
@@ -164,11 +191,9 @@ function facturacionSaveSignature(array $data): array
         'signatureMode' => in_array((string)($data['signatureMode'] ?? 'mock'), ['mock', 'real'], true) ? (string)$data['signatureMode'] : 'mock',
         'certificatePath' => trim((string)($data['certificatePath'] ?? '')),
         'certificatePassword' => (string)($data['certificatePassword'] ?? ''),
-        'emailMode' => in_array((string)($data['emailMode'] ?? 'mock'), ['mock', 'smtp'], true) ? (string)$data['emailMode'] : 'mock',
-        'smtpHost' => trim((string)($data['smtpHost'] ?? '')),
-        'smtpPort' => trim((string)($data['smtpPort'] ?? '587')),
-        'smtpUser' => trim((string)($data['smtpUser'] ?? '')),
-        'smtpPassword' => (string)($data['smtpPassword'] ?? ''),
+        'emailMode' => in_array((string)($data['emailMode'] ?? 'mock'), ['mock', 'brevo_api'], true) ? (string)$data['emailMode'] : 'mock',
+        'brevoApiKey' => trim((string)($data['brevoApiKey'] ?? '')),
+        'brevoEndpoint' => trim((string)($data['brevoEndpoint'] ?? 'https://api.brevo.com/v3/smtp/email')),
         'fromEmail' => trim((string)($data['fromEmail'] ?? '')),
         'fromName' => trim((string)($data['fromName'] ?? '')),
     ]);
