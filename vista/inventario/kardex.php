@@ -53,5 +53,6 @@ declare(strict_types=1);
         <tbody id="inv-kardex-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="inv-kardex-pager"></div>
   </div>
 </section>

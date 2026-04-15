@@ -13,8 +13,53 @@
   const state = {
     customers: [],
     selectedId: null,
-    mode: 'idle' // idle | selected | new
+    mode: 'idle', // idle | selected | new
+    page: 1,
+    pageSize: 15,
+    total: 0,
+    totalPages: 1
   };
+
+  function paginateRows(rows, page, pageSize) {
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * pageSize;
+    return {
+      pageRows: rows.slice(offset, offset + pageSize),
+      page: safePage,
+      total,
+      totalPages
+    };
+  }
+
+  function renderPager() {
+    const $pager = $('#cli-pager').empty();
+    if ($pager.length === 0 || state.totalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', state.page <= 1);
+    $next.prop('disabled', state.page >= state.totalPages);
+
+    $prev.on('click', function () {
+      if (state.page <= 1) return;
+      state.page -= 1;
+      renderList();
+    });
+
+    $next.on('click', function () {
+      if (state.page >= state.totalPages) return;
+      state.page += 1;
+      renderList();
+    });
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + state.page + ' de ' + state.totalPages + ' · ' + state.total + ' registros</span>');
+    $pager.append($next);
+  }
 
   const ECUADOR = {
     'Azuay': ['Cuenca', 'Gualaceo', 'Nabón', 'Paute', 'Pucará', 'San Fernando', 'Santa Isabel', 'Sevilla de Oro', 'Sígsig', 'Oña', 'Chordeleg', 'El Pan', 'Girón', 'Guachapala', 'Camilo Ponce Enríquez'],
@@ -168,7 +213,12 @@
 
   function renderList() {
     const $tbody = $('#cli-tbody').empty();
-    state.customers.forEach(c => {
+    const pg = paginateRows(state.customers, state.page, state.pageSize);
+    state.page = pg.page;
+    state.total = pg.total;
+    state.totalPages = pg.totalPages;
+
+    pg.pageRows.forEach(c => {
       const selected = c.id === state.selectedId;
       const $tr = $(
         `<tr class="${selected ? 'row-selected' : ''}" data-id="${escapeHtml(c.id || '')}">
@@ -179,6 +229,12 @@
       $tr.on('click', () => selectCustomer(c.id));
       $tbody.append($tr);
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="2" class="muted">No hay clientes para mostrar.</td></tr>');
+    }
+
+    renderPager();
   }
 
   function selectCustomer(id) {
@@ -278,7 +334,10 @@
     $('#cli-search').on('input', function () {
       const q = $(this).val().toString();
       if (t) window.clearTimeout(t);
-      t = window.setTimeout(() => loadCustomers(q), 180);
+      t = window.setTimeout(() => {
+        state.page = 1;
+        loadCustomers(q);
+      }, 180);
     });
     $('#cli-new').on('click', startNew);
     $('#cli-save').on('click', save);

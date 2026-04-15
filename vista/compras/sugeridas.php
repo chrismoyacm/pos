@@ -48,6 +48,7 @@ declare(strict_types=1);
         <tbody id="buy-suggested-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="buy-suggested-pager"></div>
 
     <div class="compras-footer">
       <button class="btn-secondary" type="button" id="buy-create-order-btn" disabled>Crear orden de compra</button>

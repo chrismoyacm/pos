@@ -60,5 +60,6 @@ declare(strict_types=1);
         <tbody id="inv-mov-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="inv-mov-pager"></div>
   </div>
 </section>

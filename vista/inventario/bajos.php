@@ -35,5 +35,6 @@ declare(strict_types=1);
         <tbody id="inv-low-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="inv-low-pager"></div>
   </div>
 </section>

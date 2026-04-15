@@ -53,5 +53,6 @@ declare(strict_types=1);
         <tbody id="buy-history-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="buy-history-pager"></div>
   </div>
 </section>

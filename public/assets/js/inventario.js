@@ -55,8 +55,51 @@
     reportPage: 1,
     reportPageSize: 25,
     reportTotal: 0,
-    reportTotalPages: 1
+    reportTotalPages: 1,
+    lowPage: 1,
+    lowPageSize: 20,
+    lowTotal: 0,
+    lowTotalPages: 1,
+    movPage: 1,
+    movPageSize: 20,
+    movTotal: 0,
+    movTotalPages: 1,
+    kardexPage: 1,
+    kardexPageSize: 20,
+    kardexTotal: 0,
+    kardexTotalPages: 1
   };
+
+  function paginateRowsInv(rows, page, pageSize) {
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * pageSize;
+    return {
+      pageRows: rows.slice(offset, offset + pageSize),
+      page: safePage,
+      total,
+      totalPages
+    };
+  }
+
+  function renderGenericPagerInv($pager, page, totalPages, total, onPrev, onNext) {
+    $pager.empty();
+    if ($pager.length === 0 || totalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', page <= 1);
+    $next.prop('disabled', page >= totalPages);
+    $prev.on('click', onPrev);
+    $next.on('click', onNext);
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + page + ' de ' + totalPages + ' · ' + total + ' registros</span>');
+    $pager.append($next);
+  }
 
   function showNoticeInv(message, type) {
     const text = (message || '').toString().trim();
@@ -286,6 +329,7 @@
     $('#inv-add-name').val('');
     $('#inv-add-stock').val('');
     $('#inv-add-cost').val('0.00');
+    $('#inv-add-margin').val('0.00');
     $('#inv-add-price').val('0.00');
     $('#inv-add-wholesale').val('');
     clearAddSuggestionsInv();
@@ -301,12 +345,37 @@
     const stockValue = (product.stock === null || product.stock === undefined) ? '' : String(product.stock);
     $('#inv-add-stock').val(stockValue);
     $('#inv-add-cost').val(Number(product.cost || 0).toFixed(2));
+    $('#inv-add-margin').val(Number(deriveMarginInv(product) || 0).toFixed(2));
     $('#inv-add-price').val(Number(product.price || 0).toFixed(2));
     const wholesale = product.wholesale && Number(product.wholesale.price || 0) > 0
       ? Number(product.wholesale.price || 0).toFixed(2)
       : '';
     $('#inv-add-wholesale').val(wholesale);
     clearAddSuggestionsInv();
+  }
+
+  function updateAddPriceFromMarginInv() {
+    const cost = Number($('#inv-add-cost').val() || 0);
+    const margin = Number($('#inv-add-margin').val() || 0);
+    if (!Number.isFinite(cost) || !Number.isFinite(margin) || cost < 0 || margin < 0) {
+      return;
+    }
+    const price = cost * (1 + (margin / 100));
+    $('#inv-add-price').val(Number(price).toFixed(2));
+  }
+
+  function updateAddMarginFromPriceInv() {
+    const cost = Number($('#inv-add-cost').val() || 0);
+    const price = Number($('#inv-add-price').val() || 0);
+    if (!Number.isFinite(cost) || !Number.isFinite(price) || cost < 0 || price < 0) {
+      return;
+    }
+    if (cost <= 0) {
+      $('#inv-add-margin').val('0.00');
+      return;
+    }
+    const margin = ((price - cost) / cost) * 100;
+    $('#inv-add-margin').val(Number(Math.max(0, margin)).toFixed(2));
   }
 
   function clearAddSuggestionsInv() {
@@ -501,9 +570,14 @@
     const rows = invState.products
       .filter(p => Number(p.stock || 0) <= Number(p.minStock || 0))
       .sort((a, b) => Number(a.stock || 0) - Number(b.stock || 0));
+    const pg = paginateRowsInv(rows, invState.lowPage, invState.lowPageSize);
+    invState.lowPage = pg.page;
+    invState.lowTotal = pg.total;
+    invState.lowTotalPages = pg.totalPages;
+
     const $tbody = $('#inv-low-body').empty();
 
-    rows.forEach(product => {
+    pg.pageRows.forEach(product => {
       const missing = Math.max(0, Number(product.minStock || 0) - Number(product.stock || 0));
       $tbody.append(
         '<tr>' +
@@ -516,6 +590,27 @@
         '</tr>'
       );
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="6" class="muted">No hay productos bajos de inventario.</td></tr>');
+    }
+
+    renderGenericPagerInv(
+      $('#inv-low-pager'),
+      invState.lowPage,
+      invState.lowTotalPages,
+      invState.lowTotal,
+      function () {
+        if (invState.lowPage <= 1) return;
+        invState.lowPage -= 1;
+        renderLowStockInv();
+      },
+      function () {
+        if (invState.lowPage >= invState.lowTotalPages) return;
+        invState.lowPage += 1;
+        renderLowStockInv();
+      }
+    );
   }
 
   function filteredMovementsInv() {
@@ -537,8 +632,13 @@
 
   function renderMovementsInv() {
     const rows = filteredMovementsInv().sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    const pg = paginateRowsInv(rows, invState.movPage, invState.movPageSize);
+    invState.movPage = pg.page;
+    invState.movTotal = pg.total;
+    invState.movTotalPages = pg.totalPages;
+
     const $tbody = $('#inv-mov-body').empty();
-    rows.forEach(mv => {
+    pg.pageRows.forEach(mv => {
       const product = productByIdInv((mv.productId || '').toString());
       $tbody.append(
         '<tr>' +
@@ -553,6 +653,27 @@
         '</tr>'
       );
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="8" class="muted">No hay movimientos para el criterio indicado.</td></tr>');
+    }
+
+    renderGenericPagerInv(
+      $('#inv-mov-pager'),
+      invState.movPage,
+      invState.movTotalPages,
+      invState.movTotal,
+      function () {
+        if (invState.movPage <= 1) return;
+        invState.movPage -= 1;
+        renderMovementsInv();
+      },
+      function () {
+        if (invState.movPage >= invState.movTotalPages) return;
+        invState.movPage += 1;
+        renderMovementsInv();
+      }
+    );
   }
 
   function renderKardexInv() {
@@ -570,9 +691,13 @@
       if (toDate && d > toDate) return false;
       return true;
     }).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    const pg = paginateRowsInv(rows, invState.kardexPage, invState.kardexPageSize);
+    invState.kardexPage = pg.page;
+    invState.kardexTotal = pg.total;
+    invState.kardexTotalPages = pg.totalPages;
 
     const $tbody = $('#inv-kardex-body').empty();
-    rows.forEach(mv => {
+    pg.pageRows.forEach(mv => {
       $tbody.append(
         '<tr>' +
           '<td>' + escapeHtmlInv(formatDateTimeInv(mv.createdAt)) + '</td>' +
@@ -584,6 +709,27 @@
         '</tr>'
       );
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="6" class="muted">No hay movimientos de kardex para el criterio indicado.</td></tr>');
+    }
+
+    renderGenericPagerInv(
+      $('#inv-kardex-pager'),
+      invState.kardexPage,
+      invState.kardexTotalPages,
+      invState.kardexTotal,
+      function () {
+        if (invState.kardexPage <= 1) return;
+        invState.kardexPage -= 1;
+        renderKardexInv();
+      },
+      function () {
+        if (invState.kardexPage >= invState.kardexTotalPages) return;
+        invState.kardexPage += 1;
+        renderKardexInv();
+      }
+    );
   }
 
   function exportInventoryInv() {
@@ -762,6 +908,7 @@
       const productId = (invState.addSelectedId || '').toString();
       const qty = Number($('#inv-add-qty').val() || 0);
       const addCost = Number($('#inv-add-cost').val() || 0);
+      const addMargin = Number($('#inv-add-margin').val() || 0);
       const addName = ($('#inv-add-name').val() || '').toString().trim();
       const addSalePrice = Number($('#inv-add-price').val() || 0);
       const wholesaleRaw = ($('#inv-add-wholesale').val() || '').toString().trim();
@@ -783,11 +930,15 @@
         window.alert('Capture un precio de venta válido.');
         return;
       }
+      if (!Number.isFinite(addMargin) || addMargin < 0) {
+        window.alert('Capture un % de ganancia válido.');
+        return;
+      }
       if (addWholesale !== null && (!Number.isFinite(addWholesale) || addWholesale < 0)) {
         window.alert('Capture un precio mayoreo válido.');
         return;
       }
-      applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, null, {
+      applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, addMargin, {
         name: addName,
         salePrice: addSalePrice,
         wholesalePrice: addWholesale
@@ -804,6 +955,12 @@
     });
 
     $('#inv-add-load-btn').on('click', loadAddFormByCodeInv);
+    $('#inv-add-cost, #inv-add-margin').on('input change', function () {
+      updateAddPriceFromMarginInv();
+    });
+    $('#inv-add-price').on('input change', function () {
+      updateAddMarginFromPriceInv();
+    });
     $('#inv-add-code').on('input', function () {
       const query = ($(this).val() || '').toString().trim();
       if (!query) {
@@ -961,10 +1118,22 @@
       }
     });
 
-    $('#inv-mov-refresh-btn').on('click', renderMovementsInv);
-    $('#inv-mov-from, #inv-mov-to, #inv-mov-type').on('change', renderMovementsInv);
-    $('#inv-kardex-refresh-btn').on('click', renderKardexInv);
-    $('#inv-kardex-product, #inv-kardex-from, #inv-kardex-to').on('change', renderKardexInv);
+    $('#inv-mov-refresh-btn').on('click', function () {
+      invState.movPage = 1;
+      renderMovementsInv();
+    });
+    $('#inv-mov-from, #inv-mov-to, #inv-mov-type').on('change', function () {
+      invState.movPage = 1;
+      renderMovementsInv();
+    });
+    $('#inv-kardex-refresh-btn').on('click', function () {
+      invState.kardexPage = 1;
+      renderKardexInv();
+    });
+    $('#inv-kardex-product, #inv-kardex-from, #inv-kardex-to').on('change', function () {
+      invState.kardexPage = 1;
+      renderKardexInv();
+    });
   }
 
   $(function () {

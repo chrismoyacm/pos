@@ -48,10 +48,55 @@
     catalogSelectedId: null,
     promotions: [],
     selectedPromotionId: null,
-    importRows: []
+    importRows: [],
+    catalogPage: 1,
+    catalogPageSize: 20,
+    catalogTotal: 0,
+    catalogTotalPages: 1
   };
 
   const NEW_DEPARTMENT_OPTION_VALUE = '__new_department__';
+
+  function paginateRows(rows, page, pageSize) {
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * pageSize;
+    return {
+      pageRows: rows.slice(offset, offset + pageSize),
+      page: safePage,
+      total,
+      totalPages
+    };
+  }
+
+  function renderCatalogPager() {
+    const $pager = $('#catalog-pager').empty();
+    if ($pager.length === 0 || state.catalogTotalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', state.catalogPage <= 1);
+    $next.prop('disabled', state.catalogPage >= state.catalogTotalPages);
+
+    $prev.on('click', function () {
+      if (state.catalogPage <= 1) return;
+      state.catalogPage -= 1;
+      renderCatalog();
+    });
+
+    $next.on('click', function () {
+      if (state.catalogPage >= state.catalogTotalPages) return;
+      state.catalogPage += 1;
+      renderCatalog();
+    });
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' · ' + state.catalogTotal + ' registros</span>');
+    $pager.append($next);
+  }
 
   function navigateToProductSub(view) {
     if (view === 'departments') {
@@ -520,9 +565,14 @@
 
   function renderCatalog() {
     const rows = filteredCatalogProducts();
+    const pg = paginateRows(rows, state.catalogPage, state.catalogPageSize);
+    state.catalogPage = pg.page;
+    state.catalogTotal = pg.total;
+    state.catalogTotalPages = pg.totalPages;
+
     const $tbody = $('#catalog-body').empty();
 
-    rows.forEach(product => {
+    pg.pageRows.forEach(product => {
       const selected = product.id === state.catalogSelectedId;
       const wholesalePrice = product?.wholesale?.price ?? 0;
       const iva = normalizeIvaLabel(product?.iva);
@@ -559,6 +609,12 @@
       state.catalogSelectedId = null;
       $('#catalog-modify-btn').prop('disabled', true);
     }
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="13" class="muted">No hay productos para mostrar.</td></tr>');
+    }
+
+    renderCatalogPager();
   }
 
   function resetDepartmentForm() {
@@ -937,10 +993,16 @@
       if (timer) {
         window.clearTimeout(timer);
       }
-      timer = window.setTimeout(renderCatalog, 150);
+      timer = window.setTimeout(function () {
+        state.catalogPage = 1;
+        renderCatalog();
+      }, 150);
     });
 
-    $('#catalog-department-filter').on('change', renderCatalog);
+    $('#catalog-department-filter').on('change', function () {
+      state.catalogPage = 1;
+      renderCatalog();
+    });
     $('#catalog-refresh-btn').on('click', function () {
       $.when(loadDepartments(), loadProducts('')).done(() => {
         renderCatalog();

@@ -48,6 +48,10 @@ declare(strict_types=1);
           <input type="number" id="inv-add-cost" min="0" step="0.01" value="0.00">
         </label>
         <label class="catalog-filter">
+          <span>% de ganancia</span>
+          <input type="number" id="inv-add-margin" min="0" step="0.01" value="0.00">
+        </label>
+        <label class="catalog-filter">
           <span>Precio venta</span>
           <input type="number" id="inv-add-price" min="0" step="0.01" value="0.00">
         </label>

@@ -15,8 +15,26 @@
 
   const state = {
     customers: [],
-    selectedId: null
+    selectedId: null,
+    reporteRows: [],
+    reportePage: 1,
+    reportePageSize: 15,
+    reporteTotal: 0,
+    reporteTotalPages: 1
   };
+
+  function paginateRows(rows, page, pageSize) {
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * pageSize;
+    return {
+      pageRows: rows.slice(offset, offset + pageSize),
+      page: safePage,
+      total,
+      totalPages
+    };
+  }
 
   function setAcceptEnabled() {
     $('#cred-accept').prop('disabled', !state.selectedId);
@@ -47,7 +65,12 @@
 
   function renderReporte(rows) {
     const $tbody = $('#cred-reporte-tbody').empty();
-    (rows || []).forEach(r => {
+    const pg = paginateRows(rows || [], state.reportePage, state.reportePageSize);
+    state.reportePage = pg.page;
+    state.reporteTotal = pg.total;
+    state.reporteTotalPages = pg.totalPages;
+
+    pg.pageRows.forEach(r => {
       const nameAddress = (r?.nameAddress || '').toString();
       const parts = nameAddress.split('\n');
       const name = parts[0] || '';
@@ -75,6 +98,40 @@
       `);
       $tbody.append($tr);
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="7" class="muted">No hay saldos para mostrar.</td></tr>');
+    }
+
+    renderReportePager();
+  }
+
+  function renderReportePager() {
+    const $pager = $('#cred-reporte-pager').empty();
+    if ($pager.length === 0 || state.reporteTotalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', state.reportePage <= 1);
+    $next.prop('disabled', state.reportePage >= state.reporteTotalPages);
+
+    $prev.on('click', function () {
+      if (state.reportePage <= 1) return;
+      state.reportePage -= 1;
+      renderReporte(state.reporteRows);
+    });
+
+    $next.on('click', function () {
+      if (state.reportePage >= state.reporteTotalPages) return;
+      state.reportePage += 1;
+      renderReporte(state.reporteRows);
+    });
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + state.reportePage + ' de ' + state.reporteTotalPages + ' · ' + state.reporteTotal + ' registros</span>');
+    $pager.append($next);
   }
 
   function loadReporte() {
@@ -82,7 +139,9 @@
       const data = (res && res.ok) ? res.data : null;
       const total = data?.totalPending ?? 0;
       $('#cred-total-pendiente').text(formatMoney(total));
-      renderReporte(data?.rows || []);
+      state.reporteRows = Array.isArray(data?.rows) ? data.rows : [];
+      state.reportePage = 1;
+      renderReporte(state.reporteRows);
     });
   }
 

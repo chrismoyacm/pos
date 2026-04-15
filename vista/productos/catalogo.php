@@ -59,5 +59,6 @@ declare(strict_types=1);
         <tbody id="catalog-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="catalog-pager"></div>
   </div>
 </section>

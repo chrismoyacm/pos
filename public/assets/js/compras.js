@@ -40,8 +40,59 @@
     purchaseOrders: [],
     purchaseHistory: [],
     selectedSuggested: {},
-    selectedListIds: []
+    selectedListIds: [],
+    suggestedPage: 1,
+    suggestedPageSize: 15,
+    suggestedTotal: 0,
+    suggestedTotalPages: 1,
+    listPage: 1,
+    listPageSize: 15,
+    listTotal: 0,
+    listTotalPages: 1,
+    ordersPage: 1,
+    ordersPageSize: 15,
+    ordersTotal: 0,
+    ordersTotalPages: 1,
+    providersPage: 1,
+    providersPageSize: 15,
+    providersTotal: 0,
+    providersTotalPages: 1,
+    historyPage: 1,
+    historyPageSize: 15,
+    historyTotal: 0,
+    historyTotalPages: 1
   };
+
+  function paginateRows(rows, page, pageSize) {
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * pageSize;
+    return {
+      pageRows: rows.slice(offset, offset + pageSize),
+      page: safePage,
+      total,
+      totalPages
+    };
+  }
+
+  function renderPager($pager, page, totalPages, total, onPrev, onNext) {
+    $pager.empty();
+    if ($pager.length === 0 || totalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', page <= 1);
+    $next.prop('disabled', page >= totalPages);
+    $prev.on('click', onPrev);
+    $next.on('click', onNext);
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + page + ' de ' + totalPages + ' · ' + total + ' registros</span>');
+    $pager.append($next);
+  }
 
   function productProvider(product) {
     return (product?.provider || '- Sin Proveedor -').toString();
@@ -92,9 +143,14 @@
 
   function renderTable() {
     const rows = suggestedProducts();
+    const pg = paginateRows(rows, state.suggestedPage, state.suggestedPageSize);
+    state.suggestedPage = pg.page;
+    state.suggestedTotal = pg.total;
+    state.suggestedTotalPages = pg.totalPages;
+
     const $tbody = $('#buy-suggested-body').empty();
 
-    rows.forEach(product => {
+    pg.pageRows.forEach(product => {
       const productId = (product.id || '').toString();
       if (!state.selectedSuggested[productId]) {
         const stock = Number(product.stock || 0);
@@ -139,6 +195,27 @@
       updateActionButtons();
     });
 
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="8" class="muted">No hay productos sugeridos para mostrar.</td></tr>');
+    }
+
+    renderPager(
+      $('#buy-suggested-pager'),
+      state.suggestedPage,
+      state.suggestedTotalPages,
+      state.suggestedTotal,
+      function () {
+        if (state.suggestedPage <= 1) return;
+        state.suggestedPage -= 1;
+        renderTable();
+      },
+      function () {
+        if (state.suggestedPage >= state.suggestedTotalPages) return;
+        state.suggestedPage += 1;
+        renderTable();
+      }
+    );
+
     updateActionButtons();
   }
 
@@ -155,8 +232,13 @@
   }
 
   function renderListSection() {
+    const pg = paginateRows(state.purchaseList, state.listPage, state.listPageSize);
+    state.listPage = pg.page;
+    state.listTotal = pg.total;
+    state.listTotalPages = pg.totalPages;
+
     const $tbody = $('#buy-list-body').empty();
-    state.purchaseList.forEach(item => {
+    pg.pageRows.forEach(item => {
       const checked = state.selectedListIds.includes(item.id);
       $tbody.append(`
         <tr>
@@ -192,13 +274,38 @@
       });
     });
 
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="6" class="muted">No hay items en la lista de compras.</td></tr>');
+    }
+
     state.selectedListIds = state.selectedListIds.filter(id => state.purchaseList.some(item => item.id === id));
+    renderPager(
+      $('#buy-list-pager'),
+      state.listPage,
+      state.listTotalPages,
+      state.listTotal,
+      function () {
+        if (state.listPage <= 1) return;
+        state.listPage -= 1;
+        renderListSection();
+      },
+      function () {
+        if (state.listPage >= state.listTotalPages) return;
+        state.listPage += 1;
+        renderListSection();
+      }
+    );
     updateActionButtons();
   }
 
   function renderOrdersSection() {
+    const pg = paginateRows(state.purchaseOrders, state.ordersPage, state.ordersPageSize);
+    state.ordersPage = pg.page;
+    state.ordersTotal = pg.total;
+    state.ordersTotalPages = pg.totalPages;
+
     const $tbody = $('#buy-orders-body').empty();
-    state.purchaseOrders.forEach(order => {
+    pg.pageRows.forEach(order => {
       const canReceive = (order.status || 'pending') === 'pending';
       $tbody.append(`
         <tr>
@@ -228,11 +335,37 @@
         $.when(loadProducts(), loadOrders(), loadHistory()).done();
       });
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="7" class="muted">No hay órdenes de compra para mostrar.</td></tr>');
+    }
+
+    renderPager(
+      $('#buy-orders-pager'),
+      state.ordersPage,
+      state.ordersTotalPages,
+      state.ordersTotal,
+      function () {
+        if (state.ordersPage <= 1) return;
+        state.ordersPage -= 1;
+        renderOrdersSection();
+      },
+      function () {
+        if (state.ordersPage >= state.ordersTotalPages) return;
+        state.ordersPage += 1;
+        renderOrdersSection();
+      }
+    );
   }
 
   function renderProvidersSection() {
+    const pg = paginateRows(state.providers, state.providersPage, state.providersPageSize);
+    state.providersPage = pg.page;
+    state.providersTotal = pg.total;
+    state.providersTotalPages = pg.totalPages;
+
     const $tbody = $('#buy-providers-body').empty();
-    state.providers.forEach(provider => {
+    pg.pageRows.forEach(provider => {
       $tbody.append(`
         <tr>
           <td>${escapeHtml(provider.name || '')}</td>
@@ -241,6 +374,27 @@
         </tr>
       `);
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="3" class="muted">No hay proveedores para mostrar.</td></tr>');
+    }
+
+    renderPager(
+      $('#buy-providers-pager'),
+      state.providersPage,
+      state.providersTotalPages,
+      state.providersTotal,
+      function () {
+        if (state.providersPage <= 1) return;
+        state.providersPage -= 1;
+        renderProvidersSection();
+      },
+      function () {
+        if (state.providersPage >= state.providersTotalPages) return;
+        state.providersPage += 1;
+        renderProvidersSection();
+      }
+    );
   }
 
   function filteredHistory() {
@@ -262,8 +416,14 @@
   }
 
   function renderHistorySection() {
+    const rows = filteredHistory();
+    const pg = paginateRows(rows, state.historyPage, state.historyPageSize);
+    state.historyPage = pg.page;
+    state.historyTotal = pg.total;
+    state.historyTotalPages = pg.totalPages;
+
     const $tbody = $('#buy-history-body').empty();
-    filteredHistory().forEach(row => {
+    pg.pageRows.forEach(row => {
       $tbody.append(`
         <tr>
           <td>${escapeHtml(formatDateTime(row.createdAt || ''))}</td>
@@ -277,6 +437,27 @@
         </tr>
       `);
     });
+
+    if (pg.pageRows.length === 0) {
+      $tbody.append('<tr><td colspan="8" class="muted">No hay compras históricas para mostrar.</td></tr>');
+    }
+
+    renderPager(
+      $('#buy-history-pager'),
+      state.historyPage,
+      state.historyTotalPages,
+      state.historyTotal,
+      function () {
+        if (state.historyPage <= 1) return;
+        state.historyPage -= 1;
+        renderHistorySection();
+      },
+      function () {
+        if (state.historyPage >= state.historyTotalPages) return;
+        state.historyPage += 1;
+        renderHistorySection();
+      }
+    );
   }
 
   function loadProducts() {
@@ -436,8 +617,14 @@
       window.location.href = 'index.php?mod=compras&sub=' + encodeURIComponent(section);
     });
 
-    $('#buy-department-filter').on('change', renderTable);
-    $('#buy-provider-filter').on('change', renderTable);
+    $('#buy-department-filter').on('change', function () {
+      state.suggestedPage = 1;
+      renderTable();
+    });
+    $('#buy-provider-filter').on('change', function () {
+      state.suggestedPage = 1;
+      renderTable();
+    });
 
     $('#buy-create-order-btn').on('click', function () {
       createOrderFromSuggested();
@@ -453,9 +640,18 @@
 
     $('#buy-provider-save-btn').on('click', saveProvider);
 
-    $('#buy-history-refresh-btn').on('click', renderHistorySection);
-    $('#buy-history-from, #buy-history-to').on('change', renderHistorySection);
-    $('#buy-history-q').on('input', renderHistorySection);
+    $('#buy-history-refresh-btn').on('click', function () {
+      state.historyPage = 1;
+      renderHistorySection();
+    });
+    $('#buy-history-from, #buy-history-to').on('change', function () {
+      state.historyPage = 1;
+      renderHistorySection();
+    });
+    $('#buy-history-q').on('input', function () {
+      state.historyPage = 1;
+      renderHistorySection();
+    });
   }
 
   $(function () {

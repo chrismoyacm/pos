@@ -40,5 +40,6 @@ declare(strict_types=1);
         <tbody id="buy-list-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="buy-list-pager"></div>
   </div>
 </section>

@@ -33,6 +33,7 @@ declare(strict_types=1);
           <tbody id="cli-tbody"></tbody>
         </table>
       </div>
+      <div class="table-pager" id="cli-pager"></div>
     </div>
 
     <div class="clientes-form">
