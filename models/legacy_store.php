@@ -17,10 +17,10 @@ function legacyMappedRead(string $fileName): ?array
 
     try {
         return match ($base) {
-            'users.json' => legacyReadUsers(),
-            'products.json' => legacyReadProducts(),
-            'customers.json' => legacyReadCustomers(),
-            'departments.json' => legacyReadDepartments(),
+            'users.json' => legacyReadEntityWithOverlay($base, 'legacyReadUsers'),
+            'products.json' => legacyReadEntityWithOverlay($base, 'legacyReadProducts'),
+            'customers.json' => legacyReadEntityWithOverlay($base, 'legacyReadCustomers'),
+            'departments.json' => legacyReadEntityWithOverlay($base, 'legacyReadDepartments'),
             default => isLegacyDocumentFile($key) ? legacyReadDocumentStore($key) : null,
         };
     } catch (Throwable $e) {
@@ -39,15 +39,42 @@ function legacyMappedWrite(string $fileName, array $data): bool
 
     try {
         return match ($base) {
-            'users.json' => legacyWriteUsers($data),
-            'products.json' => legacyWriteProducts($data),
-            'customers.json' => legacyWriteCustomers($data),
-            'departments.json' => legacyWriteDepartments($data),
+            'users.json' => legacyWriteEntityOverlay($base, $data),
+            'products.json' => legacyWriteEntityOverlay($base, $data),
+            'customers.json' => legacyWriteEntityOverlay($base, $data),
+            'departments.json' => legacyWriteEntityOverlay($base, $data),
             default => isLegacyDocumentFile($key) ? legacyWriteDocumentStore($key, $data) : false,
         };
     } catch (Throwable $e) {
         return false;
     }
+}
+
+function legacyEntityOverlayKey(string $baseFileName): string
+{
+    return 'app/' . strtolower($baseFileName);
+}
+
+/** @return array<int|string, mixed> */
+function legacyReadEntityWithOverlay(string $baseFileName, callable $legacyReader): array
+{
+    $overlayKey = legacyEntityOverlayKey($baseFileName);
+    $cached = legacyReadDocumentStore($overlayKey);
+    if ($cached !== []) {
+        return $cached;
+    }
+
+    $legacy = $legacyReader();
+    if (is_array($legacy) && $legacy !== []) {
+        legacyWriteDocumentStore($overlayKey, $legacy);
+    }
+    return is_array($legacy) ? $legacy : [];
+}
+
+function legacyWriteEntityOverlay(string $baseFileName, array $data): bool
+{
+    $overlayKey = legacyEntityOverlayKey($baseFileName);
+    return legacyWriteDocumentStore($overlayKey, $data);
 }
 
 function normalizeLegacyFileKey(string $fileName): string

@@ -53,6 +53,9 @@ function normalizeCustomer(array $c): array
         'zip' => (string)($c['zip'] ?? ''),
         'notes' => (string)($c['notes'] ?? ''),
         'creditAuthorized' => (bool)($c['creditAuthorized'] ?? false),
+        'creditLimit' => (float)($c['creditLimit'] ?? ($c['limit'] ?? 0)),
+        'creditBalance' => (float)($c['creditBalance'] ?? 0),
+        'lastCreditPaymentAt' => (string)($c['lastCreditPaymentAt'] ?? ''),
         'paymentDueDate' => $paymentDueDate,
         'paymentDueDay' => $paymentDueDay,
     ];

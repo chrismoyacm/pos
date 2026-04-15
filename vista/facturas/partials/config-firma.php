@@ -24,24 +24,16 @@
       <span>Modo de correo</span>
       <select name="emailMode">
         <option value="mock">Mock / cola interna</option>
-        <option value="smtp">SMTP</option>
+        <option value="brevo_api">Brevo API</option>
       </select>
     </label>
     <label class="factura-field">
-      <span>SMTP host</span>
-      <input type="text" name="smtpHost">
+      <span>Brevo API Key</span>
+      <input type="password" name="brevoApiKey" placeholder="xkeysib-...">
     </label>
     <label class="factura-field">
-      <span>SMTP puerto</span>
-      <input type="text" name="smtpPort">
-    </label>
-    <label class="factura-field">
-      <span>SMTP usuario</span>
-      <input type="text" name="smtpUser">
-    </label>
-    <label class="factura-field">
-      <span>SMTP clave</span>
-      <input type="password" name="smtpPassword">
+      <span>Endpoint Brevo</span>
+      <input type="text" name="brevoEndpoint" placeholder="https://api.brevo.com/v3/smtp/email">
     </label>
     <label class="factura-field">
       <span>Correo remitente</span>

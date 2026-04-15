@@ -121,16 +121,30 @@ function consultarAutorizacion(array $document): array
         'cache_wsdl' => WSDL_CACHE_NONE,
     ]);
 
-    $response = $soap->autorizacionComprobante(['claveAccesoComprobante' => (string)($document['accessKey'] ?? '')]);
-    $responseArray = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
-    if (!is_array($responseArray)) {
-        $responseArray = [];
+    $maxAttempts = 4;
+    $responseArray = [];
+    $root = [];
+    $autorizaciones = [];
+    $attempt = 1;
+    while ($attempt <= $maxAttempts) {
+        $response = $soap->autorizacionComprobante(['claveAccesoComprobante' => (string)($document['accessKey'] ?? '')]);
+        $responseArray = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
+        if (!is_array($responseArray)) {
+            $responseArray = [];
+        }
+        $root = (array)($responseArray['RespuestaAutorizacionComprobante'] ?? []);
+        $autorizacionesRaw = (array)($root['autorizaciones'] ?? []);
+        $autorizaciones = facturacionEnsureList($autorizacionesRaw['autorizacion'] ?? []);
+        if ($autorizaciones !== []) {
+            break;
+        }
+        if ($attempt < $maxAttempts) {
+            usleep(1500000);
+        }
+        $attempt += 1;
     }
-    $document['sri']['response'] = $responseArray;
 
-    $root = (array)($responseArray['RespuestaAutorizacionComprobante'] ?? []);
-    $autorizacionesRaw = (array)($root['autorizaciones'] ?? []);
-    $autorizaciones = facturacionEnsureList($autorizacionesRaw['autorizacion'] ?? []);
+    $document['sri']['response'] = $responseArray;
 
     if ($autorizaciones === []) {
         $document['sri']['authorizationStatus'] = 'PPR';
@@ -139,6 +153,7 @@ function consultarAutorizacion(array $document): array
         facturacionAppendLog('warning', 'SRI aun no entrega autorizacion (PPR)', [
             'documentId' => $document['id'] ?? null,
             'accessKey' => $document['accessKey'] ?? null,
+            'attempts' => $attempt,
             'response' => $root,
         ]);
         return $document;

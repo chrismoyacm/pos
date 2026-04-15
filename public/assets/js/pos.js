@@ -30,6 +30,38 @@
   };
 
   const CART_STORAGE_KEY = 'pos.ventas.cart.v1';
+  const LAST_TICKET_STORAGE_KEY = 'pos.ventas.last_ticket.v1';
+
+  function setLastTicketId(ticketId) {
+    const safeTicketId = (ticketId || '').toString().trim();
+    if (!safeTicketId) return;
+    try {
+      window.sessionStorage.setItem(LAST_TICKET_STORAGE_KEY, safeTicketId);
+    } catch (err) {
+      // Ignore storage errors.
+    }
+    $('#btn-facturar-ticket').prop('disabled', false).data('ticketId', safeTicketId);
+  }
+
+  function getLastTicketId() {
+    try {
+      const fromButton = ($('#btn-facturar-ticket').data('ticketId') || '').toString().trim();
+      if (fromButton) return fromButton;
+      return (window.sessionStorage.getItem(LAST_TICKET_STORAGE_KEY) || '').toString().trim();
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function goToFacturaByTicket(ticketId) {
+    const safeTicketId = (ticketId || '').toString().trim();
+    if (!safeTicketId) {
+      window.alert('No hay ticket para facturar.');
+      return;
+    }
+    window.location.href =
+      'index.php?mod=facturas&section=emision&view=factura&ticketId=' + encodeURIComponent(safeTicketId);
+  }
 
   function showNotice(message, type) {
     const text = (message || '').toString().trim();
@@ -1025,6 +1057,7 @@
       }
 
       const ticketId = String(res?.data?.ticketId || '');
+      setLastTicketId(ticketId);
       const soldItemsSnapshot = state.items.map(function (item) {
         return {
           id: item.id,
@@ -1452,6 +1485,9 @@
     });
     $('#btn-cliente').on('click', openCustomerModal);
     $('#btn-reimprimir').on('click', openReprintLastTicket);
+    $('#btn-facturar-ticket').on('click', function () {
+      goToFacturaByTicket(getLastTicketId());
+    });
     $('#btn-descuento').on('click', openDiscountModal);
     $('#btn-ventas-dia').on('click', function () { openSalesHistoryModal('view'); });
     $('#btn-devoluciones').on('click', function () { openSalesHistoryModal('return'); });
@@ -1573,6 +1609,12 @@
     if (!isVentasPage()) return;
 
     restoreCartState();
+    const lastTicket = getLastTicketId();
+    if (lastTicket) {
+      $('#btn-facturar-ticket').prop('disabled', false).data('ticketId', lastTicket);
+    } else {
+      $('#btn-facturar-ticket').prop('disabled', true).data('ticketId', '');
+    }
     $('#clienteNombre').text(state.customer.name);
     renderGrid();
     focusCodigoInput(true);
