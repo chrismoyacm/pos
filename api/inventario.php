@@ -53,6 +53,51 @@ function isInventoryManagedProductInv(array $product): bool
 if ($method === 'GET') {
     $action = strtolower(trim((string)($_GET['action'] ?? 'products')));
 
+    if ($action === 'products_report') {
+        $department = trim((string)($_GET['department'] ?? ''));
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $pageSize = max(1, min(100, (int)($_GET['pageSize'] ?? 25)));
+
+        $products = array_values(array_filter(readJsonFile($productsPath), static function ($p) use ($department) {
+            if (!is_array($p) || !isInventoryManagedProductInv($p)) {
+                return false;
+            }
+            if ($department === '') {
+                return true;
+            }
+            return trim((string)($p['department'] ?? 'Sin Departamento')) === $department;
+        }));
+
+        $summaryCost = 0.0;
+        $summaryStock = 0;
+        foreach ($products as $product) {
+            $summaryCost += (float)($product['cost'] ?? 0) * (float)($product['stock'] ?? 0);
+            $summaryStock += (int)($product['stock'] ?? 0);
+        }
+
+        usort($products, static function ($a, $b): int {
+            return strcmp((string)($a['name'] ?? ''), (string)($b['name'] ?? ''));
+        });
+
+        $total = count($products);
+        $offset = ($page - 1) * $pageSize;
+        $items = array_slice($products, $offset, $pageSize);
+
+        ok([
+            'items' => $items,
+            'summary' => [
+                'totalCost' => round2Inv($summaryCost),
+                'totalStock' => $summaryStock,
+            ],
+            'pagination' => [
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'total' => $total,
+                'totalPages' => max(1, (int)ceil($total / $pageSize)),
+            ],
+        ]);
+    }
+
     if ($action === 'inventory_movements') {
         $movements = readJsonFile($inventoryMovementsPath);
         usort($movements, static function ($a, $b) {

@@ -21,10 +21,52 @@
     mode: 'view',
     sales: [],
     selectedTicketId: '',
-    selectedItemIndex: -1
+    selectedItemIndex: -1,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    totalPages: 1,
+    query: ''
   };
 
   const CART_STORAGE_KEY = 'pos.ventas.cart.v1';
+
+  function showNotice(message, type) {
+    const text = (message || '').toString().trim();
+    if (!text) return;
+
+    let host = document.getElementById('app-notices');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'app-notices';
+      host.className = 'app-notices';
+      document.body.appendChild(host);
+    }
+
+    const item = document.createElement('div');
+    item.className = 'app-notice app-notice--' + ((type || 'info').toString());
+    item.textContent = text;
+    host.appendChild(item);
+
+    window.setTimeout(function () {
+      item.classList.add('is-leaving');
+      window.setTimeout(function () {
+        if (item.parentNode) {
+          item.parentNode.removeChild(item);
+        }
+      }, 220);
+    }, 2600);
+  }
+
+  function nextSaleRequestId() {
+    return 'sale-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function setSaleSubmitting(isSubmitting) {
+    const busy = Boolean(isSubmitting);
+    state.saleSubmitting = busy;
+    $('#btn-pay-confirm, #btn-pay-confirm-print').prop('disabled', busy);
+  }
 
   function isVentasPage() {
     return $('#venta-body').length > 0;
@@ -140,6 +182,8 @@
       state.transferMeta = { reference: '', phone: '' };
       state.saleDiscountPct = 0;
       state.customer = { id: 'c-001', name: 'Publico en general' };
+      state.saleRequestId = '';
+      state.saleSubmitting = false;
     }
   }
 
@@ -634,6 +678,10 @@
     $('#modal-pago [name=creditCustomerQ]').val('');
     $('#pay-note-preview').text('Nota: ' + (state.paymentNote ? state.paymentNote : '-'));
     $('#modal-pago [data-cambio]').text(formatMoney(0));
+    if (!state.saleRequestId) {
+      state.saleRequestId = nextSaleRequestId();
+    }
+    setSaleSubmitting(false);
     $('#modal-pago').addClass('active');
     updatePaymentMethod();
     if (isCreditPayment()) {
@@ -792,8 +840,8 @@
     const doc = iframe.contentWindow?.document;
     if (!doc) {
       document.body.removeChild(iframe);
-      window.alert('No se pudo abrir la vista de impresión.');
-      return;
+      showNotice('La venta quedó registrada, pero no se pudo abrir la impresión.', 'warning');
+      return false;
     }
 
     doc.open();
@@ -812,11 +860,71 @@
         }, 800);
       }
     }, 150);
+
+    return true;
+  }
+
+  function resetSaleState() {
+    state.items = [];
+    state.selectedIndex = -1;
+    state.paidWith = 0;
+    state.change = 0;
+    state.paymentMethod = 'cash';
+    state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
+    state.paymentNote = '';
+    state.transferMeta = { reference: '', phone: '' };
+    state.saleDiscountPct = 0;
+    state.saleRequestId = '';
+    renderGrid();
+  }
+
+  function updateSalesHistoryHeader() {
+    const isReturn = salesHistoryState.mode === 'return';
+    $('#sales-day-title').text(isReturn ? 'Devoluciones de ventas' : 'Ventas del día');
+    $('#sales-day-help').text(
+      isReturn
+        ? 'Seleccione un ticket y un artículo para registrar devolución.'
+        : 'Puede revisar ventas del día.'
+    );
+    $('#sales-day-return-btn')
+      .prop('hidden', !isReturn)
+      .toggle(isReturn)
+      .prop('disabled', !isReturn || salesHistoryState.selectedItemIndex < 0);
+  }
+
+  function renderSalesPager() {
+    const $pager = $('#sales-day-pager').empty();
+    if (salesHistoryState.totalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', salesHistoryState.page <= 1);
+    $next.prop('disabled', salesHistoryState.page >= salesHistoryState.totalPages);
+    $prev.on('click', function () {
+      if (salesHistoryState.page <= 1) return;
+      salesHistoryState.page -= 1;
+      loadSalesByDay();
+    });
+    $next.on('click', function () {
+      if (salesHistoryState.page >= salesHistoryState.totalPages) return;
+      salesHistoryState.page += 1;
+      loadSalesByDay();
+    });
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + salesHistoryState.page + ' de ' + salesHistoryState.totalPages + ' · ' + salesHistoryState.total + ' registros</span>');
+    $pager.append($next);
   }
 
   function confirmSale(options) {
     const opts = options || {};
     const shouldPrint = Boolean(opts.printTicket);
+
+    if (state.saleSubmitting) {
+      return;
+    }
 
     if (state.items.length === 0) {
       window.alert('No hay productos.');
@@ -898,8 +1006,12 @@
       paymentNote: paymentNotePayload,
       amountPending: isCreditPayment() ? state.total : (isMixedPayment() ? Number(state.mixedPayments.credit || 0) : 0),
       customerId: state.customer?.id || null,
-      customerName: state.customer?.name || ''
+      customerName: state.customer?.name || '',
+      clientRequestId: state.saleRequestId || nextSaleRequestId()
     };
+
+    state.saleRequestId = payload.clientRequestId;
+    setSaleSubmitting(true);
 
     $.ajax({
       url: '../api/sales.php',
@@ -938,26 +1050,19 @@
       };
 
       closeModal('#modal-pago');
-      state.items = [];
-      state.selectedIndex = -1;
-      state.paidWith = 0;
-      state.change = 0;
-      state.paymentMethod = 'cash';
-      state.mixedPayments = { cash: 0, transfer: 0, credit: 0 };
-      state.paymentNote = '';
-      state.transferMeta = { reference: '', phone: '' };
-      state.saleDiscountPct = 0;
-      renderGrid();
+      resetSaleState();
 
       if (shouldPrint) {
         printTicket(saleSnapshot);
-        window.alert('Venta realizada. Ticket #' + ticketId + '\nTicket enviado a impresión.');
+        showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '. Se abrió impresión.', 'success');
       } else {
-        window.alert('Venta realizada. Ticket #' + ticketId);
+        showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '.', 'success');
       }
     }).fail(function (xhr) {
       const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo registrar la venta.';
-      window.alert('No se pudo registrar la venta: ' + backendError);
+      showNotice('No se pudo registrar la venta: ' + backendError, 'error');
+    }).always(function () {
+      setSaleSubmitting(false);
     });
   }
 
@@ -1166,14 +1271,8 @@
   }
 
   function renderSalesList() {
-    const q = ($('#sales-day-q').val() || '').toString().trim().toLowerCase();
     const $tbody = $('#sales-day-body').empty();
-    const rows = salesHistoryState.sales.filter(function (sale) {
-      if (!q) return true;
-      const folio = String(sale.ticketId || '').toLowerCase();
-      const customer = String(sale.customerName || '').toLowerCase();
-      return folio.includes(q) || customer.includes(q);
-    });
+    const rows = salesHistoryState.sales;
 
     rows.forEach(function (sale) {
       const selected = String(sale.ticketId || '') === String(salesHistoryState.selectedTicketId || '');
@@ -1197,6 +1296,8 @@
     if (rows.length === 0) {
       $tbody.append('<tr><td colspan="4" class="muted">No hay ventas para el criterio indicado.</td></tr>');
     }
+
+    renderSalesPager();
   }
 
   function renderSaleDetail() {
@@ -1243,10 +1344,23 @@
 
   function loadSalesByDay() {
     const date = ($('#sales-day-date').val() || toDateInputValue(new Date())).toString();
-    return $.getJSON('../api/sales.php', { action: 'day', date: date }).done(function (res) {
-      salesHistoryState.sales = (res.ok && Array.isArray(res.data)) ? res.data : [];
+    const query = ($('#sales-day-q').val() || '').toString().trim();
+    return $.getJSON('../api/sales.php', {
+      action: 'day',
+      date: date,
+      q: query,
+      page: salesHistoryState.page,
+      pageSize: salesHistoryState.pageSize
+    }).done(function (res) {
+      const payload = res.ok && res.data && typeof res.data === 'object' ? res.data : { items: [], pagination: null };
+      salesHistoryState.sales = Array.isArray(payload.items) ? payload.items : [];
+      salesHistoryState.total = Number(payload.pagination?.total || salesHistoryState.sales.length || 0);
+      salesHistoryState.totalPages = Number(payload.pagination?.totalPages || 1);
+      salesHistoryState.page = Number(payload.pagination?.page || 1);
       if (salesHistoryState.sales.length > 0 && !findSaleByTicketId(salesHistoryState.selectedTicketId)) {
         salesHistoryState.selectedTicketId = String(salesHistoryState.sales[0].ticketId || '');
+      } else if (salesHistoryState.sales.length === 0) {
+        salesHistoryState.selectedTicketId = '';
       }
       renderSalesList();
       renderSaleDetail();
@@ -1256,20 +1370,15 @@
   function openSalesHistoryModal(mode) {
     salesHistoryState.mode = mode === 'return' ? 'return' : 'view';
     salesHistoryState.selectedItemIndex = -1;
+    salesHistoryState.page = 1;
 
     const today = toDateInputValue(new Date());
     if (!$('#sales-day-date').val()) {
       $('#sales-day-date').val(today);
     }
 
-    $('#sales-day-help').text(
-      salesHistoryState.mode === 'return'
-        ? 'Seleccione un ticket y un artículo para registrar devolución.'
-        : 'Puede revisar ventas del día.'
-    );
-    $('#sales-day-return-btn').prop('disabled', salesHistoryState.mode !== 'return');
-
     $('#modal-ventas-dia').addClass('active');
+    updateSalesHistoryHeader();
     loadSalesByDay();
   }
 
@@ -1314,10 +1423,10 @@
       })
     }).done(function (res) {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo registrar la devolución.');
+        showNotice(res.error || 'No se pudo registrar la devolución.', 'error');
         return;
       }
-      window.alert('Devolución registrada correctamente.');
+      showNotice('Devolución registrada correctamente.', 'success');
       loadSalesByDay();
     });
   }
@@ -1382,8 +1491,14 @@
     $('#modal-stock .btn-primary').on('click', confirmStockMovement);
     $('#sales-day-close').on('click', function () { closeModal('#modal-ventas-dia'); });
     $('#sales-day-refresh').on('click', loadSalesByDay);
-    $('#sales-day-date').on('change', loadSalesByDay);
-    $('#sales-day-q').on('input', renderSalesList);
+    $('#sales-day-date').on('change', function () {
+      salesHistoryState.page = 1;
+      loadSalesByDay();
+    });
+    $('#sales-day-q').on('input', function () {
+      salesHistoryState.page = 1;
+      loadSalesByDay();
+    });
     $('#sales-day-return-btn').on('click', returnSelectedItem);
     $('#sale-discount-cancel').on('click', function () { closeModal('#modal-discount'); });
     $('#sale-discount-apply').on('click', applySaleDiscount);

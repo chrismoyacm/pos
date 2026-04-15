@@ -66,3 +66,69 @@ function legacyNow(): string
 {
     return date('d/m/Y H:i:s');
 }
+
+/**
+ * Ejecuta un Stored Procedure y retorna todas las filas
+ * @param string $procName Nombre del SP (ej: sp_get_sales_by_day)
+ * @param array<string, mixed> $params Parámetros nombrados (ej: ['date' => '2024-01-01', 'page' => 1])
+ * @return array<int, array<string, mixed>>
+ */
+function callStoredProcedure(string $procName, array $params = []): array
+{
+    $pdo = db();
+
+    $placeholders = implode(', ', array_fill(0, count($params), '?'));
+    $sql = sprintf('CALL %s(%s)', $procName, $placeholders);
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(array_values($params));
+    
+    $results = $stmt->fetchAll();
+    
+    // Limpiar la siguiente consulta pendiente de CALL
+    try {
+        while ($stmt->nextRowset()) {
+            // vaciar cada result set
+        }
+    } catch (PDOException) {
+        // ignorar si no hay más result sets
+    }
+    
+    return is_array($results) ? $results : [];
+}
+
+/**
+ * Ejecuta un SP y retorna una única fila
+ * @param string $procName
+ * @param array<string, mixed> $params
+ * @return array<string, mixed>|null
+ */
+function callStoredProcedureOne(string $procName, array $params = []): ?array
+{
+    $results = callStoredProcedure($procName, $params);
+    return count($results) > 0 ? $results[0] : null;
+}
+
+/**
+ * Ejecuta un SP que retorna múltiples result sets
+ * @param string $procName
+ * @param array<string, mixed> $params
+ * @return array<int, array<int, array<string, mixed>>>
+ */
+function callStoredProcedureMulti(string $procName, array $params = []): array
+{
+    $pdo = db();
+
+    $placeholders = implode(', ', array_fill(0, count($params), '?'));
+    $sql = sprintf('CALL %s(%s)', $procName, $placeholders);
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(array_values($params));
+    
+    $allResults = [];
+    do {
+        $allResults[] = $stmt->fetchAll();
+    } while ($stmt->nextRowset());
+    
+    return $allResults;
+}

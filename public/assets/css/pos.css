@@ -225,6 +225,25 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .btn-danger{background:var(--danger);color:#fff;border:1px solid #7f1d1d;border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-primary:hover{filter:brightness(0.98)}
 .btn-secondary:hover{background:#f8fafc}
+.btn-primary[disabled],.btn-secondary[disabled],.btn-danger[disabled]{opacity:.6;cursor:not-allowed}
+
+.app-notices{
+  position:fixed;top:18px;right:18px;z-index:300;display:flex;flex-direction:column;gap:10px;max-width:min(380px,calc(100vw - 32px))
+}
+.app-notice{
+  padding:11px 14px;border-radius:10px;color:#fff;font-size:13px;font-weight:700;
+  box-shadow:0 12px 24px rgba(15,23,42,.22);transform:translateY(0);opacity:1;transition:opacity .2s ease,transform .2s ease
+}
+.app-notice.is-leaving{opacity:0;transform:translateY(-6px)}
+.app-notice--success{background:#15803d}
+.app-notice--error{background:#b91c1c}
+.app-notice--warning{background:#b45309}
+.app-notice--info{background:#1d4ed8}
+
+.table-pager{
+  display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:10px 0 0;flex-wrap:wrap
+}
+.table-pager-status{font-size:12px;font-weight:700;color:#475569}
 
 /* Clientes */
 .clientes-wrap{background:#fff;border:1px solid #d8dee6;box-shadow:0 1px 0 rgba(0,0,0,.03)}

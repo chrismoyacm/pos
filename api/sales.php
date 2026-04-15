@@ -30,16 +30,44 @@ if ($method === 'GET') {
 
     if ($action === 'day') {
         $date = trim((string)($_GET['date'] ?? date('Y-m-d')));
+        $q = strtolower(trim((string)($_GET['q'] ?? '')));
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $pageSize = max(1, min(100, (int)($_GET['pageSize'] ?? 20)));
         if ($date === '') {
             $date = date('Y-m-d');
         }
 
-        $daySales = array_values(array_filter($sales, static function ($sale) use ($date): bool {
+        $daySales = array_values(array_filter($sales, static function ($sale) use ($date, $q): bool {
             $createdAt = (string)($sale['createdAt'] ?? '');
-            return strlen($createdAt) >= 10 && substr($createdAt, 0, 10) === $date;
+            if (!(strlen($createdAt) >= 10 && substr($createdAt, 0, 10) === $date)) {
+                return false;
+            }
+            if ($q === '') {
+                return true;
+            }
+
+            $ticketId = strtolower((string)($sale['ticketId'] ?? ''));
+            $customerName = strtolower((string)($sale['customerName'] ?? ''));
+            return str_contains($ticketId, $q) || str_contains($customerName, $q);
         }));
 
-        ok($daySales);
+        usort($daySales, static function ($a, $b): int {
+            return strcmp((string)($b['createdAt'] ?? ''), (string)($a['createdAt'] ?? ''));
+        });
+
+        $total = count($daySales);
+        $offset = ($page - 1) * $pageSize;
+        $items = array_slice($daySales, $offset, $pageSize);
+
+        ok([
+            'items' => $items,
+            'pagination' => [
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'total' => $total,
+                'totalPages' => max(1, (int)ceil($total / $pageSize)),
+            ],
+        ]);
     }
 
     $last = (string)($_GET['last'] ?? '');
@@ -187,6 +215,7 @@ $customerName = trim((string)($body['customerName'] ?? ''));
 $paymentMethod = strtolower(trim((string)($body['paymentMethod'] ?? 'cash')));
 $mixedPaymentsBody = $body['mixedPayments'] ?? null;
 $paymentNote = trim((string)($body['paymentNote'] ?? ''));
+$clientRequestId = trim((string)($body['clientRequestId'] ?? ''));
 $mixedPayments = [
     'cash' => 0.0,
     'transfer' => 0.0,
@@ -235,6 +264,20 @@ if ($customerName === '') {
     $customerName = $customerId === 'c-001' ? 'Publico en general' : $customerId;
 }
 
+$sales = readJsonFile($salesPath);
+if ($clientRequestId !== '') {
+    foreach ($sales as $existingSale) {
+        if ((string)($existingSale['clientRequestId'] ?? '') !== $clientRequestId) {
+            continue;
+        }
+
+        ok([
+            'ticketId' => (string)($existingSale['ticketId'] ?? ''),
+            'duplicate' => true,
+        ]);
+    }
+}
+
 // Adjust stock for registered products
 $products = readJsonFile($productsPath);
 $productIdToIndex = [];
@@ -242,7 +285,7 @@ foreach ($products as $idx => $p) {
     $productIdToIndex[(string)($p['id'] ?? '')] = $idx;
 }
 
-$nextTicketEstimate = (count(readJsonFile($salesPath)) + 1);
+$nextTicketEstimate = count($sales) + 1;
 
 $movementEntries = [];
 
@@ -302,7 +345,6 @@ if (!empty($movementEntries)) {
     writeJsonFile($inventoryMovementsPath, $movements);
 }
 
-$sales = readJsonFile($salesPath);
 $ticketId = (string)(count($sales) + 1);
 $sale = [
     'ticketId' => $ticketId,
@@ -319,6 +361,7 @@ $sale = [
     'customerName' => $customerName,
     'amountPending' => $amountPending,
     'cashier' => $cashier !== '' ? $cashier : 'Cajero',
+    'clientRequestId' => $clientRequestId,
 ];
 $sales[] = $sale;
 writeJsonFile($salesPath, $sales);

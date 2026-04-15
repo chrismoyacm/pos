@@ -43,14 +43,45 @@
     products: [],
     departments: [],
     movements: [],
+    reportRows: null,
+    reportSummary: null,
     selectedId: null,
     addSelectedId: null,
     adjustSelectedId: null,
     addSuggestions: [],
     addSuggestionIndex: -1,
     adjustSuggestions: [],
-    adjustSuggestionIndex: -1
+    adjustSuggestionIndex: -1,
+    reportPage: 1,
+    reportPageSize: 25,
+    reportTotal: 0,
+    reportTotalPages: 1
   };
+
+  function showNoticeInv(message, type) {
+    const text = (message || '').toString().trim();
+    if (!text) return;
+
+    let host = document.getElementById('app-notices');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'app-notices';
+      host.className = 'app-notices';
+      document.body.appendChild(host);
+    }
+
+    const item = document.createElement('div');
+    item.className = 'app-notice app-notice--' + ((type || 'info').toString());
+    item.textContent = text;
+    host.appendChild(item);
+
+    window.setTimeout(function () {
+      item.classList.add('is-leaving');
+      window.setTimeout(function () {
+        if (item.parentNode) item.parentNode.removeChild(item);
+      }, 220);
+    }, 2600);
+  }
 
   function productByIdInv(id) {
     return invState.products.find(p => (p.id || '') === id) || null;
@@ -400,7 +431,7 @@
   }
 
   function renderInventoryTableInv() {
-    const rows = filteredProductsInv();
+    const rows = Array.isArray(invState.reportRows) ? invState.reportRows : filteredProductsInv();
     const $tbody = $('#inv-report-body').empty();
 
     rows.forEach(product => {
@@ -431,7 +462,39 @@
       $('#inv-modify-btn').prop('disabled', true);
     }
 
-    renderSummaryInv(rows);
+    if (invState.reportSummary && typeof invState.reportSummary === 'object') {
+      $('#inv-total-cost').text(formatMoneyInv(Number(invState.reportSummary.totalCost || 0)));
+      $('#inv-total-stock').text(String(Number(invState.reportSummary.totalStock || 0)));
+    } else {
+      renderSummaryInv(rows);
+    }
+    renderReportPagerInv();
+  }
+
+  function renderReportPagerInv() {
+    const $pager = $('#inv-report-pager').empty();
+    if (invState.reportTotalPages <= 1) {
+      return;
+    }
+
+    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
+    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
+    $prev.prop('disabled', invState.reportPage <= 1);
+    $next.prop('disabled', invState.reportPage >= invState.reportTotalPages);
+    $prev.on('click', function () {
+      if (invState.reportPage <= 1) return;
+      invState.reportPage -= 1;
+      loadReportProductsInv();
+    });
+    $next.on('click', function () {
+      if (invState.reportPage >= invState.reportTotalPages) return;
+      invState.reportPage += 1;
+      loadReportProductsInv();
+    });
+
+    $pager.append($prev);
+    $pager.append('<span class="table-pager-status">Página ' + invState.reportPage + ' de ' + invState.reportTotalPages + ' · ' + invState.reportTotal + ' registros</span>');
+    $pager.append($next);
   }
 
   function renderLowStockInv() {
@@ -524,7 +587,7 @@
   }
 
   function exportInventoryInv() {
-    const rows = filteredProductsInv();
+    const rows = Array.isArray(invState.reportRows) ? invState.reportRows : filteredProductsInv();
     const headers = ['Codigo', 'Descripcion del Producto', 'Costo', 'Precio Venta', 'Existencia', 'Inventario Minimo', 'Inventario Maximo'];
     const lines = [headers.join(',')];
     rows.forEach(product => {
@@ -564,6 +627,64 @@
       renderInventoryTableInv();
       renderLowStockInv();
     });
+  }
+
+  function loadReportProductsInv() {
+    return $.getJSON('../api/inventario.php', {
+      action: 'products_report',
+      department: ($('#inv-department-filter').val() || '').toString(),
+      page: invState.reportPage,
+      pageSize: invState.reportPageSize
+    }).done(res => {
+      const payload = (res.ok && res.data && typeof res.data === 'object') ? res.data : { items: [], summary: null, pagination: null };
+      invState.reportRows = Array.isArray(payload.items) ? payload.items : [];
+      invState.reportSummary = payload.summary && typeof payload.summary === 'object' ? payload.summary : null;
+      invState.reportTotal = Number(payload.pagination?.total || invState.reportRows.length || 0);
+      invState.reportTotalPages = Number(payload.pagination?.totalPages || 1);
+      invState.reportPage = Number(payload.pagination?.page || 1);
+      renderInventoryTableInv();
+    });
+  }
+
+  function printInventoryTableInv() {
+    const rows = Array.isArray(invState.reportRows) ? invState.reportRows : [];
+    if (rows.length === 0) {
+      showNoticeInv('No hay datos para imprimir.', 'warning');
+      return;
+    }
+
+    const bodyRows = rows.map(product => (
+      '<tr>' +
+      '<td>' + escapeHtmlInv(product.barcode || product.id || '') + '</td>' +
+      '<td>' + escapeHtmlInv(product.name || '') + '</td>' +
+      '<td style="text-align:right">' + formatMoneyInv(product.cost || 0) + '</td>' +
+      '<td style="text-align:right">' + formatMoneyInv(product.price || 0) + '</td>' +
+      '<td style="text-align:center">' + escapeHtmlInv(String(product.stock ?? 0)) + '</td>' +
+      '<td style="text-align:center">' + escapeHtmlInv(String(product.minStock ?? 0)) + '</td>' +
+      '<td style="text-align:center">' + escapeHtmlInv(String(product.maxStock ?? 0)) + '</td>' +
+      '</tr>'
+    )).join('');
+
+    const html = '<!doctype html><html><head><meta charset="utf-8"><title>Reporte de Inventario</title><style>' +
+      'body{font-family:Segoe UI,Arial,sans-serif;margin:20px;color:#111827}' +
+      'table{width:100%;border-collapse:collapse;font-size:12px}' +
+      'th,td{border:1px solid #cbd5e1;padding:6px 8px}' +
+      'thead th{background:#eef2ff}' +
+      'h1{font-size:18px;margin:0 0 12px}' +
+      '</style></head><body>' +
+      '<table><thead><tr><th>Código</th><th>Descripción del Producto</th><th>Costo</th><th>Precio Venta</th><th>Existencia</th><th>Inventario Mínimo</th><th>Inventario Máximo</th></tr></thead><tbody>' + bodyRows + '</tbody></table>' +
+      '</body></html>';
+
+    const win = window.open('', '_blank', 'width=960,height=700');
+    if (!win) {
+      showNoticeInv('No se pudo abrir la ventana de impresión.', 'error');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
   }
 
   function loadDepartmentsInv() {
@@ -626,13 +747,16 @@
       window.location.href = 'index.php?mod=inventario&sub=' + encodeURIComponent(section);
     });
 
-    $('#inv-department-filter').on('change', renderInventoryTableInv);
+    $('#inv-department-filter').on('change', function () {
+      invState.reportPage = 1;
+      loadReportProductsInv();
+    });
     $('#inv-modify-btn').on('click', function () {
       if (!invState.selectedId) return;
       window.location.href = 'index.php?mod=productos&sub=modify&pid=' + encodeURIComponent(invState.selectedId);
     });
     $('#inv-export-btn').on('click', exportInventoryInv);
-    $('#inv-print-btn').on('click', function () { window.print(); });
+    $('#inv-print-btn').on('click', printInventoryTableInv);
 
     $('#inv-add-save-btn').on('click', function () {
       const productId = (invState.addSelectedId || '').toString();
@@ -669,12 +793,13 @@
         wholesalePrice: addWholesale
       }).done(res => {
         if (!res.ok) {
-          window.alert(res.error || 'No se pudo registrar la entrada.');
+          showNoticeInv(res.error || 'No se pudo registrar la entrada.', 'error');
           return;
         }
         $('#inv-add-qty').val('1');
         $('#inv-add-note').val('');
-        $.when(loadProductsInv(), loadMovementsInv()).done(renderInventoryTableInv);
+        showNoticeInv('Entrada registrada correctamente.', 'success');
+        $.when(loadProductsInv(), loadMovementsInv(), loadReportProductsInv()).done(renderInventoryTableInv);
       });
     });
 
@@ -755,12 +880,13 @@
       const delta = kind === 'exit' ? -Math.abs(qty) : Math.abs(qty);
       applyMovementInv(productId, delta, kind, note, entryCost, marginPct, null).done(res => {
         if (!res.ok) {
-          window.alert(res.error || 'No se pudo aplicar el ajuste.');
+          showNoticeInv(res.error || 'No se pudo aplicar el ajuste.', 'error');
           return;
         }
         $('#inv-adjust-qty').val('1');
         $('#inv-adjust-note').val('');
-        $.when(loadProductsInv(), loadMovementsInv()).done(() => {
+        showNoticeInv('Ajuste aplicado correctamente.', 'success');
+        $.when(loadProductsInv(), loadMovementsInv(), loadReportProductsInv()).done(() => {
           updateAdjustPreviewInv();
           renderInventoryTableInv();
           renderLowStockInv();
@@ -853,7 +979,7 @@
     if (sub === 'movimientos' || sub === 'kardex') {
       $.when(loadProductsInv(), loadMovementsInv());
     } else if (sub === 'reporte') {
-      $.when(loadDepartmentsInv(), loadProductsInv()).done(renderInventoryTableInv);
+      $.when(loadDepartmentsInv(), loadReportProductsInv());
     } else {
       loadProductsInv();
       resetAddFormInv();

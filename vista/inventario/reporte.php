@@ -61,5 +61,6 @@ declare(strict_types=1);
         <tbody id="inv-report-body"></tbody>
       </table>
     </div>
+    <div class="table-pager" id="inv-report-pager"></div>
   </div>
 </section>

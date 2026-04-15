@@ -172,7 +172,7 @@
 
 <div id="modal-ventas-dia" class="modal" aria-hidden="true">
   <div class="modal-card modal-card--wide" role="dialog" aria-modal="true">
-    <header>Historial de ventas</header>
+    <header id="sales-day-title">Historial de ventas</header>
     <section>
       <div class="modal-sales-toolbar">
         <label class="field">Fecha
@@ -197,6 +197,7 @@
             </thead>
             <tbody id="sales-day-body"></tbody>
           </table>
+          <div class="table-pager" id="sales-day-pager"></div>
         </div>
 
         <div class="modal-sales-detail">
