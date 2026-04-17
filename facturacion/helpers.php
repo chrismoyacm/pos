@@ -784,20 +784,35 @@ function facturacionReadPkcs12WithLegacySubprocess(string $certificatePath, stri
         $env['OPENSSL_MODULES'] = $modulesDir;
     }
 
-    $phpBinary = PHP_BINARY;
-    $binaryCandidates = [
-        $phpBinary,
-        PHP_BINDIR . DIRECTORY_SEPARATOR . 'php.exe',
-        'C:\\xampp\\php\\php.exe',
-        'C:\\php-8.3.6\\php.exe',
-    ];
-    foreach ($binaryCandidates as $candidate) {
-        $base = strtolower(basename((string)$candidate));
-        $isPhpCli = str_starts_with($base, 'php') && str_ends_with($base, '.exe') && $base !== 'httpd.exe';
-        if ($candidate !== '' && $isPhpCli && file_exists($candidate)) {
-            $phpBinary = $candidate;
-            break;
+    $phpBinary = '';
+    $envPhpCli = trim((string) (getenv('FACTURACION_PHP_CLI') ?: ''));
+    if ($envPhpCli !== '' && file_exists($envPhpCli) && strtolower(basename($envPhpCli)) === 'php.exe') {
+        $phpBinary = $envPhpCli;
+    }
+
+    if ($phpBinary === '') {
+        $defaultCli = dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'php.exe';
+        if (file_exists($defaultCli) && strtolower(basename($defaultCli)) === 'php.exe') {
+            $phpBinary = $defaultCli;
         }
+    }
+
+    if ($phpBinary === '') {
+        $binaryCandidates = [
+            PHP_BINDIR . DIRECTORY_SEPARATOR . 'php.exe',
+            'C:\\php-8.3.6\\php.exe',
+            'C:\\xampp\\php\\php.exe',
+        ];
+        foreach ($binaryCandidates as $candidate) {
+            if ($candidate !== '' && file_exists($candidate) && strtolower(basename((string) $candidate)) === 'php.exe') {
+                $phpBinary = $candidate;
+                break;
+            }
+        }
+    }
+
+    if ($phpBinary === '') {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No se encontro php.exe CLI para ejecutar la prueba legacy'];
     }
 
     $process = proc_open([$phpBinary, $scriptPath, $certificatePath], $descriptors, $pipes, dirname(__DIR__), $env);

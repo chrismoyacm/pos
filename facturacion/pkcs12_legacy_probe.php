@@ -1,12 +1,22 @@
 <?php
 declare(strict_types=1);
 
-if ($argc < 2) {
-    fwrite(STDERR, "Missing certificate path\n");
+$argv = $_SERVER['argv'] ?? [];
+$stderr = fopen('php://stderr', 'w');
+if ($stderr === false) {
+    $stderr = null;
+}
+
+if (!isset($argv[1]) || trim((string) $argv[1]) === '') {
+    $payload = ['ok' => false, 'error' => 'Missing certificate path'];
+    if ($stderr) {
+        fwrite($stderr, "Missing certificate path\n");
+    }
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES);
     exit(1);
 }
 
-$certificatePath = (string)$argv[1];
+$certificatePath = (string) $argv[1];
 $password = stream_get_contents(STDIN);
 if ($password === false) {
     $password = '';
@@ -44,10 +54,9 @@ if (!openssl_pkcs12_read($pkcs12, $store, $password)) {
 echo json_encode([
     'ok' => true,
     'certStore' => [
-        'cert' => (string)($store['cert'] ?? ''),
-        'pkey' => (string)($store['pkey'] ?? ''),
+        'cert' => (string) ($store['cert'] ?? ''),
+        'pkey' => (string) ($store['pkey'] ?? ''),
         'extracerts' => $store['extracerts'] ?? [],
     ],
 ], JSON_UNESCAPED_SLASHES);
 exit(0);
-
