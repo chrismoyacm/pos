@@ -92,7 +92,37 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .menu a .kbd{background:#111;color:#fff;font-size:11px;padding:1px 6px;border-radius:3px}
 .menu a.active{border-color:var(--primary);color:var(--primary)}
-.pos-main{padding:10px}
+.pos-main{padding:10px 10px 56px}
+.app-footer{
+  position:fixed;
+  left:0;
+  right:0;
+  bottom:0;
+  z-index:95;
+  background:#ffffff;
+  border-top:1px solid #d8dee6;
+  box-shadow:0 -1px 0 rgba(0,0,0,.03);
+}
+.app-footer-content{
+  min-height:38px;
+  padding:8px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  flex-wrap:wrap;
+  font-size:12px;
+  font-weight:700;
+  color:#374151;
+  text-align:center;
+}
+.app-footer-brand{color:#1f3f66}
+.app-footer-sep{color:#94a3b8}
+.app-footer a{
+  color:#1d4ed8;
+  text-decoration:none;
+}
+.app-footer a:hover{text-decoration:underline}
 .ventas-wrap{background:#fff;border:1px solid #d8dee6}
 .ventas-wrap{box-shadow:0 1px 0 rgba(0,0,0,.03)}
 .ventas-head{padding:10px;border-bottom:1px solid #e5e7eb;background:#fff}
@@ -219,6 +249,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 
 @media (max-width: 600px){
   .pay-mixed-grid{grid-template-columns:1fr}
+  .pos-main{padding-bottom:74px}
 }
 .btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary-2);border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-secondary{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -291,7 +322,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .credit-title{font-weight:800;margin-bottom:6px}
 .check-row{display:flex;align-items:center;gap:8px;color:#111;font-weight:600}
 
-/* Créditos */
+/* Creditos */
 .creditos-wrap{background:#fff;border:1px solid #d8dee6;box-shadow:0 1px 0 rgba(0,0,0,.03)}
 .creditos-titlebar{padding:12px 14px;border-bottom:1px solid #e5e7eb}
 .creditos-titlebar h2{margin:0;font-size:18px;letter-spacing:.2px}

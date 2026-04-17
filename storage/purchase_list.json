@@ -1,1 +1,13 @@
-[]
+[
+    {
+        "id": "pl-00001",
+        "productId": "p-1011",
+        "barcode": "7501000000035",
+        "name": "Producto prueba",
+        "department": "General",
+        "provider": "- Sin Proveedor -",
+        "qty": 2,
+        "cost": 0.5,
+        "createdAt": "2026-04-17T06:34:24-04:00"
+    }
+]

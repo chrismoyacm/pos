@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/response.php';
 require_once __DIR__ . '/../utils/json_store.php';
+require_once __DIR__ . '/../utils/db.php';
 
 session_start();
 
@@ -241,12 +242,304 @@ function settingsPath(): string
 }
 
 /**
+ * @param array<string, mixed> $settings
+ */
+function writeSettingsWithoutTaxes(array $settings): void
+{
+    unset($settings['taxes']);
+    writeJsonFile(settingsPath(), $settings);
+}
+
+/**
  * @return array<int, array<string, mixed>>
  */
 function readUsers(): array
 {
     $users = readJsonFile(usersPath());
     return is_array($users) ? array_values(array_filter($users, 'is_array')) : [];
+}
+
+/**
+ * @param mixed $value
+ */
+function parseTaxRate(mixed $value): float
+{
+    $raw = strtolower(trim((string)$value));
+    if ($raw === '') {
+        return 0.0;
+    }
+    $raw = str_replace(['iva', '%', ' '], '', $raw);
+    return round((float)$raw, 2);
+}
+
+/**
+ * @return array<int, array{id:string,name:string,percentage:float,active:bool,is_default:bool}>
+ */
+function readProductTaxesRowsFromDb(): array
+{
+    if (!dbEnabled()) {
+        return [];
+    }
+
+    $rows = db()->query(
+        "SELECT ID, NOMBRE, PORCENTAJE, DEFECTO, ACTIVO
+         FROM IMPUESTOS
+         WHERE ORIGEN = 'productos' AND TIPO = 'iva'
+         ORDER BY CAST(ID AS UNSIGNED) ASC, ID ASC"
+    )->fetchAll();
+
+    $out = [];
+    foreach ($rows as $row) {
+        $rate = parseTaxRate($row['PORCENTAJE'] ?? 0);
+        if ($rate <= 0) {
+            continue;
+        }
+        $id = trim((string)($row['ID'] ?? ''));
+        if ($id === '') {
+            continue;
+        }
+
+        $out[] = [
+            'id' => $id,
+            'name' => trim((string)($row['NOMBRE'] ?? ('IVA ' . rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%'))),
+            'percentage' => $rate,
+            'active' => ((string)($row['ACTIVO'] ?? '1') === '1'),
+            'is_default' => ((string)($row['DEFECTO'] ?? '0') === '1'),
+        ];
+    }
+
+    return $out;
+}
+
+/**
+ * @param array<string, mixed> $fallback
+ * @return array<string, mixed>
+ */
+function readTaxesSettingsFromDb(array $fallback): array
+{
+    $taxes = $fallback;
+
+    try {
+        $rows = readProductTaxesRowsFromDb();
+    } catch (Throwable) {
+        return $taxes;
+    }
+
+    if ($rows === []) {
+        return $taxes;
+    }
+
+    $options = [];
+    $defaultRate = 0.0;
+    foreach ($rows as $row) {
+        $options[] = [
+            'id' => (string)$row['id'],
+            'name' => (string)$row['name'],
+            'percentage' => (float)$row['percentage'],
+            'active' => (bool)$row['active'],
+        ];
+        if ((bool)$row['is_default']) {
+            $defaultRate = (float)$row['percentage'];
+        }
+    }
+    if ($defaultRate <= 0 && isset($options[0]['percentage'])) {
+        $defaultRate = (float)$options[0]['percentage'];
+    }
+
+    $taxes['default_vat'] = $defaultRate > 0 ? $defaultRate : (float)($taxes['default_vat'] ?? 0);
+    $taxes['iva_options'] = $options;
+
+    return $taxes;
+}
+
+function disableLegacyJsonTaxSyncTriggers(): void
+{
+    if (!dbEnabled()) {
+        return;
+    }
+    try {
+        db()->exec('DROP TRIGGER IF EXISTS TRG_POS_JSON_IVA_AI');
+        db()->exec('DROP TRIGGER IF EXISTS TRG_POS_JSON_IVA_AU');
+    } catch (Throwable) {
+        // Ignorar: no debe bloquear guardado de configuracion.
+    }
+}
+
+/**
+ * @param array<string, mixed> $incoming
+ * @param array<string, mixed> $current
+ * @return array<string, mixed>
+ */
+function saveTaxesSettingsToDb(array $incoming, array $current): array
+{
+    if (!dbEnabled()) {
+        throw new RuntimeException('Base de datos deshabilitada para guardar impuestos');
+    }
+
+    $merged = mergeSettingsDefaults($current, $incoming);
+    $defaultRate = parseTaxRate($merged['default_vat'] ?? 0);
+
+    $existingRows = readProductTaxesRowsFromDb();
+    $optionsRaw = $incoming['iva_options'] ?? null;
+    if (!is_array($optionsRaw) || $optionsRaw === []) {
+        $optionsRaw = array_map(static function (array $row): array {
+            return [
+                'name' => $row['name'],
+                'percentage' => $row['percentage'],
+                'active' => $row['active'],
+            ];
+        }, $existingRows);
+
+        // Si el formulario solo envia default_vat (sin lista), agregar ese IVA nuevo automaticamente.
+        if ($defaultRate > 0) {
+            $existsDefaultRate = false;
+            foreach ($optionsRaw as $opt) {
+                $rate = parseTaxRate($opt['percentage'] ?? 0);
+                if (abs($rate - $defaultRate) < 0.0001) {
+                    $existsDefaultRate = true;
+                    break;
+                }
+            }
+            if (!$existsDefaultRate) {
+                $vatName = trim((string)($incoming['vat_name'] ?? $current['vat_name'] ?? 'IVA'));
+                if ($vatName === '') {
+                    $vatName = 'IVA';
+                }
+                $optionsRaw[] = [
+                    'name' => $vatName . ' ' . rtrim(rtrim(number_format($defaultRate, 2, '.', ''), '0'), '.') . '%',
+                    'percentage' => $defaultRate,
+                    'active' => true,
+                ];
+            }
+        }
+    }
+    if (!is_array($optionsRaw) || $optionsRaw === []) {
+        $optionsRaw = [
+            ['name' => 'IVA 12%', 'percentage' => 12, 'active' => true],
+            ['name' => 'IVA 15%', 'percentage' => 15, 'active' => true],
+        ];
+    }
+
+    $normalizedOptions = [];
+    foreach ($optionsRaw as $opt) {
+        if (!is_array($opt)) {
+            continue;
+        }
+        $rate = parseTaxRate($opt['percentage'] ?? 0);
+        if ($rate <= 0) {
+            continue;
+        }
+        $name = trim((string)($opt['name'] ?? ''));
+        if ($name === '') {
+            $name = 'IVA ' . rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
+        }
+        $normalizedOptions[] = [
+            'name' => $name,
+            'percentage' => $rate,
+            'active' => array_key_exists('active', $opt) ? (bool)$opt['active'] : true,
+        ];
+    }
+
+    if ($normalizedOptions === []) {
+        $normalizedOptions = [
+            ['name' => 'IVA 12%', 'percentage' => 12.0, 'active' => true],
+            ['name' => 'IVA 15%', 'percentage' => 15.0, 'active' => true],
+        ];
+    }
+
+    if ($defaultRate <= 0) {
+        $defaultRate = (float)$normalizedOptions[0]['percentage'];
+    }
+
+    $oldRateById = [];
+    foreach ($existingRows as $row) {
+        $oldRateById[(string)$row['id']] = (float)$row['percentage'];
+    }
+
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $pdo->exec("DELETE FROM IMPUESTOS WHERE ORIGEN = 'productos' AND TIPO = 'iva'");
+
+        $insert = $pdo->prepare(
+            "INSERT INTO IMPUESTOS (ID, NOMBRE, PORCENTAJE, DEFECTO, ACTIVO, ORIGEN, BASE_GRAVABLE, TIPO)
+             VALUES (:id, :nombre, :porcentaje, :defecto, :activo, 'productos', '100', 'iva')"
+        );
+
+        $newIdByRate = [];
+        $validNewIds = [];
+        $defaultId = '1';
+        $defaultAssigned = false;
+        $sequence = 1;
+        foreach ($normalizedOptions as $opt) {
+            $id = (string)$sequence;
+            $rate = (float)$opt['percentage'];
+            $isDefault = (!$defaultAssigned && abs($rate - $defaultRate) < 0.0001);
+            if ($isDefault) {
+                $defaultAssigned = true;
+                $defaultId = $id;
+            }
+
+            $insert->execute([
+                ':id' => $id,
+                ':nombre' => (string)$opt['name'],
+                ':porcentaje' => number_format($rate, 2, '.', ''),
+                ':defecto' => $isDefault ? '1' : '0',
+                ':activo' => !empty($opt['active']) ? '1' : '0',
+            ]);
+
+            $newIdByRate[number_format($rate, 2, '.', '')] = $id;
+            $validNewIds[$id] = true;
+            $sequence++;
+        }
+
+        if (!$defaultAssigned) {
+            $defaultId = '1';
+            $pdo->exec("UPDATE IMPUESTOS SET DEFECTO = '0' WHERE ORIGEN = 'productos' AND TIPO = 'iva'");
+            $stmtDefault = $pdo->prepare("UPDATE IMPUESTOS SET DEFECTO = '1' WHERE ORIGEN = 'productos' AND TIPO = 'iva' AND ID = :id");
+            $stmtDefault->execute([':id' => $defaultId]);
+        }
+
+        $productRows = $pdo->query("SELECT ID, IMPUESTOS FROM PRODUCTOS")->fetchAll();
+        $updateProduct = $pdo->prepare("UPDATE PRODUCTOS SET IMPUESTOS = :tax WHERE ID = :id");
+        foreach ($productRows as $product) {
+            $currentTax = trim((string)($product['IMPUESTOS'] ?? ''));
+            if ($currentTax === '' || $currentTax === '0') {
+                continue;
+            }
+
+            $newTaxId = null;
+            if (preg_match('/^[0-9]+$/', $currentTax) === 1 && isset($validNewIds[$currentTax])) {
+                $newTaxId = $currentTax;
+            } elseif (isset($oldRateById[$currentTax])) {
+                $rateKey = number_format((float)$oldRateById[$currentTax], 2, '.', '');
+                $newTaxId = $newIdByRate[$rateKey] ?? $defaultId;
+            } else {
+                $parsedRate = parseTaxRate($currentTax);
+                if ($parsedRate > 0) {
+                    $rateKey = number_format($parsedRate, 2, '.', '');
+                    $newTaxId = $newIdByRate[$rateKey] ?? $defaultId;
+                }
+            }
+
+            if ($newTaxId === null || $newTaxId === $currentTax) {
+                continue;
+            }
+            $updateProduct->execute([
+                ':tax' => $newTaxId,
+                ':id' => (int)$product['ID'],
+            ]);
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+
+    return readTaxesSettingsFromDb($merged);
 }
 
 /**
@@ -258,16 +551,23 @@ function readSettings(): array
     $settings = readJsonFile(settingsPath());
     if (!is_array($settings) || $settings === []) {
         $settings = $defaults;
-        writeJsonFile(settingsPath(), $settings);
-        return $settings;
+        writeSettingsWithoutTaxes($settings);
+    } else {
+        $merged = mergeSettingsDefaults($defaults, $settings);
+        if ($merged !== $settings) {
+            writeSettingsWithoutTaxes($merged);
+        }
+        $settings = $merged;
     }
 
-    $merged = mergeSettingsDefaults($defaults, $settings);
-    if ($merged !== $settings) {
-        writeJsonFile(settingsPath(), $merged);
+    $taxDefaults = is_array($settings['taxes'] ?? null) ? $settings['taxes'] : $defaults['taxes'];
+    try {
+        $settings['taxes'] = readTaxesSettingsFromDb($taxDefaults);
+    } catch (Throwable) {
+        $settings['taxes'] = $taxDefaults;
     }
 
-    return $merged;
+    return $settings;
 }
 
 /**
@@ -316,6 +616,7 @@ $payload = requestBody();
 
 if ($action === 'save_settings') {
     requireAdmin();
+    disableLegacyJsonTaxSyncTriggers();
     $settings = readSettings();
     $incoming = $payload['settings'] ?? null;
     if (!is_array($incoming)) {
@@ -323,12 +624,28 @@ if ($action === 'save_settings') {
     }
 
     foreach ($settings as $section => $value) {
+        if ($section === 'taxes') {
+            continue;
+        }
         if (array_key_exists($section, $incoming)) {
             $settings[$section] = $incoming[$section];
         }
     }
 
-    writeJsonFile(settingsPath(), $settings);
+    if (array_key_exists('taxes', $incoming)) {
+        if (!is_array($incoming['taxes'])) {
+            errorResponse('Configuracion de impuestos invalida', 400);
+        }
+        try {
+            $settings['taxes'] = saveTaxesSettingsToDb($incoming['taxes'], is_array($settings['taxes'] ?? null) ? $settings['taxes'] : defaultSettings()['taxes']);
+        } catch (Throwable $e) {
+            errorResponse('No se pudo guardar impuestos en la base de datos: ' . $e->getMessage(), 500);
+        }
+    } else {
+        $settings['taxes'] = readTaxesSettingsFromDb(is_array($settings['taxes'] ?? null) ? $settings['taxes'] : defaultSettings()['taxes']);
+    }
+
+    writeSettingsWithoutTaxes($settings);
     ok(['message' => 'Configuracion guardada', 'settings' => $settings]);
 }
 

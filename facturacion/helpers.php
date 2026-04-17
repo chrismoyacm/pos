@@ -76,7 +76,9 @@ function facturacionAppendLog(string $level, string $message, array $context = [
         $rows = array_slice($rows, -3000);
     }
     facturacionWriteJson('logs.json', $rows);
-    facturacionWriteJsonDisk('logs.json', $rows);
+    if (!function_exists('dbEnabled') || !dbEnabled()) {
+        facturacionWriteJsonDisk('logs.json', $rows);
+    }
 }
 
 function facturacionDefaultEmitter(): array
@@ -770,6 +772,11 @@ function facturacionReadPkcs12WithLegacySubprocess(string $certificatePath, stri
         return ['ok' => false, 'certStore' => [], 'error' => 'No existe el script de compatibilidad legacy'];
     }
 
+    $pkcs12 = file_get_contents($certificatePath);
+    if ($pkcs12 === false) {
+        return ['ok' => false, 'certStore' => [], 'error' => 'No se pudo leer el archivo de certificado para la prueba legacy'];
+    }
+
     $descriptors = [
         0 => ['pipe', 'r'],
         1 => ['pipe', 'w'],
@@ -820,7 +827,14 @@ function facturacionReadPkcs12WithLegacySubprocess(string $certificatePath, stri
         return ['ok' => false, 'certStore' => [], 'error' => 'No se pudo iniciar el proceso de prueba legacy (php=' . $phpBinary . ')'];
     }
 
-    fwrite($pipes[0], $password . PHP_EOL);
+    $payload = json_encode([
+        'password' => $password,
+        'pkcs12_b64' => base64_encode($pkcs12),
+    ], JSON_UNESCAPED_SLASHES);
+    if (!is_string($payload)) {
+        $payload = json_encode(['password' => $password], JSON_UNESCAPED_SLASHES);
+    }
+    fwrite($pipes[0], (string)$payload);
     fclose($pipes[0]);
     $stdout = stream_get_contents($pipes[1]);
     fclose($pipes[1]);

@@ -14,7 +14,8 @@
     paymentNote: '',
     transferMeta: { reference: '', phone: '' },
     saleDiscountPct: 0,
-    customer: { id: 'c-001', name: 'Publico en general' }
+    customer: { id: 'c-001', name: 'Publico en general' },
+    taxOptions: []
   };
 
   const salesHistoryState = {
@@ -142,7 +143,7 @@
   function processCodigoInput() {
     const parsed = parseCodeQtyInput($('#codigo').val());
     if (!parsed) {
-      window.alert('Formato inválido. Use CODIGO o CODIGO*Cantidad.');
+      window.alert('Formato invÃ¡lido. Use CODIGO o CODIGO*Cantidad.');
       focusCodigoInput(true);
       return;
     }
@@ -249,19 +250,69 @@
     return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
   }
 
+  function formatIvaPercent(value) {
+    const rate = Number(value || 0);
+    if (!(rate > 0)) return '';
+    return (Number.isInteger(rate) ? String(rate) : String(rate.toFixed(2)).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1')) + '%';
+  }
+
+  function normalizedTaxOptions() {
+    return (Array.isArray(state.taxOptions) ? state.taxOptions : [])
+      .map(function (row) {
+        return {
+          id: (row && row.id !== undefined ? row.id : '').toString().trim(),
+          percentage: Number(row && row.percentage !== undefined ? row.percentage : 0),
+          active: row && row.active !== false
+        };
+      })
+      .filter(function (row) { return row.active && row.percentage > 0; });
+  }
+
+  function findTaxById(id) {
+    const needle = (id || '').toString().trim();
+    if (!needle) return null;
+    return normalizedTaxOptions().find(function (opt) { return opt.id === needle; }) || null;
+  }
+
+  function availableIvaLabels() {
+    const labels = normalizedTaxOptions()
+      .map(function (opt) { return formatIvaPercent(opt.percentage); })
+      .filter(Boolean);
+    const unique = Array.from(new Set(labels));
+    unique.sort(function (a, b) { return Number(a.replace('%', '')) - Number(b.replace('%', '')); });
+    return ['No'].concat(unique);
+  }
+
   function normalizeIvaLabel(iva) {
-    var raw = (iva || '').toString().trim().toLowerCase();
-    if (raw === '12' || raw === '12%' || raw === 'iva 12' || raw === 'iva 12%' || raw === 'si' || raw === 'sí') return '12%';
-    if (raw === '15' || raw === '15%' || raw === 'iva 15' || raw === 'iva 15%') return '15%';
+    const raw = (iva || '').toString().trim().toLowerCase();
+    if (!raw || raw === 'no' || raw === '0' || raw === 'false') return 'No';
+    const byId = findTaxById(raw);
+    if (byId) return formatIvaPercent(byId.percentage) || 'No';
+    const numeric = Number(raw.replace('iva', '').replace('%', '').trim());
+    if (numeric > 0) return formatIvaPercent(numeric) || 'No';
+    if (raw === 'si' || raw === 'sï¿½' || raw === 'yes' || raw === 'true') {
+      const labels = availableIvaLabels().filter(function (label) { return label !== 'No'; });
+      return labels[0] || 'No';
+    }
     return 'No';
   }
 
   function nextIvaLabel(current) {
-    const options = ['No', '12%', '15%'];
+    const options = availableIvaLabels();
     const normalized = normalizeIvaLabel(current);
     const currentIndex = options.indexOf(normalized);
-    if (currentIndex < 0) return 'No';
+    if (currentIndex < 0) return options[0] || 'No';
     return options[(currentIndex + 1) % options.length];
+  }
+
+  function loadTaxOptions() {
+    return $.getJSON('../api/products.php', { action: 'taxes' }).done(function (res) {
+      state.taxOptions = (res && res.ok && Array.isArray(res.data)) ? res.data : [];
+      renderGrid();
+    }).fail(function () {
+      state.taxOptions = [];
+      renderGrid();
+    });
   }
 
   function isCreditPayment() {
@@ -413,8 +464,9 @@
       url: '../api/products.php',
       method: 'PATCH',
       contentType: 'application/json',
+      timeout: 8000,
       data: JSON.stringify({
-        action: 'update_product',
+        action: 'update_product_tax',
         id: itemId,
         iva: ivaValue
       })
@@ -430,22 +482,17 @@
     item.iva = next;
     renderGrid();
 
-    // Artículos temporales no se guardan en catálogo.
+    // ArtÃ­culos temporales no se guardan en catÃ¡logo.
     if (String(item.id || '').startsWith('tmp-')) {
       return;
     }
 
     updateProductIva(item.id, next).done(function (res) {
-      if (res && res.ok) {
-        return;
+      if (!res || !res.ok) {
+        console.warn('No se confirmo guardado de IVA en servidor.', res);
       }
-      item.iva = previous;
-      renderGrid();
-      window.alert((res && res.error) ? res.error : 'No se pudo guardar el cambio de IVA.');
     }).fail(function () {
-      item.iva = previous;
-      renderGrid();
-      window.alert('No se pudo guardar el cambio de IVA.');
+      console.warn('No se pudo confirmar guardado de IVA (timeout/red).');
     });
   }
 
@@ -654,9 +701,9 @@
       $('#pay-credit-info').prop('hidden', false).show();
     }
     if (showCredit) {
-      $('#pay-credit-info').text('Venta a crédito: seleccione cliente y el total se registra como saldo pendiente.');
+      $('#pay-credit-info').text('Venta a crÃ©dito: seleccione cliente y el total se registra como saldo pendiente.');
     } else if (showMixed) {
-      $('#pay-credit-info').text('Pago mixto: efectivo + transferencia + crédito (si usa crédito, cliente seleccionado).');
+      $('#pay-credit-info').text('Pago mixto: efectivo + transferencia + crÃ©dito (si usa crÃ©dito, cliente seleccionado).');
     }
     $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount);
 
@@ -809,7 +856,7 @@
     const paymentMethod = paymentMethodLabel(String(safeSale.paymentMethod || 'cash'));
     const mixed = safeSale.mixedPayments || { cash: 0, transfer: 0, credit: 0 };
     const mixedInfo = String(safeSale.paymentMethod || '') === 'mixed'
-      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Transferencia: ' + formatMoney(Number(mixed.transfer || 0)) + ' | Crédito: ' + formatMoney(Number(mixed.credit || mixed.card || 0)) + '</div>'
+      ? '<div>Efectivo: ' + formatMoney(Number(mixed.cash || 0)) + ' | Transferencia: ' + formatMoney(Number(mixed.transfer || 0)) + ' | CrÃ©dito: ' + formatMoney(Number(mixed.credit || mixed.card || 0)) + '</div>'
       : '';
 
     const html = [
@@ -872,7 +919,7 @@
     const doc = iframe.contentWindow?.document;
     if (!doc) {
       document.body.removeChild(iframe);
-      showNotice('La venta quedó registrada, pero no se pudo abrir la impresión.', 'warning');
+      showNotice('La venta quedÃ³ registrada, pero no se pudo abrir la impresiÃ³n.', 'warning');
       return false;
     }
 
@@ -912,11 +959,11 @@
 
   function updateSalesHistoryHeader() {
     const isReturn = salesHistoryState.mode === 'return';
-    $('#sales-day-title').text(isReturn ? 'Devoluciones de ventas' : 'Ventas del día');
+    $('#sales-day-title').text(isReturn ? 'Devoluciones de ventas' : 'Ventas del dÃ­a');
     $('#sales-day-help').text(
       isReturn
-        ? 'Seleccione un ticket y un artículo para registrar devolución.'
-        : 'Puede revisar ventas del día.'
+        ? 'Seleccione un ticket y un artÃ­culo para registrar devoluciÃ³n.'
+        : 'Puede revisar ventas del dÃ­a.'
     );
     $('#sales-day-return-btn')
       .prop('hidden', !isReturn)
@@ -946,7 +993,7 @@
     });
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + salesHistoryState.page + ' de ' + salesHistoryState.totalPages + ' · ' + salesHistoryState.total + ' registros</span>');
+    $pager.append('<span class="table-pager-status">PÃ¡gina ' + salesHistoryState.page + ' de ' + salesHistoryState.totalPages + ' Â· ' + salesHistoryState.total + ' registros</span>');
     $pager.append($next);
   }
 
@@ -976,15 +1023,15 @@
     if (isMixedPayment()) {
       const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.transfer || 0) + Number(state.mixedPayments.credit || 0);
       if (covered < state.total) {
-        window.alert('En pago mixto, Efectivo + Transferencia + Crédito debe cubrir el total.');
+        window.alert('En pago mixto, Efectivo + Transferencia + CrÃ©dito debe cubrir el total.');
         return;
       }
       if (state.mixedPayments.cash < 0) {
-        window.alert('Monto de efectivo inválido.');
+        window.alert('Monto de efectivo invÃ¡lido.');
         return;
       }
       if (state.mixedPayments.transfer < 0) {
-        window.alert('Monto de transferencia inválido.');
+        window.alert('Monto de transferencia invÃ¡lido.');
         return;
       }
       if (state.mixedPayments.transfer > 0 && (state.transferMeta.reference || '').toString().trim() === '') {
@@ -992,7 +1039,7 @@
         return;
       }
       if (state.mixedPayments.credit > 0 && !hasAssignedCreditCustomer()) {
-        window.alert('Seleccione cliente cuando haya parte a crédito en pago mixto.');
+        window.alert('Seleccione cliente cuando haya parte a crÃ©dito en pago mixto.');
         return;
       }
     }
@@ -1087,7 +1134,7 @@
 
       if (shouldPrint) {
         printTicket(saleSnapshot);
-        showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '. Se abrió impresión.', 'success');
+        showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '. Se abriÃ³ impresiÃ³n.', 'success');
       } else {
         showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '.', 'success');
       }
@@ -1170,10 +1217,10 @@
     $('#cash-movement-help').text(
       isEntry
         ? 'Registre la cantidad y un comentario para la entrada de efectivo.'
-        : 'Registre la cantidad y la razón o proveedor para la salida de efectivo.'
+        : 'Registre la cantidad y la razÃ³n o proveedor para la salida de efectivo.'
     );
-    $('#cash-movement-note-title').text(isEntry ? 'Comentario' : 'Razón o proveedor');
-    $('#modal-stock [name=note]').attr('placeholder', isEntry ? 'Entrada de dinero' : 'Razón o proveedor');
+    $('#cash-movement-note-title').text(isEntry ? 'Comentario' : 'RazÃ³n o proveedor');
+    $('#modal-stock [name=note]').attr('placeholder', isEntry ? 'Entrada de dinero' : 'RazÃ³n o proveedor');
     $('#modal-stock').addClass('active');
     $('#modal-stock [name=amount]').focus();
   }
@@ -1183,11 +1230,11 @@
     const amount = parseFloat($('#modal-stock [name=amount]').val().toString()) || 0;
     const note = ($('#modal-stock [name=note]').val() || '').toString().trim();
     if (!(amount > 0)) {
-      window.alert('Ingrese una cantidad válida.');
+      window.alert('Ingrese una cantidad vÃ¡lida.');
       return;
     }
     if (type !== 'entrada' && !note) {
-      window.alert('Ingrese razón o proveedor para la salida.');
+      window.alert('Ingrese razÃ³n o proveedor para la salida.');
       return;
     }
 
@@ -1227,7 +1274,7 @@
     if (nextPriceStr === null) return;
     const nextPrice = parseFloat(nextPriceStr);
     if (!Number.isFinite(nextPrice) || nextPrice < 0) {
-      window.alert('Precio inválido');
+      window.alert('Precio invÃ¡lido');
       return;
     }
     item.price = Number(nextPrice.toFixed(2));
@@ -1246,7 +1293,7 @@
     const raw = ($('#sale-discount-pct').val() || '0').toString();
     const pct = Number(raw);
     if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-      window.alert('Ingrese un descuento válido entre 0 y 100.');
+      window.alert('Ingrese un descuento vÃ¡lido entre 0 y 100.');
       return;
     }
     state.saleDiscountPct = Number(pct.toFixed(2));
@@ -1368,7 +1415,7 @@
     });
 
     if (items.length === 0) {
-      $tbody.append('<tr><td colspan="4" class="muted">Este ticket no tiene artículos.</td></tr>');
+      $tbody.append('<tr><td colspan="4" class="muted">Este ticket no tiene artÃ­culos.</td></tr>');
     }
 
     const canReturn = salesHistoryState.mode === 'return' && salesHistoryState.selectedItemIndex >= 0;
@@ -1419,7 +1466,7 @@
     const sale = findSaleByTicketId(salesHistoryState.selectedTicketId);
     if (!sale) return;
     if (salesHistoryState.selectedItemIndex < 0) {
-      window.alert('Seleccione un artículo para devolver.');
+      window.alert('Seleccione un artÃ­culo para devolver.');
       return;
     }
 
@@ -1430,19 +1477,19 @@
     const alreadyReturned = returnedQtyForItem(sale, item.id);
     const available = Math.max(0, soldQty - alreadyReturned);
     if (available <= 0) {
-      window.alert('Este artículo ya fue devuelto por completo.');
+      window.alert('Este artÃ­culo ya fue devuelto por completo.');
       return;
     }
 
-    const qtyStr = window.prompt('Cantidad a devolver (máximo ' + available + '):', '1');
+    const qtyStr = window.prompt('Cantidad a devolver (mÃ¡ximo ' + available + '):', '1');
     if (qtyStr === null) return;
     const qty = parseInt(qtyStr, 10);
     if (!Number.isInteger(qty) || qty <= 0 || qty > available) {
-      window.alert('Cantidad inválida.');
+      window.alert('Cantidad invÃ¡lida.');
       return;
     }
 
-    const reason = (window.prompt('Motivo de devolución:', 'Devolución en caja') || '').toString().trim();
+    const reason = (window.prompt('Motivo de devoluciÃ³n:', 'DevoluciÃ³n en caja') || '').toString().trim();
     $.ajax({
       url: '../api/sales.php',
       method: 'POST',
@@ -1456,10 +1503,10 @@
       })
     }).done(function (res) {
       if (!res.ok) {
-        showNotice(res.error || 'No se pudo registrar la devolución.', 'error');
+        showNotice(res.error || 'No se pudo registrar la devoluciÃ³n.', 'error');
         return;
       }
-      showNotice('Devolución registrada correctamente.', 'success');
+      showNotice('DevoluciÃ³n registrada correctamente.', 'success');
       loadSalesByDay();
     });
   }
@@ -1581,7 +1628,7 @@
         if (e.key === 'ArrowDown') { e.preventDefault(); cyclePaymentMethod(1); return; }
         if (e.key === 'Enter' && !isTextControl) { e.preventDefault(); confirmSale({ printTicket: false }); return; }
 
-        // Evita choques con atajos de módulos mientras se está cobrando.
+        // Evita choques con atajos de mÃ³dulos mientras se estÃ¡ cobrando.
         if (/^f\d+$/i.test(e.key)) { e.preventDefault(); return; }
       }
 
@@ -1617,6 +1664,9 @@
     }
     $('#clienteNombre').text(state.customer.name);
     renderGrid();
+    loadTaxOptions();
     focusCodigoInput(true);
   });
 })();
+
+

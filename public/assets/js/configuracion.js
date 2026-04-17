@@ -33,6 +33,23 @@
         },
     };
 
+    function normalizeTaxOption(option) {
+        if (!option || typeof option !== 'object') {
+            return null;
+        }
+        const rate = Number(option.percentage || 0);
+        if (!(rate > 0)) {
+            return null;
+        }
+        const label = (option.name || '').toString().trim() || ('IVA ' + rate + '%');
+        return {
+            id: (option.id || '').toString(),
+            name: label,
+            percentage: rate,
+            active: option.active !== false,
+        };
+    }
+
     function setStatus(message, isError) {
         if (!statusNode) {
             return;
@@ -169,8 +186,16 @@
         $('#cfg-ticket-extra-bottom').val(ticket.extra_bottom_line || '');
         $('#cfg-ticket-logo-url').val(ticket.logo_url || '');
 
-        $('#cfg-tax-name').val(taxes.vat_name || 'IVA');
-        $('#cfg-tax-rate').val(Number(taxes.default_vat || 0));
+        const taxOptions = Array.isArray(taxes.iva_options)
+            ? taxes.iva_options.map(normalizeTaxOption).filter(Boolean)
+            : [];
+        const defaultRate = Number(taxes.default_vat || 0);
+        const defaultOption = taxOptions.find(function (option) {
+            return Math.abs(Number(option.percentage || 0) - defaultRate) < 0.0001;
+        });
+
+        $('#cfg-tax-name').val((defaultOption && defaultOption.name) || taxes.vat_name || 'IVA');
+        $('#cfg-tax-rate').val(defaultRate);
         $('#cfg-tax-enabled').prop('checked', taxes.enabled !== false);
         $('#cfg-tax-country').val(taxes.country || 'EC');
         $('#cfg-tax-include-new').prop('checked', !!taxes.included_new_products);
@@ -215,6 +240,33 @@
     }
 
     function collectSettings() {
+        const currentTaxes = (state.settings && state.settings.taxes) ? state.settings.taxes : {};
+        const existingTaxOptions = Array.isArray(currentTaxes.iva_options)
+            ? currentTaxes.iva_options.map(normalizeTaxOption).filter(Boolean)
+            : [];
+        const selectedRate = Number($('#cfg-tax-rate').val() || 0);
+        const rawTaxName = ($('#cfg-tax-name').val() || '').toString().trim() || 'IVA';
+        const selectedName = rawTaxName.replace(/\s*\d+([.,]\d+)?\s*%$/i, '').trim() || rawTaxName;
+        const selectedTaxLabel = selectedName + ' ' + selectedRate + '%';
+        const selectedInclude = $('#cfg-tax-include-new').is(':checked');
+
+        if (selectedRate > 0) {
+            const idx = existingTaxOptions.findIndex(function (opt) {
+                return Math.abs(Number(opt.percentage || 0) - selectedRate) < 0.0001;
+            });
+            if (idx >= 0) {
+                existingTaxOptions[idx].name = selectedTaxLabel;
+                existingTaxOptions[idx].active = true;
+            } else {
+                existingTaxOptions.push({
+                    id: '',
+                    name: selectedTaxLabel,
+                    percentage: selectedRate,
+                    active: true,
+                });
+            }
+        }
+
         return {
             enabledOptions: {
                 inventory_control: $('#cfg-inventory-control').is(':checked'),
@@ -250,14 +302,15 @@
                 logo_url: ($('#cfg-ticket-logo-url').val() || '').toString().trim(),
             },
             taxes: {
-                vat_name: ($('#cfg-tax-name').val() || '').toString().trim(),
-                default_vat: Number($('#cfg-tax-rate').val() || 0),
+                vat_name: selectedName,
+                default_vat: selectedRate,
                 enabled: $('#cfg-tax-enabled').is(':checked'),
                 country: ($('#cfg-tax-country').val() || 'EC').toString(),
-                included_new_products: $('#cfg-tax-include-new').is(':checked'),
+                included_new_products: selectedInclude,
                 breakdown_on_ticket: $('#cfg-tax-breakdown-ticket').is(':checked'),
                 prices_include_taxes: $('#cfg-tax-prices-include').is(':checked'),
                 withholding_mode: ($('#cfg-tax-withholding-mode').val() || 'none').toString(),
+                iva_options: existingTaxOptions,
             },
             corte: {
                 allow_negative_close: $('#cfg-corte-negative').is(':checked'),

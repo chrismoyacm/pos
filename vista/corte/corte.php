@@ -85,3 +85,29 @@ declare(strict_types=1);
     </div>
   </div>
 </section>
+
+<div id="cut-close-modal" class="modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cut-close-modal-title">
+    <header id="cut-close-modal-title">Cerrar turno</header>
+    <section>
+      <div class="field-col">
+        <label for="cut-close-expected">Efectivo esperado</label>
+        <input id="cut-close-expected" type="text" readonly>
+      </div>
+      <div class="field-col">
+        <label for="cut-close-actual">Efectivo contado</label>
+        <input id="cut-close-actual" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00">
+      </div>
+      <div class="field-col">
+        <label for="cut-close-difference">Diferencia</label>
+        <input id="cut-close-difference" type="text" readonly>
+      </div>
+      <div class="muted" id="cut-close-modal-help">Ingrese el valor contado para cerrar el turno.</div>
+      <div class="shift-close-error" id="cut-close-modal-error"></div>
+    </section>
+    <footer>
+      <button type="button" class="btn-secondary" id="cut-close-cancel">Cancelar</button>
+      <button type="button" class="btn-primary" id="cut-close-confirm">Cerrar turno</button>
+    </footer>
+  </div>
+</div>

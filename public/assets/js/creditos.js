@@ -23,19 +23,6 @@
     reporteTotalPages: 1
   };
 
-  function paginateRows(rows, page, pageSize) {
-    const total = rows.length;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const offset = (safePage - 1) * pageSize;
-    return {
-      pageRows: rows.slice(offset, offset + pageSize),
-      page: safePage,
-      total,
-      totalPages
-    };
-  }
-
   function setAcceptEnabled() {
     $('#cred-accept').prop('disabled', !state.selectedId);
   }
@@ -65,12 +52,8 @@
 
   function renderReporte(rows) {
     const $tbody = $('#cred-reporte-tbody').empty();
-    const pg = paginateRows(rows || [], state.reportePage, state.reportePageSize);
-    state.reportePage = pg.page;
-    state.reporteTotal = pg.total;
-    state.reporteTotalPages = pg.totalPages;
-
-    pg.pageRows.forEach(r => {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    safeRows.forEach(r => {
       const nameAddress = (r?.nameAddress || '').toString();
       const parts = nameAddress.split('\n');
       const name = parts[0] || '';
@@ -99,7 +82,7 @@
       $tbody.append($tr);
     });
 
-    if (pg.pageRows.length === 0) {
+    if (safeRows.length === 0) {
       $tbody.append('<tr><td colspan="7" class="muted">No hay saldos para mostrar.</td></tr>');
     }
 
@@ -119,14 +102,12 @@
 
     $prev.on('click', function () {
       if (state.reportePage <= 1) return;
-      state.reportePage -= 1;
-      renderReporte(state.reporteRows);
+      loadReporte(state.reportePage - 1);
     });
 
     $next.on('click', function () {
       if (state.reportePage >= state.reporteTotalPages) return;
-      state.reportePage += 1;
-      renderReporte(state.reporteRows);
+      loadReporte(state.reportePage + 1);
     });
 
     $pager.append($prev);
@@ -134,13 +115,19 @@
     $pager.append($next);
   }
 
-  function loadReporte() {
-    return $.getJSON('../api/creditos_reporte_saldos.php').done(res => {
+  function loadReporte(page) {
+    const requestedPage = Number.isFinite(Number(page)) ? Math.max(1, Number(page)) : state.reportePage;
+    return $.getJSON('../api/creditos_reporte_saldos.php', {
+      page: requestedPage,
+      pageSize: state.reportePageSize
+    }).done(res => {
       const data = (res && res.ok) ? res.data : null;
       const total = data?.totalPending ?? 0;
       $('#cred-total-pendiente').text(formatMoney(total));
       state.reporteRows = Array.isArray(data?.rows) ? data.rows : [];
-      state.reportePage = 1;
+      state.reporteTotal = Number(data?.pagination?.total || state.reporteRows.length || 0);
+      state.reporteTotalPages = Number(data?.pagination?.totalPages || 1);
+      state.reportePage = Number(data?.pagination?.page || requestedPage || 1);
       renderReporte(state.reporteRows);
     });
   }
@@ -202,7 +189,7 @@
     }
     if (isReportePage()) {
       bindReporte();
-      loadReporte();
+      loadReporte(1);
     }
   });
 })();

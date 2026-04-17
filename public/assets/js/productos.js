@@ -28,11 +28,66 @@
     return 'UNIDAD';
   }
 
+  function formatIvaPercent(value) {
+    const rate = Number(value || 0);
+    if (!(rate > 0)) return '';
+    return (Number.isInteger(rate) ? String(rate) : String(rate.toFixed(2)).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1')) + '%';
+  }
+
+  function normalizedTaxOptions() {
+    return (Array.isArray(state.taxOptions) ? state.taxOptions : [])
+      .map(function (row) {
+        return {
+          id: (row && row.id !== undefined ? row.id : '').toString().trim(),
+          percentage: Number(row && row.percentage !== undefined ? row.percentage : 0),
+          active: row && row.active !== false
+        };
+      })
+      .filter(function (row) { return row.active && row.percentage > 0; });
+  }
+
+  function findTaxById(id) {
+    const needle = (id || '').toString().trim();
+    if (!needle) return null;
+    return normalizedTaxOptions().find(function (opt) { return opt.id === needle; }) || null;
+  }
+
+  function availableIvaLabels() {
+    const labels = normalizedTaxOptions()
+      .map(function (opt) { return formatIvaPercent(opt.percentage); })
+      .filter(Boolean);
+    const unique = Array.from(new Set(labels));
+    unique.sort(function (a, b) { return Number(a.replace('%', '')) - Number(b.replace('%', '')); });
+    return ['No'].concat(unique);
+  }
+
+  function syncIvaSelectOptions(preferredValue) {
+    const $sel = $('#prod-iva');
+    if ($sel.length === 0) return;
+    const current = (preferredValue || $sel.val() || 'No').toString();
+    const options = availableIvaLabels();
+    $sel.empty();
+    options.forEach(function (label) {
+      const text = label === 'No' ? 'Sin IVA' : ('IVA ' + label);
+      $sel.append('<option value="' + escapeHtml(label) + '">' + escapeHtml(text) + '</option>');
+    });
+    if (options.indexOf(current) < 0) {
+      $sel.append('<option value="' + escapeHtml(current) + '">' + escapeHtml(current === 'No' ? 'Sin IVA' : ('IVA ' + current)) + '</option>');
+    }
+    $sel.val(current);
+  }
+
   function normalizeIvaLabel(iva) {
     const raw = (iva || '').toString().trim().toLowerCase();
-    if (raw === '12' || raw === '12%' || raw === 'iva 12' || raw === 'iva 12%') return '12%';
-    if (raw === '15' || raw === '15%' || raw === 'iva 15' || raw === 'iva 15%') return '15%';
-    if (raw === 'si' || raw === 'sí' || raw === 'yes' || raw === 'true' || raw === '1') return '12%';
+    if (!raw || raw === 'no' || raw === '0' || raw === 'false') return 'No';
+    const byId = findTaxById(raw);
+    if (byId) return formatIvaPercent(byId.percentage) || 'No';
+    const numeric = Number(raw.replace('iva', '').replace('%', '').trim());
+    if (numeric > 0) return formatIvaPercent(numeric) || 'No';
+    if (raw === 'si' || raw === 'sï¿½' || raw === 'yes' || raw === 'true') {
+      const labels = availableIvaLabels().filter(function (label) { return label !== 'No'; });
+      return labels[0] || 'No';
+    }
     return 'No';
   }
 
@@ -52,7 +107,8 @@
     catalogPage: 1,
     catalogPageSize: 20,
     catalogTotal: 0,
-    catalogTotalPages: 1
+    catalogTotalPages: 1,
+    taxOptions: []
   };
 
   const NEW_DEPARTMENT_OPTION_VALUE = '__new_department__';
@@ -94,7 +150,7 @@
     });
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' · ' + state.catalogTotal + ' registros</span>');
+    $pager.append('<span class="table-pager-status">PÃ¡gina ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' Â· ' + state.catalogTotal + ' registros</span>');
     $pager.append($next);
   }
 
@@ -220,7 +276,7 @@
     $('#prod-wholesale').val(Number(data.wholesalePrice).toFixed(2));
     $('#prod-department').val(data.department);
     $('#prod-department').data('selected', data.department);
-    $('#prod-iva').val(normalizeIvaLabel(data.iva));
+    syncIvaSelectOptions(normalizeIvaLabel(data.iva));
     $('input[name="prod-unit-type"][value="' + data.unitType + '"]').prop('checked', true);
     $('#prod-inventory-enabled').prop('checked', !!data.inventoryEnabled);
     $('#prod-stock').val(String(data.stock));
@@ -489,7 +545,7 @@
     }
     $('#prod-delete-summary').html(
       '<strong>' + escapeHtml(product.name || '') + '</strong><br>' +
-      'Código: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
+      'CÃ³digo: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
       'Precio: ' + formatMoney(product.price || 0) + '<br>' +
       'Existencia: ' + escapeHtml(String(product.stock ?? 0))
     );
@@ -678,6 +734,16 @@
     });
   }
 
+  function loadTaxOptions() {
+    return $.getJSON('../api/products.php', { action: 'taxes' }).done(function (res) {
+      state.taxOptions = (res.ok && Array.isArray(res.data)) ? res.data : [];
+      syncIvaSelectOptions($('#prod-iva').val() || 'No');
+    }).fail(function () {
+      state.taxOptions = [];
+      syncIvaSelectOptions($('#prod-iva').val() || 'No');
+    });
+  }
+
   function loadDepartments() {
     return $.getJSON('../api/departments.php').done(res => {
       state.departments = (res.ok && Array.isArray(res.data)) ? res.data : [];
@@ -697,11 +763,11 @@
   function saveProduct() {
     const payload = readForm();
     if (!payload.name) {
-      window.alert('La descripción es requerida.');
+      window.alert('La descripciÃ³n es requerida.');
       return;
     }
     if ((payload.department || '') === NEW_DEPARTMENT_OPTION_VALUE) {
-      window.alert('Seleccione un departamento válido.');
+      window.alert('Seleccione un departamento vÃ¡lido.');
       return;
     }
 
@@ -713,7 +779,7 @@
       return (product?.id || '') !== (payload.id || '');
     });
     if (duplicate) {
-      window.alert('Ya existe otro producto con el mismo código de barras.');
+      window.alert('Ya existe otro producto con el mismo cÃ³digo de barras.');
       return;
     }
 
@@ -753,7 +819,7 @@
       window.alert('Selecciona un producto para eliminar.');
       return;
     }
-    if (!window.confirm('¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
+    if (!window.confirm('Â¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
       return;
     }
 
@@ -841,7 +907,7 @@
     if (!department) {
       return;
     }
-    if (!window.confirm('¿Eliminar el departamento "' + department.name + '"?')) {
+    if (!window.confirm('Â¿Eliminar el departamento "' + department.name + '"?')) {
       return;
     }
 
@@ -1297,7 +1363,7 @@
   function savePromotion() {
     const payload = readPromotionForm();
     if (!payload.name) {
-      window.alert('Nombre de promoción requerido.');
+      window.alert('Nombre de promociÃ³n requerido.');
       return;
     }
     if (!payload.startDate || !payload.endDate) {
@@ -1322,7 +1388,7 @@
       data: JSON.stringify(payload)
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo guardar la promoción.');
+        window.alert(res.error || 'No se pudo guardar la promociÃ³n.');
         return;
       }
       state.selectedPromotionId = res.data?.id || null;
@@ -1337,7 +1403,7 @@
     if (!promo) {
       return;
     }
-    if (!window.confirm('¿Eliminar la promoción "' + (promo.name || promo.id) + '"?')) {
+    if (!window.confirm('Â¿Eliminar la promociÃ³n "' + (promo.name || promo.id) + '"?')) {
       return;
     }
 
@@ -1348,7 +1414,7 @@
       data: JSON.stringify({ action: 'delete_promotion', id: promo.id })
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo eliminar la promoción.');
+        window.alert(res.error || 'No se pudo eliminar la promociÃ³n.');
         return;
       }
       state.selectedPromotionId = null;
@@ -1469,7 +1535,7 @@
       }
 
       const mode = ($('#prod-import-mode').val() || 'merge').toString();
-      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catálogo completo. ¿Deseas continuar?')) {
+      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catÃ¡logo completo. Â¿Deseas continuar?')) {
         return;
       }
 
@@ -1480,12 +1546,12 @@
         data: JSON.stringify({ action: 'import_products', mode, rows: state.importRows })
       }).done(res => {
         if (!res.ok) {
-          window.alert(res.error || 'No se pudo completar la importación.');
+          window.alert(res.error || 'No se pudo completar la importaciÃ³n.');
           return;
         }
         const created = Number(res.data?.created || 0);
         const updated = Number(res.data?.updated || 0);
-        $('#prod-import-result').text('Importación completada. Creados: ' + created + ' | Actualizados: ' + updated);
+        $('#prod-import-result').text('ImportaciÃ³n completada. Creados: ' + created + ' | Actualizados: ' + updated);
       });
     });
   }
@@ -1522,7 +1588,7 @@
       if (sub === 'modify') state.mode = 'modify';
       if (sub === 'delete') state.mode = 'delete';
       $('#prod-title').text(state.mode === 'modify' ? 'MODIFICAR PRODUCTO' : (state.mode === 'delete' ? 'ELIMINAR PRODUCTO' : 'NUEVO PRODUCTO'));
-      $.when(loadDepartments(), loadProducts('')).done(() => {
+      $.when(loadTaxOptions(), loadDepartments(), loadProducts('')).done(() => {
         if (pid) {
           state.selectedId = pid;
         }
@@ -1542,10 +1608,12 @@
 
     if (isCatalogPage()) {
       bindCatalogPage();
-      $.when(loadDepartments(), loadProducts('')).done(() => {
+      $.when(loadTaxOptions(), loadDepartments(), loadProducts('')).done(() => {
         setCatalogDepartmentOptions();
         renderCatalog();
       });
     }
   });
 })();
+
+

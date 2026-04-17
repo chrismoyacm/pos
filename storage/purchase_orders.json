@@ -2,21 +2,22 @@
     {
         "id": "po-000001",
         "folio": "OC-000001",
-        "provider": "Varios",
-        "source": "list",
+        "provider": "- Sin Proveedor -",
+        "source": "suggested",
         "status": "received",
-        "total": 0.5,
+        "total": 1,
+        "createdAt": "2026-04-17T06:34:24-04:00",
         "items": [
             {
                 "productId": "p-1011",
                 "barcode": "7501000000035",
-                "name": "desayuno",
+                "name": "Producto prueba",
+                "department": "General",
                 "provider": "- Sin Proveedor -",
-                "qty": 1,
+                "qty": 2,
                 "cost": 0.5
             }
         ],
-        "createdAt": "2026-03-26T08:47:51+01:00",
-        "receivedAt": "2026-03-26T08:48:05+01:00"
+        "receivedAt": "2026-04-17T06:34:24-04:00"
     }
 ]

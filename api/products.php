@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
+require_once __DIR__ . '/../utils/db.php';
 
 $productsPath = storagePath('products.json');
 $promotionsPath = storagePath('promotions.json');
@@ -38,6 +39,200 @@ function nextPromotionId(array $items): string
     return 'promo-' . str_pad((string)($max + 1), 3, '0', STR_PAD_LEFT);
 }
 
+/**
+ * @return array<int, array{id:string,name:string,percentage:float,active:bool}>
+ */
+function readIvaOptionsFromDb(): array
+{
+    if (!dbEnabled()) {
+        return [];
+    }
+
+    try {
+        $rows = db()->query(
+            "SELECT ID, NOMBRE, PORCENTAJE, ACTIVO
+             FROM IMPUESTOS
+             WHERE ORIGEN = 'productos' AND TIPO = 'iva'
+             ORDER BY CAST(ID AS UNSIGNED) ASC, ID ASC"
+        )->fetchAll();
+    } catch (Throwable) {
+        return [];
+    }
+
+    $options = [];
+    foreach ($rows as $row) {
+        $rateRaw = str_replace(['iva', '%', ' '], '', strtolower(trim((string)($row['PORCENTAJE'] ?? ''))));
+        if (!is_numeric($rateRaw)) {
+            continue;
+        }
+        $rate = (float)$rateRaw;
+        if ($rate <= 0) {
+            continue;
+        }
+        $id = trim((string)($row['ID'] ?? ''));
+        if ($id === '') {
+            continue;
+        }
+
+        $options[] = [
+            'id' => $id,
+            'name' => trim((string)($row['NOMBRE'] ?? ('IVA ' . rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%'))),
+            'percentage' => $rate,
+            'active' => ((string)($row['ACTIVO'] ?? '1') === '1'),
+        ];
+    }
+
+    return $options;
+}
+
+function parseProductDbId(string $productId): ?int
+{
+    $id = trim($productId);
+    if ($id === '') {
+        return null;
+    }
+
+    if (preg_match('/^p-(\d+)$/i', $id, $m) === 1) {
+        return (int)$m[1];
+    }
+    if (preg_match('/^\d+$/', $id) === 1) {
+        return (int)$id;
+    }
+
+    return null;
+}
+
+function findProductDbIdByBarcode(string $barcode): ?int
+{
+    $code = trim($barcode);
+    if ($code === '' || !dbEnabled()) {
+        return null;
+    }
+
+    $stmt = db()->prepare('SELECT ID FROM PRODUCTOS WHERE CODIGO = :code ORDER BY CAST(ID AS UNSIGNED) ASC LIMIT 1');
+    $stmt->execute([':code' => $code]);
+    $value = $stmt->fetchColumn();
+    if ($value === false || $value === null || $value === '') {
+        return null;
+    }
+    return (int)$value;
+}
+
+function resolveTaxIdForIvaValue(string $ivaValue): string
+{
+    $normalized = strtolower(trim($ivaValue));
+    if ($normalized === '' || in_array($normalized, ['no', '0', 'false'], true)) {
+        return '0';
+    }
+
+    $options = readIvaOptionsFromDb();
+    if ($options === []) {
+        if (is_numeric($normalized) && (float)$normalized > 0) {
+            return (string)(int)$normalized;
+        }
+        return '0';
+    }
+
+    foreach ($options as $opt) {
+        $id = trim((string)($opt['id'] ?? ''));
+        if ($id !== '' && strtolower($id) === $normalized) {
+            return $id;
+        }
+    }
+
+    $rateRaw = str_replace(['iva', '%', ' '], '', $normalized);
+    if (is_numeric($rateRaw)) {
+        $rate = (float)$rateRaw;
+        foreach ($options as $opt) {
+            $optRate = (float)($opt['percentage'] ?? 0);
+            if ($optRate > 0 && abs($optRate - $rate) < 0.0001) {
+                return (string)$opt['id'];
+            }
+        }
+    }
+
+    if (in_array($normalized, ['si', 'sí', 'yes', 'true'], true)) {
+        return (string)($options[0]['id'] ?? '0');
+    }
+
+    return (string)($options[0]['id'] ?? '0');
+}
+
+function persistProductTaxInDb(string $productJsonId, mixed $ivaValue, ?string $barcode = null): void
+{
+    if (!dbEnabled()) {
+        return;
+    }
+
+    $dbId = parseProductDbId($productJsonId);
+    if (($dbId === null || $dbId <= 0) && $barcode !== null) {
+        $dbId = findProductDbIdByBarcode($barcode);
+    }
+    if ($dbId === null || $dbId <= 0) {
+        return;
+    }
+
+    $taxId = resolveTaxIdForIvaValue((string)$ivaValue);
+    $stmt = db()->prepare('UPDATE PRODUCTOS SET IMPUESTOS = :tax WHERE ID = :id');
+    $stmt->execute([
+        ':tax' => $taxId,
+        ':id' => $dbId,
+    ]);
+}
+
+/**
+ * @param array<int, array<string, mixed>> $products
+ */
+function writeProductsSnapshotFast(string $productsPath, array $products): void
+{
+    $savedInOverlay = false;
+    if (dbEnabled()) {
+        try {
+            $savedInOverlay = legacyWriteDocumentStore('app/products.json', $products);
+        } catch (Throwable) {
+            // Continue with disk fallback.
+        }
+    }
+
+    $dir = dirname($productsPath);
+    if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
+        if ($savedInOverlay) {
+            return;
+        }
+        errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
+    }
+
+    $encoded = json_encode($products, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if (!is_string($encoded)) {
+        errorResponse('No se pudo serializar JSON', 500);
+    }
+
+    $fp = fopen($productsPath, 'c+');
+    if ($fp === false) {
+        if ($savedInOverlay) {
+            return;
+        }
+        errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
+    }
+
+    try {
+        if (!flock($fp, LOCK_EX)) {
+            if ($savedInOverlay) {
+                return;
+            }
+            errorResponse('No se pudo bloquear el archivo de almacenamiento', 500);
+        }
+        ftruncate($fp, 0);
+        rewind($fp);
+        if (fwrite($fp, $encoded) === false && !$savedInOverlay) {
+            errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
+        }
+        fflush($fp);
+        flock($fp, LOCK_UN);
+    } finally {
+        fclose($fp);
+    }
+}
 function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
 {
     $value = trim((string)$raw);
@@ -45,12 +240,34 @@ function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
         $value = trim($fallback);
     }
 
-    $normalized = strtolower($value);
-    if (in_array($normalized, ['12', '12%', 'iva 12', 'iva 12%', 'si', 'sí', 'yes', 'true', '1'], true)) {
-        return '12%';
+    $normalized = strtolower(trim($value));
+    if ($normalized === '' || in_array($normalized, ['no', '0', 'false'], true)) {
+        return 'No';
     }
-    if (in_array($normalized, ['15', '15%', 'iva 15', 'iva 15%'], true)) {
-        return '15%';
+
+    $taxOptions = readIvaOptionsFromDb();
+    $mapById = [];
+    foreach ($taxOptions as $opt) {
+        $id = trim((string)($opt['id'] ?? ''));
+        $rate = (float)($opt['percentage'] ?? 0);
+        if ($id !== '' && $rate > 0) {
+            $mapById[$id] = rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
+        }
+    }
+    if (isset($mapById[$value])) {
+        return $mapById[$value];
+    }
+
+    $rawRate = str_replace(['iva', '%', ' '], '', $normalized);
+    if (is_numeric($rawRate)) {
+        $rate = (float)$rawRate;
+        if ($rate > 0) {
+            return rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
+        }
+    }
+
+    if (in_array($normalized, ['si', 'sí', 'yes', 'true'], true)) {
+        return '12%';
     }
 
     return 'No';
@@ -230,6 +447,9 @@ function barcodeExists(array $products, string $barcode, ?string $excludeId = nu
 
 if ($method === 'GET') {
     $action = strtolower(trim((string)($_GET['action'] ?? '')));
+    if ($action === 'taxes') {
+        ok(readIvaOptionsFromDb());
+    }
     if ($action === 'promotions') {
         $promotions = readJsonFile($promotionsPath);
         usort($promotions, static function ($a, $b) {
@@ -275,7 +495,7 @@ if ($method === 'GET') {
 if ($method === 'POST') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo inv�lido', 400);
     }
 
     $action = (string)($body['action'] ?? '');
@@ -293,7 +513,7 @@ if ($method === 'POST') {
         $price = (float)($body['price'] ?? 0);
         $qty = (int)($body['qty'] ?? 1);
         if ($name === '' || $price < 0 || $qty <= 0) {
-            errorResponse('Parámetros inválidos', 400);
+            errorResponse('Par�metros inv�lidos', 400);
         }
         ok([
             'id' => 'tmp-' . (string)time(),
@@ -307,7 +527,7 @@ if ($method === 'POST') {
 
     if ($action !== 'create_product') {
         if ($action !== 'import_products') {
-            errorResponse('Acción no soportada', 400);
+            errorResponse('Acci�n no soportada', 400);
         }
 
         $mode = strtolower(trim((string)($body['mode'] ?? 'merge')));
@@ -372,18 +592,23 @@ if ($method === 'POST') {
     $products = readJsonFile($productsPath);
     $product = normalizeProduct($body);
     if (barcodeExists($products, (string)($product['barcode'] ?? ''))) {
-        errorResponse('Ya existe un producto con ese código de barras', 409);
+        errorResponse('Ya existe un producto con ese c�digo de barras', 409);
     }
     $product['id'] = nextProductId($products);
     $products[] = $product;
     writeJsonFile($productsPath, $products);
+    try {
+        persistProductTaxInDb((string)$product['id'], $product['iva'] ?? 'No', (string)($product['barcode'] ?? ''));
+    } catch (Throwable) {
+        // Ignorar para no bloquear flujo JSON si la tabla no existe.
+    }
     ok($product);
 }
 
 if ($method === 'PATCH') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo inv�lido', 400);
     }
 
     $action = (string)($body['action'] ?? '');
@@ -407,7 +632,7 @@ if ($method === 'PATCH') {
         }
 
         if ($updated === null) {
-            errorResponse('Promoción no encontrada', 404);
+            errorResponse('Promoci�n no encontrada', 404);
         }
 
         writeJsonFile($promotionsPath, $promotions);
@@ -415,9 +640,39 @@ if ($method === 'PATCH') {
     }
 
     $products = readJsonFile($productsPath);
+    if ($action === 'update_product_tax') {
+        $id = (string)($body['id'] ?? '');
+        if ($id === '') {
+            errorResponse('ID requerido', 400);
+        }
+
+        $updated = null;
+        foreach ($products as $idx => $product) {
+            if ((string)($product['id'] ?? '') !== $id) {
+                continue;
+            }
+
+            $product['iva'] = normalizeIvaValue($body['iva'] ?? null, (string)($product['iva'] ?? 'No'));
+            $products[$idx] = $product;
+            $updated = $product;
+            break;
+        }
+
+        if ($updated === null) {
+            errorResponse('Producto no encontrado', 404);
+        }
+
+        writeProductsSnapshotFast($productsPath, $products);
+        try {
+            persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+        } catch (Throwable) {
+            // No bloquear UI: el valor ya queda en JSON/overlay.
+        }
+        ok($updated);
+    }
 
     if ($action !== 'update_product') {
-        errorResponse('Acción no soportada', 400);
+        errorResponse('Acci�n no soportada', 400);
     }
 
     $id = (string)($body['id'] ?? '');
@@ -432,7 +687,7 @@ if ($method === 'PATCH') {
         }
         $nextProduct = normalizeProduct($body, $product);
         if (barcodeExists($products, (string)($nextProduct['barcode'] ?? ''), $id)) {
-            errorResponse('Ya existe un producto con ese código de barras', 409);
+            errorResponse('Ya existe un producto con ese c�digo de barras', 409);
         }
         $nextProduct['id'] = $id;
         $products[$idx] = $nextProduct;
@@ -445,13 +700,18 @@ if ($method === 'PATCH') {
     }
 
     writeJsonFile($productsPath, $products);
+    try {
+        persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+    } catch (Throwable) {
+        // Ignorar para no bloquear flujo JSON si la tabla no existe.
+    }
     ok($updated);
 }
 
 if ($method === 'DELETE') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo inv�lido', 400);
     }
 
     $id = (string)($body['id'] ?? '');
@@ -467,7 +727,7 @@ if ($method === 'DELETE') {
             return (string)($promo['id'] ?? '') !== $id;
         }));
         if (count($promotions) === $before) {
-            errorResponse('Promoción no encontrada', 404);
+            errorResponse('Promoci�n no encontrada', 404);
         }
         writeJsonFile($promotionsPath, $promotions);
         ok(['id' => $id]);
@@ -487,4 +747,4 @@ if ($method === 'DELETE') {
     ok(['id' => $id]);
 }
 
-errorResponse('Método no soportado', 405);
+errorResponse('M�todo no soportado', 405);

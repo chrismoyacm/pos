@@ -24,6 +24,174 @@ function movementNextId(array $movements): int
     return $max;
 }
 
+function salesToFloat(mixed $value): float
+{
+    if (is_string($value)) {
+        $value = str_replace(',', '.', $value);
+    }
+    return round((float)$value, 2);
+}
+
+function salesToInt(mixed $value): int
+{
+    return (int)round((float)$value);
+}
+
+function salesCanUseTicketsDb(): bool
+{
+    static $checked = null;
+    if ($checked !== null) {
+        return $checked;
+    }
+
+    if (!function_exists('dbEnabled') || !dbEnabled() || !function_exists('db')) {
+        $checked = false;
+        return $checked;
+    }
+
+    try {
+        $tables = db()->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        $tableNames = array_map(static fn($t): string => strtolower((string)$t), $tables);
+        $required = ['ventatickets', 'ventatickets_articulos'];
+        foreach ($required as $table) {
+            if (!in_array($table, $tableNames, true)) {
+                $checked = false;
+                return $checked;
+            }
+        }
+        $checked = true;
+    } catch (Throwable) {
+        $checked = false;
+    }
+
+    return $checked;
+}
+
+/**
+ * @return array{items:array<int, array<string,mixed>>, pagination:array<string,int>}
+ */
+function salesFetchDayFromDb(string $date, string $q, int $page, int $pageSize): array
+{
+    $pdo = db();
+    $offset = ($page - 1) * $pageSize;
+
+    $whereParts = ['LEFT(IFNULL(CREADO_EN, ""), 10) = :date'];
+    $params = [':date' => $date];
+    if ($q !== '') {
+        $whereParts[] = '(LOWER(IFNULL(FOLIO, "")) LIKE :q OR LOWER(IFNULL(NOMBRE, "")) LIKE :q)';
+        $params[':q'] = '%' . strtolower($q) . '%';
+    }
+    $whereSql = implode(' AND ', $whereParts);
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM ventatickets WHERE ' . $whereSql);
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+
+    $listSql = 'SELECT * FROM ventatickets WHERE ' . $whereSql . ' ORDER BY CREADO_EN DESC, ID DESC LIMIT ' . (int)$pageSize . ' OFFSET ' . (int)$offset;
+    $listStmt = $pdo->prepare($listSql);
+    $listStmt->execute($params);
+    $tickets = $listStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $ticketIds = [];
+    foreach ($tickets as $ticketRow) {
+        $ticketId = trim((string)($ticketRow['ID'] ?? ''));
+        if ($ticketId === '') {
+            $ticketId = trim((string)($ticketRow['FOLIO'] ?? ''));
+        }
+        if ($ticketId !== '') {
+            $ticketIds[] = $ticketId;
+        }
+    }
+
+    $itemsByTicket = [];
+    if ($ticketIds !== []) {
+        $ph = implode(',', array_fill(0, count($ticketIds), '?'));
+        $itemsStmt = $pdo->prepare(
+            'SELECT * FROM ventatickets_articulos WHERE TICKET_ID IN (' . $ph . ') ORDER BY AGREGADO_EN ASC, ID ASC'
+        );
+        $itemsStmt->execute($ticketIds);
+        $itemRows = $itemsStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($itemRows as $itemRow) {
+            $ticketId = trim((string)($itemRow['TICKET_ID'] ?? ''));
+            if ($ticketId === '') {
+                continue;
+            }
+            $itemsByTicket[$ticketId] = $itemsByTicket[$ticketId] ?? [];
+            $itemsByTicket[$ticketId][] = $itemRow;
+        }
+    }
+
+    $items = [];
+    foreach ($tickets as $ticketRow) {
+        $ticketId = trim((string)($ticketRow['ID'] ?? ''));
+        if ($ticketId === '') {
+            $ticketId = trim((string)($ticketRow['FOLIO'] ?? ''));
+        }
+        $detailRows = $itemsByTicket[$ticketId] ?? [];
+
+        $saleItems = [];
+        $returns = [];
+        foreach ($detailRows as $detail) {
+            $itemId = trim((string)($detail['ID'] ?? ''));
+            if ($itemId === '') {
+                $itemId = trim((string)($detail['PRODUCTO_CODIGO'] ?? ''));
+            }
+            $qty = max(0, salesToInt($detail['CANTIDAD'] ?? 0));
+            $price = salesToFloat($detail['PRECIO_USADO'] ?? $detail['PAGADO_EN'] ?? 0);
+            $code = trim((string)($detail['PRODUCTO_CODIGO'] ?? ''));
+            $name = trim((string)($detail['PRODUCTO_NOMBRE'] ?? ''));
+            $returnedQty = max(0, salesToInt($detail['CANTIDAD_DEVUELTA'] ?? 0));
+
+            $saleItems[] = [
+                'id' => $itemId,
+                'barcode' => $code,
+                'name' => $name,
+                'qty' => $qty,
+                'price' => $price,
+            ];
+
+            if ($returnedQty > 0) {
+                $returns[] = [
+                    'id' => 'ret-db-' . $itemId,
+                    'itemId' => $itemId,
+                    'qty' => $returnedQty,
+                    'reason' => 'Devolucion registrada',
+                    'amount' => round($returnedQty * $price, 2),
+                    'createdAt' => (string)($detail['AGREGADO_EN'] ?? $ticketRow['CREADO_EN'] ?? date('c')),
+                ];
+            }
+        }
+
+        $items[] = [
+            'ticketId' => $ticketId,
+            'createdAt' => (string)($ticketRow['CREADO_EN'] ?? ''),
+            'items' => $saleItems,
+            'subtotal' => salesToFloat($ticketRow['SUBTOTAL'] ?? 0),
+            'total' => salesToFloat($ticketRow['TOTAL'] ?? 0),
+            'paidWith' => salesToFloat($ticketRow['PAGO_CON'] ?? 0),
+            'change' => salesToFloat($ticketRow['PAGADO_EN'] ?? 0),
+            'paymentMethod' => strtolower(trim((string)($ticketRow['FORMA_PAGO'] ?? 'cash'))),
+            'mixedPayments' => null,
+            'paymentNote' => (string)($ticketRow['NOTAS'] ?? ''),
+            'customerId' => (string)($ticketRow['CLIENTE_ID'] ?? ''),
+            'customerName' => (string)($ticketRow['NOMBRE'] ?? 'Publico en general'),
+            'amountPending' => salesToFloat($ticketRow['TOTAL_CREDITO'] ?? 0),
+            'cashier' => (string)($ticketRow['CAJERO_ID'] ?? 'Cajero'),
+            'returns' => $returns,
+        ];
+    }
+
+    return [
+        'items' => $items,
+        'pagination' => [
+            'page' => $page,
+            'pageSize' => $pageSize,
+            'total' => $total,
+            'totalPages' => max(1, (int)ceil($total / max(1, $pageSize))),
+        ],
+    ];
+}
+
 if ($method === 'GET') {
     $sales = readJsonFile($salesPath);
     $action = strtolower(trim((string)($_GET['action'] ?? '')));
@@ -35,6 +203,11 @@ if ($method === 'GET') {
         $pageSize = max(1, min(100, (int)($_GET['pageSize'] ?? 20)));
         if ($date === '') {
             $date = date('Y-m-d');
+        }
+
+        if (salesCanUseTicketsDb()) {
+            $result = salesFetchDayFromDb($date, $q, $page, $pageSize);
+            ok($result);
         }
 
         $daySales = array_values(array_filter($sales, static function ($sale) use ($date, $q): bool {
@@ -100,6 +273,146 @@ if ($action === 'return_item') {
     }
 
     $sales = readJsonFile($salesPath);
+
+    if (salesCanUseTicketsDb()) {
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $ticketStmt = $pdo->prepare('SELECT * FROM ventatickets WHERE ID = :ticket OR FOLIO = :ticket LIMIT 1');
+            $ticketStmt->execute([':ticket' => $ticketId]);
+            $ticket = $ticketStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($ticket)) {
+                throw new RuntimeException('Ticket no encontrado');
+            }
+
+            $ticketKey = trim((string)($ticket['ID'] ?? ''));
+            if ($ticketKey === '') {
+                $ticketKey = trim((string)($ticket['FOLIO'] ?? ''));
+            }
+
+            $itemStmt = $pdo->prepare('SELECT * FROM ventatickets_articulos WHERE TICKET_ID = :ticket AND ID = :item LIMIT 1');
+            $itemStmt->execute([
+                ':ticket' => $ticketKey,
+                ':item' => $itemId,
+            ]);
+            $itemRow = $itemStmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($itemRow)) {
+                throw new RuntimeException('Articulo no encontrado en ticket');
+            }
+
+            $soldQty = max(0, salesToInt($itemRow['CANTIDAD'] ?? 0));
+            $alreadyReturned = max(0, salesToInt($itemRow['CANTIDAD_DEVUELTA'] ?? 0));
+            $available = $soldQty - $alreadyReturned;
+            if ($available <= 0) {
+                throw new RuntimeException('El articulo ya fue devuelto');
+            }
+            if ($qty > $available) {
+                errorResponse('Cantidad a devolver excede lo vendido', 409, ['available' => $available]);
+            }
+
+            $newReturned = $alreadyReturned + $qty;
+            $fueDevuelto = $newReturned >= $soldQty ? '1' : '0';
+            $updItem = $pdo->prepare(
+                'UPDATE ventatickets_articulos
+                 SET CANTIDAD_DEVUELTA = :returned, FUE_DEVUELTO = :fue
+                 WHERE TICKET_ID = :ticket AND ID = :item'
+            );
+            $updItem->execute([
+                ':returned' => (string)$newReturned,
+                ':fue' => $fueDevuelto,
+                ':ticket' => $ticketKey,
+                ':item' => $itemId,
+            ]);
+
+            $unitPrice = salesToFloat($itemRow['PRECIO_USADO'] ?? $itemRow['PAGADO_EN'] ?? 0);
+            $amountReturn = round($unitPrice * $qty, 2);
+            $prevTotalReturned = salesToFloat($ticket['TOTAL_DEVUELTO'] ?? 0);
+            $updTicket = $pdo->prepare('UPDATE ventatickets SET TOTAL_DEVUELTO = :totalDev WHERE ID = :id');
+            $updTicket->execute([
+                ':totalDev' => (string)round($prevTotalReturned + $amountReturn, 2),
+                ':id' => $ticketKey,
+            ]);
+
+            $pdo->commit();
+
+            $productId = trim((string)($itemRow['PRODUCTO_CODIGO'] ?? ''));
+            $products = readJsonFile($productsPath);
+            $productIdToIndex = [];
+            foreach ($products as $idx => $p) {
+                $productIdToIndex[(string)($p['id'] ?? '')] = $idx;
+            }
+
+            if ($productId !== '' && !str_starts_with($productId, 'tmp-') && array_key_exists($productId, $productIdToIndex)) {
+                $pIdx = $productIdToIndex[$productId];
+                $before = (int)($products[$pIdx]['stock'] ?? 0);
+                $after = $before + $qty;
+                $products[$pIdx]['stock'] = $after;
+                writeJsonFile($productsPath, $products);
+
+                $movements = readJsonFile($inventoryMovementsPath);
+                $max = movementNextId($movements);
+                $max++;
+                $movements[] = [
+                    'id' => 'mov-' . str_pad((string)$max, 6, '0', STR_PAD_LEFT),
+                    'type' => 'return',
+                    'productId' => $productId,
+                    'productName' => (string)($itemRow['PRODUCTO_NOMBRE'] ?? ''),
+                    'delta' => $qty,
+                    'before' => $before,
+                    'after' => $after,
+                    'note' => 'Devolucion ticket #' . $ticketId,
+                    'source' => 'sales',
+                    'createdAt' => date('c'),
+                ];
+                if (count($movements) > 20000) {
+                    $movements = array_slice($movements, -20000);
+                }
+                writeJsonFile($inventoryMovementsPath, $movements);
+            }
+
+            // Mantiene compatibilidad para modulos que leen sales.json.
+            $saleIndex = -1;
+            foreach ($sales as $idx => $sale) {
+                if ((string)($sale['ticketId'] ?? '') === $ticketId) {
+                    $saleIndex = (int)$idx;
+                    break;
+                }
+            }
+            if ($saleIndex >= 0) {
+                $sale = $sales[$saleIndex];
+                $returns = is_array($sale['returns'] ?? null) ? $sale['returns'] : [];
+                $returns[] = [
+                    'id' => 'ret-' . bin2hex(random_bytes(4)),
+                    'itemId' => $itemId,
+                    'qty' => $qty,
+                    'reason' => $reason,
+                    'amount' => $amountReturn,
+                    'createdAt' => date('c'),
+                ];
+                $sale['returns'] = $returns;
+                $sales[$saleIndex] = $sale;
+                writeJsonFile($salesPath, $sales);
+            }
+
+            ok([
+                'ticketId' => $ticketId,
+                'itemId' => $itemId,
+                'qtyReturned' => $qty,
+                'availableAfter' => $available - $qty,
+            ]);
+        } catch (RuntimeException $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            errorResponse($e->getMessage(), 404);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            errorResponse('No se pudo registrar la devolucion', 500);
+        }
+    }
+
     $saleIndex = -1;
     foreach ($sales as $idx => $sale) {
         if ((string)($sale['ticketId'] ?? '') === $ticketId) {

@@ -151,6 +151,14 @@ switch ($mod) {
 <main class="pos-main">
   <?php safeInclude($content); ?>
 </main>
+<footer class="app-footer" role="contentinfo">
+  <div class="app-footer-content">
+    <span class="app-footer-brand">Empresa TeckClic</span>
+    <span class="app-footer-sep">|</span>
+    <span>Soporte WhatsApp: <a href="https://wa.me/593958966665" target="_blank" rel="noopener noreferrer">0958966665</a> - <a href="https://wa.me/593963364050" target="_blank" rel="noopener noreferrer">0963364050</a></span>
+    <span class="app-footer-sep">|</span>
+    <span>Correo: <a href="mailto:businessonline.cm@gmail.com">businessonline.cm@gmail.com</a></span>
+  </div>
+</footer>
 </body>
 </html>
-
