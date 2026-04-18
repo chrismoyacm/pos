@@ -47,11 +47,9 @@ function enviarSRI(array $document): array
         );
     }
 
-    $soap = new SoapClient(facturacionReceptionWsdl((string)($document['environment'] ?? '1')), [
-        'trace' => true,
-        'exceptions' => true,
-        'cache_wsdl' => WSDL_CACHE_NONE,
-    ]);
+    $soap = facturacionCreateSoapClient(
+        facturacionReceptionWsdl((string)($document['environment'] ?? '1'))
+    );
 
     $xml = file_get_contents($signedPath);
     if ($xml === false) {

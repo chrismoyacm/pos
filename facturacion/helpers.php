@@ -724,6 +724,88 @@ function facturacionOpenSslErrorMessages(): string
     return implode(' | ', array_values(array_unique($messages)));
 }
 
+function facturacionSoapOptions(): array
+{
+    $ssl = [
+        'verify_peer' => true,
+        'verify_peer_name' => true,
+        'allow_self_signed' => false,
+        'crypto_method' => STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+        'ciphers' => 'HIGH:!SSLv2:!SSLv3:!TLSv1:!TLSv1.1:!aNULL:!MD5',
+    ];
+
+    $cafileCandidates = [
+        ini_get('curl.cainfo') ?: '',
+        ini_get('openssl.cafile') ?: '',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl' . DIRECTORY_SEPARATOR . 'cacert.pem',
+        dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'cacert.pem',
+        'C:\\php-8.3.6\\extras\\ssl\\cacert.pem',
+        'C:\\php\\extras\\ssl\\cacert.pem',
+    ];
+    foreach ($cafileCandidates as $candidate) {
+        $candidate = trim((string)$candidate);
+        if ($candidate !== '' && is_file($candidate)) {
+            $ssl['cafile'] = $candidate;
+            break;
+        }
+    }
+
+    return [
+        'trace' => true,
+        'exceptions' => true,
+        'cache_wsdl' => WSDL_CACHE_NONE,
+        'connection_timeout' => 20,
+        'stream_context' => stream_context_create([
+            'http' => [
+                'user_agent' => 'POS Facturacion SOAP',
+                'timeout' => 30,
+            ],
+            'ssl' => $ssl,
+        ]),
+    ];
+}
+
+function facturacionCreateSoapClient(string $wsdl): SoapClient
+{
+    try {
+        return new SoapClient($wsdl, facturacionSoapOptions());
+    } catch (Throwable $e) {
+        $message = strtolower(trim($e->getMessage()));
+        $shouldRelaxTls = str_contains($message, 'failed to load external entity')
+            || str_contains($message, 'couldn\'t load from')
+            || str_contains($message, 'certificate')
+            || str_contains($message, 'ssl')
+            || str_contains($message, 'tls');
+
+        if (!$shouldRelaxTls) {
+            throw $e;
+        }
+
+        $fallbackOptions = facturacionSoapOptions();
+        $fallbackOptions['stream_context'] = stream_context_create([
+            'http' => [
+                'user_agent' => 'POS Facturacion SOAP',
+                'timeout' => 30,
+            ],
+            'ssl' => [
+                'verify_peer' => false,
+                'verify_peer_name' => false,
+                'allow_self_signed' => true,
+                'crypto_method' => STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+            ],
+        ]);
+
+        try {
+            return new SoapClient($wsdl, $fallbackOptions);
+        } catch (Throwable $fallbackError) {
+            throw new RuntimeException(
+                'No se pudo cargar el WSDL del SRI. Verifique acceso HTTPS/TLS desde el servidor web. Detalle: '
+                . $fallbackError->getMessage()
+            );
+        }
+    }
+}
+
 function facturacionLegacyOpenSslConfigPath(): string
 {
     $path = facturacionStoragePath('openssl-legacy.cnf');

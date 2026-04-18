@@ -115,11 +115,9 @@ function consultarAutorizacion(array $document): array
         );
     }
 
-    $soap = new SoapClient(facturacionAuthorizationWsdl((string)($document['environment'] ?? '1')), [
-        'trace' => true,
-        'exceptions' => true,
-        'cache_wsdl' => WSDL_CACHE_NONE,
-    ]);
+    $soap = facturacionCreateSoapClient(
+        facturacionAuthorizationWsdl((string)($document['environment'] ?? '1'))
+    );
 
     $maxAttempts = 4;
     $responseArray = [];
