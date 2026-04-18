@@ -14,12 +14,125 @@
     return $('#prod-catalog-module').length > 0;
   }
 
+  function focusBarcodeInputProd(force) {
+    if (!isProductosPage()) {
+      return;
+    }
+
+    const active = document.activeElement;
+    const activeTag = (active?.tagName || '').toUpperCase();
+    if (!force && active && active !== document.body && (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT')) {
+      return;
+    }
+
+    const preferredSelector = state.mode === 'delete' ? '#prod-search' : '#prod-barcode';
+    const $input = $(preferredSelector);
+    if ($input.length === 0 || !$input.is(':visible') || $input.prop('disabled')) {
+      return;
+    }
+
+    window.setTimeout(function () {
+      const el = $input[0];
+      if (!el || el.disabled) {
+        return;
+      }
+      el.focus();
+      if (el.tagName === 'INPUT' && preferredSelector !== '#prod-search') {
+        const len = (el.value || '').toString().length;
+        if (typeof el.setSelectionRange === 'function') {
+          el.setSelectionRange(len, len);
+        }
+      }
+    }, 0);
+  }
+
   function escapeHtml(str) {
     return (str || '').toString().replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
   }
 
   function formatMoney(n) {
     return '$' + Number(n || 0).toFixed(2);
+  }
+
+  function ajaxErrorMessage(xhr, fallbackMessage) {
+    const backendError = xhr?.responseJSON?.error;
+    const responseText = (xhr?.responseText || '').toString().trim();
+    if (backendError) {
+      return backendError.toString();
+    }
+    if (responseText) {
+      return responseText;
+    }
+    return fallbackMessage;
+  }
+
+  let _feedbackTimer = null;
+
+  function showSaveFeedback(message, tone) {
+    const $box = $('#prod-save-feedback');
+    if ($box.length === 0) {
+      return;
+    }
+
+    if (_feedbackTimer) {
+      window.clearTimeout(_feedbackTimer);
+      _feedbackTimer = null;
+    }
+
+    $box.removeClass('is-success is-error is-info');
+
+    if (!message) {
+      $box.prop('hidden', true).text('');
+      return;
+    }
+
+    const safeTone = (tone || 'info').toString();
+    $box.addClass('is-' + safeTone);
+    $box.text(message.toString());
+    $box.prop('hidden', false);
+
+    if (safeTone === 'success') {
+      _feedbackTimer = window.setTimeout(function () {
+        $box.prop('hidden', true).text('');
+        $box.removeClass('is-success is-error is-info');
+        _feedbackTimer = null;
+      }, 5000);
+    }
+  }
+
+  function setSaveBusy(isBusy) {
+    const $btn = $('#prod-save-btn');
+    if ($btn.length === 0) {
+      return;
+    }
+
+    if (isBusy) {
+      if (!$btn.data('default-label')) {
+        $btn.data('default-label', $btn.text());
+      }
+      $btn.prop('disabled', true).text('Guardando...');
+      return;
+    }
+
+    const defaultLabel = ($btn.data('default-label') || 'Guardar Producto').toString();
+    $btn.prop('disabled', false).text(defaultLabel);
+  }
+
+  function upsertProductInState(product) {
+    if (!product || !product.id) {
+      return;
+    }
+
+    const idx = state.products.findIndex(function (row) {
+      return (row?.id || '') === product.id;
+    });
+
+    if (idx >= 0) {
+      state.products[idx] = product;
+      return;
+    }
+
+    state.products.unshift(product);
   }
 
   function unitTypeLabel(unitType) {
@@ -150,7 +263,7 @@
     });
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">PÃ¡gina ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' Â· ' + state.catalogTotal + ' registros</span>');
+    $pager.append('<span class="table-pager-status">Página ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' · ' + state.catalogTotal + ' registros</span>');
     $pager.append($next);
   }
 
@@ -545,7 +658,7 @@
     }
     $('#prod-delete-summary').html(
       '<strong>' + escapeHtml(product.name || '') + '</strong><br>' +
-      'CÃ³digo: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
+      'Código: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
       'Precio: ' + formatMoney(product.price || 0) + '<br>' +
       'Existencia: ' + escapeHtml(String(product.stock ?? 0))
     );
@@ -707,19 +820,26 @@
       state.selectedId = null;
       fillForm(defaultFormValues());
     } else if (state.mode === 'modify') {
-      fillForm(productToForm(selectedProduct()));
+      const sel = selectedProduct();
+      if (sel) {
+        fillForm(productToForm(sel));
+      }
     } else {
       updateDeleteSummary();
     }
 
     renderProductList();
     syncPackagePanelVisibility();
+    focusBarcodeInputProd(false);
   }
 
   function loadProducts(q) {
     return $.getJSON('../api/products.php', { q: q || '' }).done(res => {
       state.products = (res.ok && Array.isArray(res.data)) ? res.data : [];
       if (state.selectedId && !state.products.some(product => product.id === state.selectedId)) {
+        if ((state.mode === 'modify' || state.mode === 'delete') && !q) {
+          showSaveFeedback('El producto seleccionado ya no existe en el cat\u00e1logo.', 'error');
+        }
         state.selectedId = state.products[0]?.id || null;
       }
       if ((state.mode === 'modify' || state.mode === 'delete') && !state.selectedId && state.products.length > 0) {
@@ -761,13 +881,14 @@
   }
 
   function saveProduct() {
+    showSaveFeedback('', 'info');
     const payload = readForm();
     if (!payload.name) {
-      window.alert('La descripciÃ³n es requerida.');
+      window.alert('La descripción es requerida.');
       return;
     }
     if ((payload.department || '') === NEW_DEPARTMENT_OPTION_VALUE) {
-      window.alert('Seleccione un departamento vÃ¡lido.');
+      window.alert('Seleccione un departamento válido.');
       return;
     }
 
@@ -779,12 +900,12 @@
       return (product?.id || '') !== (payload.id || '');
     });
     if (duplicate) {
-      window.alert('Ya existe otro producto con el mismo cÃ³digo de barras.');
+      window.alert('Ya existe otro producto con el mismo código de barras.');
       return;
     }
 
     const isNew = state.mode === 'new';
-    const method = isNew ? 'POST' : 'PATCH';
+    const method = 'POST';
     payload.action = isNew ? 'create_product' : 'update_product';
 
     if (!isNew && !payload.id) {
@@ -792,6 +913,7 @@
       return;
     }
 
+    setSaveBusy(true);
     $.ajax({
       url: '../api/products.php',
       method,
@@ -799,42 +921,63 @@
       data: JSON.stringify(payload)
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo guardar el producto.');
+        showSaveFeedback(res.error || 'No se pudo guardar el producto.', 'error');
         return;
       }
-      state.selectedId = res.data?.id || null;
+
+      const savedProduct = res.data || null;
+      state.selectedId = savedProduct?.id || null;
+      if (savedProduct) {
+        upsertProductInState(savedProduct);
+      }
+
       if (state.mode === 'new') {
-        window.alert('Producto guardado correctamente.');
+        showSaveFeedback('Producto registrado correctamente.', 'success');
         fillForm(defaultFormValues());
       } else {
-        window.alert('Producto actualizado correctamente.');
+        showSaveFeedback('Producto actualizado correctamente.', 'success');
+        if (savedProduct) {
+          fillForm(productToForm(savedProduct));
+        }
       }
-      loadProducts($('#prod-search').val().toString());
+
+      renderProductList();
+      updateDeleteSummary();
+      syncPackagePanelVisibility();
+    }).fail(function (xhr) {
+      showSaveFeedback(ajaxErrorMessage(xhr, 'No se pudo guardar el producto.'), 'error');
+    }).always(function () {
+      setSaveBusy(false);
     });
   }
 
   function deleteProduct() {
     const product = selectedProduct();
     if (!product) {
-      window.alert('Selecciona un producto para eliminar.');
+      showSaveFeedback('Selecciona un producto de la lista para eliminar.', 'error');
       return;
     }
-    if (!window.confirm('Â¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
+    if (!window.confirm('¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
       return;
     }
 
     $.ajax({
       url: '../api/products.php',
-      method: 'DELETE',
+      method: 'POST',
       contentType: 'application/json',
-      data: JSON.stringify({ id: product.id })
+      data: JSON.stringify({ action: 'delete_product', id: product.id })
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo eliminar el producto.');
+        showSaveFeedback(res.error || 'No se pudo eliminar el producto.', 'error');
         return;
       }
+      showSaveFeedback('Producto eliminado correctamente.', 'success');
       state.selectedId = null;
-      loadProducts($('#prod-search').val().toString());
+      state.products = state.products.filter(function (p) { return (p?.id || '') !== product.id; });
+      renderProductList();
+      updateDeleteSummary();
+    }).fail(function (xhr) {
+      showSaveFeedback(ajaxErrorMessage(xhr, 'No se pudo eliminar el producto.'), 'error');
     });
   }
 
@@ -858,6 +1001,8 @@
       loadDepartments().done(() => {
         resetDepartmentForm();
       });
+    }).fail(function (xhr) {
+      window.alert(ajaxErrorMessage(xhr, 'No se pudo guardar el departamento.'));
     });
   }
 
@@ -907,7 +1052,7 @@
     if (!department) {
       return;
     }
-    if (!window.confirm('Â¿Eliminar el departamento "' + department.name + '"?')) {
+    if (!window.confirm('¿Eliminar el departamento "' + department.name + '"?')) {
       return;
     }
 
@@ -1037,10 +1182,23 @@
     $('#prod-cancel-btn').on('click', function () {
       if (state.mode === 'new') {
         fillForm(defaultFormValues());
+        focusBarcodeInputProd(true);
         return;
       }
       fillForm(productToForm(selectedProduct()));
       updateDeleteSummary();
+      focusBarcodeInputProd(true);
+    });
+
+    $('#prod-barcode').on('blur', function () {
+      window.setTimeout(function () { focusBarcodeInputProd(false); }, 0);
+    });
+
+    $(document).on('click', function (e) {
+      if ($(e.target).closest('.modal.active, #prod-barcode, #prod-search, #prod-package-code').length > 0) {
+        return;
+      }
+      window.setTimeout(function () { focusBarcodeInputProd(false); }, 0);
     });
   }
 
@@ -1363,7 +1521,7 @@
   function savePromotion() {
     const payload = readPromotionForm();
     if (!payload.name) {
-      window.alert('Nombre de promociÃ³n requerido.');
+      window.alert('Nombre de promoción requerido.');
       return;
     }
     if (!payload.startDate || !payload.endDate) {
@@ -1388,13 +1546,15 @@
       data: JSON.stringify(payload)
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo guardar la promociÃ³n.');
+        window.alert(res.error || 'No se pudo guardar la promoción.');
         return;
       }
       state.selectedPromotionId = res.data?.id || null;
       loadPromotions().done(() => {
         fillPromotionForm(selectedPromotion() || promotionDefaults());
       });
+    }).fail(function (xhr) {
+      window.alert(ajaxErrorMessage(xhr, 'No se pudo guardar la promoción.'));
     });
   }
 
@@ -1403,7 +1563,7 @@
     if (!promo) {
       return;
     }
-    if (!window.confirm('Â¿Eliminar la promociÃ³n "' + (promo.name || promo.id) + '"?')) {
+    if (!window.confirm('¿Eliminar la promoción "' + (promo.name || promo.id) + '"?')) {
       return;
     }
 
@@ -1414,7 +1574,7 @@
       data: JSON.stringify({ action: 'delete_promotion', id: promo.id })
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo eliminar la promociÃ³n.');
+        window.alert(res.error || 'No se pudo eliminar la promoción.');
         return;
       }
       state.selectedPromotionId = null;
@@ -1535,7 +1695,7 @@
       }
 
       const mode = ($('#prod-import-mode').val() || 'merge').toString();
-      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catÃ¡logo completo. Â¿Deseas continuar?')) {
+      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catálogo completo. ¿Deseas continuar?')) {
         return;
       }
 
@@ -1546,12 +1706,14 @@
         data: JSON.stringify({ action: 'import_products', mode, rows: state.importRows })
       }).done(res => {
         if (!res.ok) {
-          window.alert(res.error || 'No se pudo completar la importaciÃ³n.');
+          window.alert(res.error || 'No se pudo completar la importación.');
           return;
         }
         const created = Number(res.data?.created || 0);
         const updated = Number(res.data?.updated || 0);
-        $('#prod-import-result').text('ImportaciÃ³n completada. Creados: ' + created + ' | Actualizados: ' + updated);
+        $('#prod-import-result').text('Importación completada. Creados: ' + created + ' | Actualizados: ' + updated);
+      }).fail(function (xhr) {
+        window.alert(ajaxErrorMessage(xhr, 'No se pudo completar la importación.'));
       });
     });
   }
@@ -1594,6 +1756,7 @@
         }
         fillForm(defaultFormValues());
         applyProductMode();
+        focusBarcodeInputProd(true);
       });
       return;
     }

@@ -6,6 +6,44 @@
     return $('#inv-report-module').length > 0;
   }
 
+  function focusInventoryCodeInputInv(force) {
+    if (!isInventoryPage()) {
+      return;
+    }
+
+    const active = document.activeElement;
+    const activeTag = (active?.tagName || '').toUpperCase();
+    if (!force && active && active !== document.body && (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT')) {
+      return;
+    }
+
+    const selectors = ['#inv-add-code', '#inv-adjust-code'];
+    let $target = null;
+    selectors.forEach(function (selector) {
+      if ($target) return;
+      const $node = $(selector);
+      if ($node.length > 0 && $node.is(':visible') && !$node.prop('disabled')) {
+        $target = $node;
+      }
+    });
+
+    if (!$target || $target.length === 0) {
+      return;
+    }
+
+    window.setTimeout(function () {
+      const el = $target[0];
+      if (!el || el.disabled) {
+        return;
+      }
+      el.focus();
+      const len = (el.value || '').toString().length;
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(len, len);
+      }
+    }, 0);
+  }
+
   function escapeHtmlInv(str) {
     return (str || '').toString().replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
   }
@@ -1118,6 +1156,17 @@
       }
     });
 
+    $('#inv-add-code, #inv-adjust-code').on('blur', function () {
+      window.setTimeout(function () { focusInventoryCodeInputInv(false); }, 0);
+    });
+
+    $(document).on('click', function (e) {
+      if ($(e.target).closest('.modal.active, #inv-add-code, #inv-add-suggest, #inv-adjust-code, #inv-adjust-suggest').length > 0) {
+        return;
+      }
+      window.setTimeout(function () { focusInventoryCodeInputInv(false); }, 0);
+    });
+
     $('#inv-mov-refresh-btn').on('click', function () {
       invState.movPage = 1;
       renderMovementsInv();
@@ -1153,6 +1202,7 @@
       loadProductsInv();
       resetAddFormInv();
       resetAdjustFormInv();
+      focusInventoryCodeInputInv(true);
     }
   });
 })();

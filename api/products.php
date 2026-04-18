@@ -462,7 +462,12 @@ if ($method === 'GET') {
     $products = readJsonFile($productsPath);
 
     if ($q === '') {
-        ok(array_slice($products, 0, 200));
+        usort($products, static function ($a, $b): int {
+            $aCode = strtolower((string)($a['barcode'] ?? $a['id'] ?? ''));
+            $bCode = strtolower((string)($b['barcode'] ?? $b['id'] ?? ''));
+            return strcmp($aCode, $bCode);
+        });
+        ok($products);
     }
 
     $filtered = array_values(array_filter($products, function ($p) use ($q) {
@@ -495,7 +500,7 @@ if ($method === 'GET') {
 if ($method === 'POST') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo invï¿½lido', 400);
     }
 
     $action = (string)($body['action'] ?? '');
@@ -513,7 +518,7 @@ if ($method === 'POST') {
         $price = (float)($body['price'] ?? 0);
         $qty = (int)($body['qty'] ?? 1);
         if ($name === '' || $price < 0 || $qty <= 0) {
-            errorResponse('Parámetros inválidos', 400);
+            errorResponse('Parï¿½metros invï¿½lidos', 400);
         }
         ok([
             'id' => 'tmp-' . (string)time(),
@@ -525,9 +530,117 @@ if ($method === 'POST') {
         ]);
     }
 
+    if ($action === 'update_product_tax') {
+        $id = (string)($body['id'] ?? '');
+        if ($id === '') {
+            errorResponse('ID requerido', 400);
+        }
+
+        $products = readJsonFile($productsPath);
+        $updated = null;
+        foreach ($products as $idx => $product) {
+            if ((string)($product['id'] ?? '') !== $id) {
+                continue;
+            }
+
+            $product['iva'] = normalizeIvaValue($body['iva'] ?? null, (string)($product['iva'] ?? 'No'));
+            $products[$idx] = $product;
+            $updated = $product;
+            break;
+        }
+
+        if ($updated === null) {
+            errorResponse('Producto no encontrado', 404);
+        }
+
+        if (dbEnabled()) {
+            legacyWriteEntityOverlay('products.json', $products);
+        } else {
+            writeProductsSnapshotFast($productsPath, $products);
+        }
+
+        try {
+            persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+        } catch (Throwable) {
+            // No bloquear UI: el valor ya queda en JSON/overlay.
+        }
+
+        ok($updated);
+    }
+
+    if ($action === 'update_product') {
+        $id = (string)($body['id'] ?? '');
+        if ($id === '') {
+            errorResponse('ID requerido', 400);
+        }
+
+        $products = readJsonFile($productsPath);
+        $updated = null;
+        foreach ($products as $idx => $product) {
+            if ((string)($product['id'] ?? '') !== $id) {
+                continue;
+            }
+            $nextProduct = normalizeProduct($body, $product);
+            if (barcodeExists($products, (string)($nextProduct['barcode'] ?? ''), $id)) {
+                errorResponse('Ya existe un producto con ese cï¿½digo de barras', 409);
+            }
+            $nextProduct['id'] = $id;
+            $products[$idx] = $nextProduct;
+            $updated = $nextProduct;
+            break;
+        }
+
+        if ($updated === null) {
+            errorResponse('Producto no encontrado', 404);
+        }
+
+        if (dbEnabled()) {
+            if (!legacyUpsertProduct($updated)) {
+                errorResponse('No se pudo actualizar el producto en la base de datos legacy', 500);
+            }
+            legacyWriteEntityOverlay('products.json', $products);
+        } else {
+            writeJsonFile($productsPath, $products);
+        }
+
+        try {
+            persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+        } catch (Throwable) {
+            // Ignorar para no bloquear flujo JSON si la tabla no existe.
+        }
+
+        ok($updated);
+    }
+
+    if ($action === 'delete_product') {
+        $id = (string)($body['id'] ?? '');
+        if ($id === '') {
+            errorResponse('ID requerido', 400);
+        }
+
+        $products = readJsonFile($productsPath);
+        $before = count($products);
+        $products = array_values(array_filter($products, function ($product) use ($id) {
+            return (string)($product['id'] ?? '') !== $id;
+        }));
+
+        if (count($products) === $before) {
+            errorResponse('Producto no encontrado', 404);
+        }
+
+        if (dbEnabled()) {
+            legacyDeleteProduct($id);
+            legacyWriteEntityOverlay('products.json', $products);
+        } else {
+            writeJsonFile($productsPath, $products);
+        }
+
+        ok(['id' => $id]);
+    }
+
     if ($action !== 'create_product') {
         if ($action !== 'import_products') {
-            errorResponse('Acción no soportada', 400);
+            errorResponse('Acciï¿½n no soportada', 400);
         }
 
         $mode = strtolower(trim((string)($body['mode'] ?? 'merge')));
@@ -592,11 +705,20 @@ if ($method === 'POST') {
     $products = readJsonFile($productsPath);
     $product = normalizeProduct($body);
     if (barcodeExists($products, (string)($product['barcode'] ?? ''))) {
-        errorResponse('Ya existe un producto con ese código de barras', 409);
+        errorResponse('Ya existe un producto con ese cï¿½digo de barras', 409);
     }
     $product['id'] = nextProductId($products);
     $products[] = $product;
-    writeJsonFile($productsPath, $products);
+
+    if (dbEnabled()) {
+        if (!legacyUpsertProduct($product)) {
+            errorResponse('No se pudo guardar el producto en la base de datos legacy', 500);
+        }
+        legacyWriteEntityOverlay('products.json', $products);
+    } else {
+        writeJsonFile($productsPath, $products);
+    }
+
     try {
         persistProductTaxInDb((string)$product['id'], $product['iva'] ?? 'No', (string)($product['barcode'] ?? ''));
     } catch (Throwable) {
@@ -608,7 +730,7 @@ if ($method === 'POST') {
 if ($method === 'PATCH') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo invï¿½lido', 400);
     }
 
     $action = (string)($body['action'] ?? '');
@@ -632,7 +754,7 @@ if ($method === 'PATCH') {
         }
 
         if ($updated === null) {
-            errorResponse('Promoción no encontrada', 404);
+            errorResponse('Promociï¿½n no encontrada', 404);
         }
 
         writeJsonFile($promotionsPath, $promotions);
@@ -662,7 +784,11 @@ if ($method === 'PATCH') {
             errorResponse('Producto no encontrado', 404);
         }
 
-        writeProductsSnapshotFast($productsPath, $products);
+        if (dbEnabled()) {
+            legacyWriteEntityOverlay('products.json', $products);
+        } else {
+            writeProductsSnapshotFast($productsPath, $products);
+        }
         try {
             persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
         } catch (Throwable) {
@@ -672,7 +798,7 @@ if ($method === 'PATCH') {
     }
 
     if ($action !== 'update_product') {
-        errorResponse('Acción no soportada', 400);
+        errorResponse('Acciï¿½n no soportada', 400);
     }
 
     $id = (string)($body['id'] ?? '');
@@ -687,7 +813,7 @@ if ($method === 'PATCH') {
         }
         $nextProduct = normalizeProduct($body, $product);
         if (barcodeExists($products, (string)($nextProduct['barcode'] ?? ''), $id)) {
-            errorResponse('Ya existe un producto con ese código de barras', 409);
+            errorResponse('Ya existe un producto con ese cï¿½digo de barras', 409);
         }
         $nextProduct['id'] = $id;
         $products[$idx] = $nextProduct;
@@ -699,7 +825,15 @@ if ($method === 'PATCH') {
         errorResponse('Producto no encontrado', 404);
     }
 
-    writeJsonFile($productsPath, $products);
+    if (dbEnabled()) {
+        if (!legacyUpsertProduct($updated)) {
+            errorResponse('No se pudo actualizar el producto en la base de datos legacy', 500);
+        }
+        legacyWriteEntityOverlay('products.json', $products);
+    } else {
+        writeJsonFile($productsPath, $products);
+    }
+
     try {
         persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
     } catch (Throwable) {
@@ -711,7 +845,7 @@ if ($method === 'PATCH') {
 if ($method === 'DELETE') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo invï¿½lido', 400);
     }
 
     $id = (string)($body['id'] ?? '');
@@ -727,7 +861,7 @@ if ($method === 'DELETE') {
             return (string)($promo['id'] ?? '') !== $id;
         }));
         if (count($promotions) === $before) {
-            errorResponse('Promoción no encontrada', 404);
+            errorResponse('Promociï¿½n no encontrada', 404);
         }
         writeJsonFile($promotionsPath, $promotions);
         ok(['id' => $id]);
@@ -747,4 +881,4 @@ if ($method === 'DELETE') {
     ok(['id' => $id]);
 }
 
-errorResponse('Método no soportado', 405);
+errorResponse('Mï¿½todo no soportado', 405);
