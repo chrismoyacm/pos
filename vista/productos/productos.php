@@ -177,6 +177,7 @@ declare(strict_types=1);
       </div>
 
       <div class="productos-footer" id="prod-editor-footer">
+        <output class="prod-save-feedback" id="prod-save-feedback" aria-live="polite" hidden></output>
         <button class="btn-primary" type="button" id="prod-save-btn">Guardar Producto</button>
         <button class="btn-danger" type="button" id="prod-delete-btn" hidden>Eliminar Producto</button>
         <button class="btn-secondary" type="button" id="prod-cancel-btn">Cancelar</button>

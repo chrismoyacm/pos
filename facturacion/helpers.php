@@ -189,10 +189,14 @@ function facturacionStoreUploadedCertificate(array $file, string $previousPath =
 function facturacionSaveSignature(array $data): array
 {
     $current = facturacionLoadSignature();
+    $incomingCertificatePath = trim((string)($data['certificatePath'] ?? ''));
+    $incomingCertificatePassword = (string)($data['certificatePassword'] ?? '');
+
     $next = array_merge($current, [
         'signatureMode' => in_array((string)($data['signatureMode'] ?? 'mock'), ['mock', 'real'], true) ? (string)$data['signatureMode'] : 'mock',
-        'certificatePath' => trim((string)($data['certificatePath'] ?? '')),
-        'certificatePassword' => (string)($data['certificatePassword'] ?? ''),
+        // Keep previous certificate data when form submits empty values.
+        'certificatePath' => $incomingCertificatePath !== '' ? $incomingCertificatePath : (string)($current['certificatePath'] ?? ''),
+        'certificatePassword' => $incomingCertificatePassword !== '' ? $incomingCertificatePassword : (string)($current['certificatePassword'] ?? ''),
         'emailMode' => in_array((string)($data['emailMode'] ?? 'mock'), ['mock', 'brevo_api'], true) ? (string)$data['emailMode'] : 'mock',
         'brevoApiKey' => trim((string)($data['brevoApiKey'] ?? '')),
         'brevoEndpoint' => trim((string)($data['brevoEndpoint'] ?? 'https://api.brevo.com/v3/smtp/email')),
@@ -1023,6 +1027,9 @@ function facturacionReadPkcs12Store(string $certificatePath, string $certificate
         }
         $suffix = $detail !== '' ? (' Detalle OpenSSL: ' . $detail) : '';
         $hint = '';
+        if (stripos($detail, 'mac verify failure') !== false) {
+            $hint = ' Sugerencia: la clave del certificado es incorrecta o el archivo .p12/.pfx esta danado.';
+        }
         if (stripos($detail, 'unsupported') !== false) {
             $hint = ' Sugerencia: el .p12 parece usar cifrado legacy; intente reexportarlo con OpenSSL legacy o usar OpenSSL 1.1 para convertirlo.';
         }

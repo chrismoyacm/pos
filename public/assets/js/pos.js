@@ -358,6 +358,24 @@
     return Number(item.price || 0) * Number(item.qty || 0);
   }
 
+  function getItemIvaRate(item) {
+    const normalized = normalizeIvaLabel(item?.iva);
+    if (!normalized || normalized === 'No') {
+      return 0;
+    }
+    const parsed = Number(String(normalized).replace('%', '').trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function getItemSubtotalWithoutIva(item) {
+    const gross = getItemGrossAmount(item);
+    const ivaRate = getItemIvaRate(item);
+    if (!(ivaRate > 0)) {
+      return gross;
+    }
+    return gross / (1 + (ivaRate / 100));
+  }
+
   function getItemNetAmount(item) {
     const gross = getItemGrossAmount(item);
     const pct = Math.max(0, Math.min(100, Number(state.saleDiscountPct || 0)));
@@ -365,12 +383,16 @@
   }
 
   function getSaleDiscountAmount() {
-    return Math.max(0, Number(state.subtotal || 0) - Number(state.total || 0));
+    return state.items.reduce(function (sum, item) {
+      const gross = getItemGrossAmount(item);
+      const net = getItemNetAmount(item);
+      return sum + Math.max(0, gross - net);
+    }, 0);
   }
 
   function recalc() {
     state.subtotal = state.items.reduce(function (sum, item) {
-      return sum + getItemGrossAmount(item);
+      return sum + getItemSubtotalWithoutIva(item);
     }, 0);
     state.total = state.items.reduce(function (sum, item) {
       return sum + getItemNetAmount(item);
@@ -421,10 +443,11 @@
     state.items.forEach(function (item, index) {
       const ivaLabel = normalizeIvaLabel(item.iva);
       const ivaButtonClass = ivaLabel === 'No' ? 'venta-iva-btn venta-iva-btn--off' : 'venta-iva-btn venta-iva-btn--on';
+      const wholesaleLabel = item.wholesaleEnabled ? '<div class="muted">Mayoreo</div>' : '';
       const $tr = $(
         '<tr data-idx="' + index + '" class="' + (index === state.selectedIndex ? 'row-selected' : '') + '">' +
           '<td>' + (item.barcode || '') + '</td>' +
-          '<td>' + escapeHtml(item.name || '') + '</td>' +
+          '<td>' + escapeHtml(item.name || '') + wholesaleLabel + '</td>' +
           '<td class="catalog-center"><button type="button" class="' + ivaButtonClass + '" data-iva-idx="' + index + '">' + escapeHtml(ivaLabel) + '</button></td>' +
           '<td class="venta-price-cell" data-price-idx="' + index + '" title="Doble click para editar precio">' + formatMoney(item.price) + '</td>' +
           '<td class="qty">' + item.qty + '</td>' +
@@ -462,7 +485,7 @@
   function updateProductIva(itemId, ivaValue) {
     return $.ajax({
       url: '../api/products.php',
-      method: 'PATCH',
+      method: 'POST',
       contentType: 'application/json',
       timeout: 8000,
       data: JSON.stringify({
@@ -500,18 +523,29 @@
     if (item && item.customPrice) {
       return;
     }
-    if (!item || !item.wholesale) {
-      item.price = Number(item.basePrice);
+    if (!item) {
       return;
     }
 
-    const minQty = Number(item.wholesale.minQty || 0);
-    const wholesalePrice = Number(item.wholesale.price || item.basePrice);
-    item.price = item.qty >= minQty ? wholesalePrice : Number(item.basePrice);
+    const base = Number(item.basePrice || 0);
+    if (!item.wholesaleEnabled) {
+      item.price = base;
+      return;
+    }
+
+    const wholesalePrice = Number(item?.wholesale?.price ?? item?.wholesalePrice ?? 0);
+    if (wholesalePrice > 0) {
+      item.price = Number(Math.max(0, wholesalePrice).toFixed(2));
+      return;
+    }
+
+    item.price = base;
   }
 
-  function addItemByCode(code, qty) {
+  function addItemByCode(code, qty, options) {
     if (!code) return;
+    const opts = options || {};
+    const forceWholesale = Boolean(opts.forceWholesale);
     const qtyToAdd = Math.max(1, parseInt(String(qty || 1), 10) || 1);
 
     $.getJSON('../api/products.php', { q: code }).done(function (res) {
@@ -527,6 +561,8 @@
       });
       const availableStock = Number(product.stock || 0);
 
+      const hasWholesalePrice = Number(product?.wholesale?.price ?? product?.wholesalePrice ?? 0) > 0;
+
       if (index >= 0) {
         const nextQty = Number(state.items[index].qty || 0) + qtyToAdd;
         if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
@@ -535,6 +571,10 @@
           return;
         }
         state.items[index].qty = nextQty;
+        if (forceWholesale) {
+          state.items[index].wholesaleEnabled = hasWholesalePrice;
+          state.items[index].customPrice = false;
+        }
         applyWholesaleForItem(state.items[index]);
         state.selectedIndex = index;
       } else {
@@ -556,6 +596,7 @@
           basePrice: Number(product.price),
           price: Number(product.price),
           wholesale: product.wholesale || null,
+          wholesaleEnabled: forceWholesale && hasWholesalePrice,
           customPrice: false,
           qty: qtyToAdd,
           stock: product.stock
@@ -565,9 +606,36 @@
         state.selectedIndex = state.items.length - 1;
       }
       renderGrid();
+      if (forceWholesale) {
+        const current = state.items[state.selectedIndex] || null;
+        if (current) {
+          if (hasWholesalePrice) {
+            showNotice('Mayoreo aplicado a ' + (current.name || 'producto') + '.', 'info');
+          } else {
+            showNotice('No hay precio mayoreo establecido para ' + (current.name || 'producto') + '. Se agregó con precio normal.', 'warning');
+          }
+        }
+      }
       $('#codigo').val('');
       focusCodigoInput(true);
     });
+  }
+
+  function applyWholesaleFromCodigoInput() {
+    const raw = ($('#codigo').val() || '').toString().trim();
+    if (!raw) {
+      return false;
+    }
+
+    const parsed = parseCodeQtyInput(raw);
+    if (!parsed) {
+      window.alert('Formato invalido. Use CODIGO o CODIGO*Cantidad.');
+      focusCodigoInput(true);
+      return true;
+    }
+
+    addItemByCode(parsed.code, parsed.qty, { forceWholesale: true });
+    return true;
   }
 
   function deleteSelected() {
@@ -603,6 +671,7 @@
       basePrice: price,
       price: price,
       wholesale: null,
+      wholesaleEnabled: false,
       qty: qty,
       stock: ''
     });
@@ -1263,7 +1332,43 @@
   }
 
   function applyWholesaleIfNeeded() {
-    state.items.forEach(applyWholesaleForItem);
+    if (applyWholesaleFromCodigoInput()) {
+      return;
+    }
+
+    if (state.items.length === 0) {
+      window.alert('No hay productos en la venta actual.');
+      return;
+    }
+
+    if (state.selectedIndex < 0 || !state.items[state.selectedIndex]) {
+      state.selectedIndex = state.items.length - 1;
+    }
+
+    const item = state.items[state.selectedIndex];
+    const enabling = !Boolean(item.wholesaleEnabled);
+    const hasWholesalePrice = Number(item?.wholesale?.price ?? item?.wholesalePrice ?? 0) > 0;
+
+    if (enabling && !hasWholesalePrice) {
+      item.wholesaleEnabled = false;
+      item.customPrice = false;
+      applyWholesaleForItem(item);
+      showNotice('No hay precio mayoreo establecido para ' + (item.name || 'producto') + '.', 'warning');
+      renderGrid();
+      return;
+    }
+
+    item.wholesaleEnabled = enabling;
+    item.customPrice = false;
+    applyWholesaleForItem(item);
+
+    showNotice(
+      enabling
+        ? ('Mayoreo aplicado a ' + (item.name || 'producto') + '.')
+        : ('Mayoreo removido para ' + (item.name || 'producto') + '.'),
+      'info'
+    );
+
     renderGrid();
   }
 

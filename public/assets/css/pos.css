@@ -149,6 +149,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   border-bottom:1px solid #eef2f7;padding:8px;font-size:13px
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
+.ventas-wrap .grid tbody tr.row-selected td{background:#d7e8ff}
 .grid tbody tr:hover td{background:#f8fbff}
 .venta-price-cell{cursor:pointer;position:relative;user-select:none}
 .venta-price-cell:hover{background:#eef6ff}
@@ -595,6 +596,35 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .productos-footer{
   display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:12px;margin-top:16px;border-top:1px solid #e5e7eb
 }
+.prod-save-feedback{
+  flex:1;
+  min-height:38px;
+  display:flex;
+  align-items:center;
+  padding:8px 12px;
+  border-radius:6px;
+  font-size:13px;
+  font-weight:700;
+  border:1px solid #dbe3ea;
+  background:#f8fafc;
+  color:#334155;
+}
+.prod-save-feedback[hidden]{display:none!important}
+.prod-save-feedback.is-success{
+  border-color:#86efac;
+  background:#ecfdf3;
+  color:#166534;
+}
+.prod-save-feedback.is-error{
+  border-color:#fecaca;
+  background:#fef2f2;
+  color:#991b1b;
+}
+.prod-save-feedback.is-info{
+  border-color:#bfdbfe;
+  background:#eff6ff;
+  color:#1e3a8a;
+}
 .productos-departments-main{display:grid;grid-template-columns:340px 1fr;gap:14px}
 .productos-departments-list-panel{min-height:620px}
 .productos-departments-search{
@@ -829,6 +859,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .prod-prices{grid-template-columns:1fr}
   .prod-stock-grid{grid-template-columns:1fr}
   .productos-footer{flex-direction:column;align-items:stretch}
+  .prod-save-feedback{width:100%}
   .prod-period-toolbar{align-items:stretch}
   .prod-period-search input{max-width:100%;width:100%}
   .prod-period-card{width:100%}

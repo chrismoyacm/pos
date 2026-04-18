@@ -1064,6 +1064,123 @@ function legacyWriteProducts(array $products): bool
     }
 }
 
+function legacyUpsertProduct(array $product): bool
+{
+    if (!dbEnabled()) {
+        return false;
+    }
+
+    $name = trim((string)($product['name'] ?? ''));
+    if ($name === '') {
+        return false;
+    }
+
+    $clampDecimal = static function (float $value, float $max, int $scale): float {
+        if ($value < 0) {
+            $value = 0.0;
+        }
+        if ($value > $max) {
+            $value = $max;
+        }
+        return round($value, $scale);
+    };
+
+    $pdo = db();
+    $deptMap = legacyDepartmentNameToIdMap();
+
+    $id = parseIntId((string)($product['id'] ?? ''), 'p-');
+    if ($id === null || $id <= 0) {
+        $id = (int)$pdo->query('SELECT COALESCE(MAX(CAST(ID AS UNSIGNED)), 0) + 1 FROM PRODUCTOS')->fetchColumn();
+    }
+    $id = max(1, min(32767, $id));
+
+    $departmentName = strtolower(trim((string)($product['department'] ?? 'sin departamento')));
+    $deptId = $deptMap[$departmentName] ?? ($deptMap['- sin departamento -'] ?? 25);
+    $deptId = max(0, min(127, $deptId));
+
+    $price = $clampDecimal(safeFloat($product['price'] ?? 0), 99.999, 3);
+    $wholesale = $clampDecimal(safeFloat(($product['wholesale']['price'] ?? 0)), 999.999, 3);
+    $stock = max(0, safeInt($product['stock'] ?? 0));
+    $minStock = max(0, safeInt($product['minStock'] ?? 0));
+    $maxStock = max(0, safeInt($product['maxStock'] ?? 0));
+    $cost = $clampDecimal(safeFloat($product['cost'] ?? 0), 99.999, 3);
+    $margin = $clampDecimal(safeFloat($product['margin'] ?? 0), 999.99, 2);
+    $mayoreo = $wholesale > 0 ? $wholesale : $price;
+    $pventa = $clampDecimal($price, 99.9999, 4);
+    $taxId = legacyTaxIdFromIvaValue($product['iva'] ?? 'No');
+
+    $params = [
+        ':id' => $id,
+        ':codigo' => legacyFitTableValue('PRODUCTOS', 'CODIGO', trim((string)($product['barcode'] ?? ''))),
+        ':descripcion' => legacyFitTableValue('PRODUCTOS', 'DESCRIPCION', $name),
+        ':tventa' => (($product['unitType'] ?? 'unit') === 'bulk') ? 'D' : 'U',
+        ':pcosto' => $cost,
+        ':pventa' => $pventa,
+        ':pfinal' => $price,
+        ':dept' => $deptId,
+        ':mayoreo' => $mayoreo,
+        ':pmayoreo' => $mayoreo,
+        ':inventario' => legacyFitTableValue('PRODUCTOS', 'DINVENTARIO', $stock),
+        ':invmin' => legacyFitTableValue('PRODUCTOS', 'DINVMINIMO', $minStock),
+        ':invmax' => legacyFitTableValue('PRODUCTOS', 'DINVMAXIMO', $maxStock),
+        ':margen' => $margin,
+        ':usa_inventario' => !empty($product['inventoryEnabled']) ? '1' : '0',
+        ':impuestos' => $taxId,
+    ];
+
+    try {
+        $exists = $pdo->prepare('SELECT COUNT(*) FROM PRODUCTOS WHERE ID = :id');
+        $exists->execute([':id' => $id]);
+
+        if ((int)$exists->fetchColumn() > 0) {
+            $updateById = $pdo->prepare(
+                'UPDATE PRODUCTOS
+                 SET CODIGO = :codigo, DESCRIPCION = :descripcion, TVENTA = :tventa, PCOSTO = :pcosto,
+                     PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
+                     DINVENTARIO = :inventario, DINVMINIMO = :invmin, DINVMAXIMO = :invmax,
+                     PORCENTAJE_GANANCIA = :margen, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
+                     ELIMINADO_EN = ""
+                 WHERE ID = :id'
+            );
+            return $updateById->execute($params);
+        }
+
+        $insert = $pdo->prepare(
+            'INSERT INTO PRODUCTOS (ID, CODIGO, DESCRIPCION, TVENTA, PCOSTO, PVENTA, DEPT, MAYOREO,
+                                    DINVENTARIO, DINVMINIMO, DINVMAXIMO, PORCENTAJE_GANANCIA, MEDIDA_ID,
+                                    PFINAL, PMAYOREOFINAL, ES_KIT, USA_INVENTARIO, IMPUESTOS, ELIMINADO_EN)
+             VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :mayoreo,
+                     :inventario, :invmin, :invmax, :margen, 1,
+                     :pfinal, :pmayoreo, "f", :usa_inventario, :impuestos, "")'
+        );
+
+        return $insert->execute($params);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function legacyDeleteProduct(string $jsonId): bool
+{
+    if (!dbEnabled()) {
+        return false;
+    }
+
+    $id = parseIntId($jsonId, 'p-');
+    if ($id === null || $id <= 0) {
+        return false;
+    }
+
+    try {
+        $stmt = db()->prepare(
+            "UPDATE PRODUCTOS SET ELIMINADO_EN = ? WHERE ID = ? AND (ELIMINADO_EN IS NULL OR ELIMINADO_EN = '')"
+        );
+        return $stmt->execute([legacyNow(), $id]);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 /** @return array<string,string> */
 function legacyProductCodeByJsonIdMap(): array
 {
