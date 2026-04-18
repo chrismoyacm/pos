@@ -25,7 +25,7 @@
       return;
     }
 
-    const preferredSelector = state.mode === 'delete' ? '#prod-search' : '#prod-barcode';
+    const preferredSelector = state.mode === 'new' ? '#prod-barcode' : '#prod-search';
     const $input = $(preferredSelector);
     if ($input.length === 0 || !$input.is(':visible') || $input.prop('disabled')) {
       return;
@@ -1190,7 +1190,7 @@
       focusBarcodeInputProd(true);
     });
 
-    $('#prod-barcode').on('blur', function () {
+    $('#prod-barcode, #prod-search').on('blur', function () {
       window.setTimeout(function () { focusBarcodeInputProd(false); }, 0);
     });
 
