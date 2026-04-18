@@ -311,8 +311,14 @@ if ($method === 'POST') {
 
             case 'test_signature':
                 $currentSignature = facturacionLoadSignature();
-                $certificatePath = trim((string)($body['certificatePath'] ?? $currentSignature['certificatePath'] ?? ''));
-                $certificatePassword = (string)($body['certificatePassword'] ?? $currentSignature['certificatePassword'] ?? '');
+                $certificatePathInput = trim((string)($body['certificatePath'] ?? ''));
+                $certificatePasswordInput = (string)($body['certificatePassword'] ?? '');
+                $certificatePath = $certificatePathInput !== ''
+                    ? $certificatePathInput
+                    : trim((string)($currentSignature['certificatePath'] ?? ''));
+                $certificatePassword = $certificatePasswordInput !== ''
+                    ? $certificatePasswordInput
+                    : (string)($currentSignature['certificatePassword'] ?? '');
                 $tempPath = '';
 
                 if (str_contains($contentType, 'multipart/form-data') && isset($_FILES['certificatePath']) && is_array($_FILES['certificatePath'])) {
