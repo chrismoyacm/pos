@@ -81,9 +81,19 @@ declare(strict_types=1);
             </label>
 
             <label class="prod-field">
-              <span>Productos incluidos (Ctrl/Cmd para seleccionar varios)</span>
-              <select id="promo-products" multiple size="10"></select>
+              <span>Buscar productos</span>
+              <input type="text" id="promo-products-search" placeholder="Buscar por codigo, nombre o ID" autocomplete="off">
             </label>
+
+            <label class="prod-field">
+              <span>Productos incluidos (Ctrl/Cmd para seleccionar varios)</span>
+              <select id="promo-products" multiple size="12"></select>
+            </label>
+
+            <div class="prod-field">
+              <span>Productos seleccionados</span>
+              <div class="promo-selected-box" id="promo-selected-products"></div>
+            </div>
 
             <label class="prod-field prod-field--description">
               <span>Notas</span>

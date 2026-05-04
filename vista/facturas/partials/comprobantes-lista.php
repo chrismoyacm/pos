@@ -16,6 +16,7 @@ $titles = [
     <input type="text" id="facturacion-document-search" placeholder="Buscar por clave, cliente o secuencial">
     <button class="btn-secondary" type="button" id="facturacion-document-refresh">Actualizar</button>
   </div>
+  <div class="facturacion-status facturacion-status--wide" id="facturacion-document-status"></div>
   <div class="facturacion-table-wrap">
     <table class="grid grid-compact factura-table">
       <thead>
@@ -24,14 +25,16 @@ $titles = [
           <th>Tipo</th>
           <th>Secuencial</th>
           <th>Cliente</th>
-          <th>Estado</th>
+          <th>Estado interno</th>
+          <th>Recepcion SRI</th>
+          <th>Autorizacion SRI</th>
           <th>Clave acceso</th>
           <th>Archivos</th>
           <th>Acciones</th>
         </tr>
       </thead>
       <tbody id="facturacion-document-body">
-        <tr><td colspan="8" class="factura-empty">No existen comprobantes</td></tr>
+        <tr><td colspan="10" class="factura-empty">No existen comprobantes</td></tr>
       </tbody>
     </table>
   </div>

@@ -10,7 +10,7 @@ function generarXMLFactura(array $document): array
 
     $factura = $dom->createElement('factura');
     $factura->setAttribute('id', 'comprobante');
-    $factura->setAttribute('version', '1.1.0');
+    $factura->setAttribute('version', '2.1.0');
     $dom->appendChild($factura);
 
     $infoTributaria = $dom->createElement('infoTributaria');
@@ -39,8 +39,12 @@ function generarXMLFactura(array $document): array
     $factura->appendChild($infoFactura);
     $buyer = $document['buyer'] ?? [];
     $totals = $document['totals'] ?? [];
+    $issueDate = (string)($document['issueDate'] ?? '');
+    $issueDateXml = preg_match('/^\d{2}-\d{2}-\d{4}$/', $issueDate) === 1
+        ? str_replace('-', '/', $issueDate)
+        : $issueDate;
     $baseInfo = [
-        'fechaEmision' => (string)($document['issueDate'] ?? ''),
+        'fechaEmision' => $issueDateXml,
         'dirEstablecimiento' => (string)($document['point']['dirEstablecimiento'] ?? ($document['emitter']['dirEstablecimiento'] ?? '')),
         'obligadoContabilidad' => (string)($document['emitter']['obligadoContabilidad'] ?? 'NO'),
         'tipoIdentificacionComprador' => facturacionMapBuyerIdType((string)($buyer['identificationType'] ?? 'Consumidor final')),
@@ -66,6 +70,7 @@ function generarXMLFactura(array $document): array
     $infoFactura->appendChild($totalConImpuestos);
     $infoFactura->appendChild($dom->createElement('propina', facturacionFormatDecimal((float)($totals['propina'] !== '' ? (float)$totals['propina'] : 0))));
     $infoFactura->appendChild($dom->createElement('importeTotal', facturacionFormatDecimal((float)($totals['importeTotal'] ?? 0))));
+    $infoFactura->appendChild($dom->createElement('moneda', 'DOLAR'));
 
     $pagosNode = $dom->createElement('pagos');
     foreach (($document['payments'] ?? []) as $payment) {

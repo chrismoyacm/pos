@@ -38,11 +38,16 @@ function normalizeCustomer(array $c): array
             }
         }
     }
+    $taxIdRaw = trim((string)($c['taxId'] ?? ($c['identification'] ?? '')));
+    $taxId = preg_replace('/\D+/', '', $taxIdRaw) ?? '';
+
     return [
         'id' => (string)($c['id'] ?? ''),
         'name' => $name,
         'firstName' => $first,
         'lastName' => $last,
+        'taxId' => $taxId,
+        'identification' => $taxId,
         'phone' => (string)($c['phone'] ?? ''),
         'email' => (string)($c['email'] ?? ''),
         'address1' => (string)($c['address1'] ?? ''),
@@ -59,6 +64,110 @@ function normalizeCustomer(array $c): array
         'paymentDueDate' => $paymentDueDate,
         'paymentDueDay' => $paymentDueDay,
     ];
+}
+
+function validateCustomerTaxIdOrFail(array $customer): void
+{
+    $taxId = trim((string)($customer['taxId'] ?? ($customer['identification'] ?? '')));
+    if ($taxId === '') {
+        return;
+    }
+
+    $isValidProvinceCode = static function (string $code): bool {
+        $n = (int)$code;
+        return $n >= 1 && $n <= 24;
+    };
+
+    $modulo10Check = static function (string $digits10): bool {
+        $sum = 0;
+        for ($i = 0; $i < 9; $i++) {
+            $n = (int)$digits10[$i];
+            if ($i % 2 === 0) {
+                $n *= 2;
+                if ($n > 9) {
+                    $n -= 9;
+                }
+            }
+            $sum += $n;
+        }
+        $verifier = (10 - ($sum % 10)) % 10;
+        return $verifier === (int)$digits10[9];
+    };
+
+    $modulo11Verifier = static function (string $base, array $coeffs, string $verifierDigit): bool {
+        $sum = 0;
+        foreach ($coeffs as $i => $coeff) {
+            $sum += ((int)$base[$i]) * $coeff;
+        }
+        $mod = 11 - ($sum % 11);
+        $expected = $mod === 11 ? 0 : ($mod === 10 ? 0 : $mod);
+        return $expected === (int)$verifierDigit;
+    };
+
+    $validateCedula = static function (string $digits10) use ($isValidProvinceCode, $modulo10Check): bool {
+        if (strlen($digits10) !== 10) {
+            return false;
+        }
+        if (!$isValidProvinceCode(substr($digits10, 0, 2))) {
+            return false;
+        }
+        $third = (int)$digits10[2];
+        if ($third < 0 || $third > 5) {
+            return false;
+        }
+        return $modulo10Check($digits10);
+    };
+
+    $validateRuc = static function (string $digits13) use ($isValidProvinceCode, $modulo11Verifier, $validateCedula): bool {
+        if (strlen($digits13) !== 13) {
+            return false;
+        }
+        if ($digits13 === '9999999999999') {
+            return true;
+        }
+        if (!$isValidProvinceCode(substr($digits13, 0, 2))) {
+            return false;
+        }
+
+        $third = (int)$digits13[2];
+        $estab = substr($digits13, 10, 3);
+        if ($estab === '000') {
+            return false;
+        }
+
+        if ($third >= 0 && $third <= 5) {
+            return $validateCedula(substr($digits13, 0, 10));
+        }
+        if ($third === 6) {
+            if (!$modulo11Verifier(substr($digits13, 0, 8), [3, 2, 7, 6, 5, 4, 3, 2], $digits13[8])) {
+                return false;
+            }
+            return substr($digits13, 9, 4) !== '0000';
+        }
+        if ($third === 9) {
+            if (!$modulo11Verifier(substr($digits13, 0, 9), [4, 3, 2, 7, 6, 5, 4, 3, 2], $digits13[9])) {
+                return false;
+            }
+            return $estab !== '000';
+        }
+        return false;
+    };
+
+    $len = strlen($taxId);
+    if ($len === 10) {
+        if (!$validateCedula($taxId)) {
+            errorResponse('Cedula invalida. Revise provincia, tercer digito y digito verificador.', 400);
+        }
+        return;
+    }
+    if ($len === 13) {
+        if (!$validateRuc($taxId)) {
+            errorResponse('RUC invalido. Revise tipo de contribuyente, establecimiento y digito verificador.', 400);
+        }
+        return;
+    }
+
+    errorResponse('La identificacion debe tener 10 digitos (cedula) o 13 digitos (RUC).', 400);
 }
 
 function nextCustomerId(array $customers): string
@@ -92,6 +201,7 @@ if ($method === 'GET') {
         $first = strtolower((string)($c['firstName'] ?? ''));
         $last = strtolower((string)($c['lastName'] ?? ''));
         $id = strtolower((string)($c['id'] ?? ''));
+        $taxId = strtolower((string)($c['taxId'] ?? ($c['identification'] ?? '')));
         $province = strtolower((string)($c['province'] ?? ''));
         $canton = strtolower((string)($c['canton'] ?? ''));
         $parish = strtolower((string)($c['parish'] ?? ''));
@@ -100,6 +210,7 @@ if ($method === 'GET') {
             || str_contains($name, $q)
             || str_contains($first, $q)
             || str_contains($last, $q)
+            || str_contains($taxId, $q)
             || str_contains($province, $q)
             || str_contains($canton, $q)
             || str_contains($parish, $q);
@@ -125,6 +236,7 @@ if ($method === 'POST') {
         if (trim($updated['name']) === '') {
             errorResponse('Nombre requerido', 400);
         }
+        validateCustomerTaxIdOrFail($updated);
         $found = false;
         foreach ($customers as &$c) {
             if ((string)($c['id'] ?? '') === $id) {
@@ -165,6 +277,7 @@ if ($method === 'POST') {
     if (trim($incoming['name']) === '') {
         errorResponse('Nombre requerido', 400);
     }
+    validateCustomerTaxIdOrFail($incoming);
     $customers[] = $incoming;
     writeJsonFile($customersPath, $customers);
     ok($incoming);
@@ -185,6 +298,7 @@ if ($method === 'PATCH') {
     if (trim($updated['name']) === '') {
         errorResponse('Nombre requerido', 400);
     }
+    validateCustomerTaxIdOrFail($updated);
     $found = false;
     foreach ($customers as &$c) {
         if ((string)($c['id'] ?? '') === $id) {

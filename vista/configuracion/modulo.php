@@ -272,17 +272,29 @@
                         <tr>
                             <th>Nombre del impuesto</th>
                             <th>Porcentaje</th>
-                            <th>Incluido en nuevos productos</th>
+                            <th>Predeterminado</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
                         </tr>
                         </thead>
-                        <tbody>
-                        <tr>
-                            <td><input type="text" id="cfg-tax-name" value="IVA"></td>
-                            <td><input type="number" id="cfg-tax-rate" min="0" max="100" step="0.01"></td>
-                            <td><label class="config-check-row"><input type="checkbox" id="cfg-tax-include-new"> Aplicar</label></td>
-                        </tr>
-                        </tbody>
+                        <tbody id="cfg-tax-list-body"></tbody>
                     </table>
+                </div>
+
+                <div class="config-form-grid config-form-grid--tax-editor">
+                    <input type="hidden" id="cfg-tax-edit-index" value="-1">
+                    <label>Nombre del impuesto
+                        <input type="text" id="cfg-tax-name" value="IVA">
+                    </label>
+                    <label>Porcentaje
+                        <input type="number" id="cfg-tax-rate" min="0" max="100" step="0.01">
+                    </label>
+                    <label class="config-check-row"><input type="checkbox" id="cfg-tax-include-new"> Usar como predeterminado en nuevos productos</label>
+                </div>
+                <div class="config-actions config-actions--left">
+                    <button class="btn-secondary" type="button" id="cfg-tax-add-btn">Guardar impuesto</button>
+                    <button class="btn-secondary" type="button" id="cfg-tax-clear-btn">Limpiar</button>
+                    <span id="cfg-tax-status" class="cfg-inline-status"></span>
                 </div>
 
                 <div class="config-form-grid config-form-grid--single">
@@ -296,7 +308,7 @@
                     </label>
                 </div>
                 <div class="config-actions">
-                    <button class="btn-primary" type="button" id="cfg-save-tax">Guardar impuestos</button>
+                    <button class="btn-primary" type="button" id="cfg-save-tax">Guardar preferencias de impuestos</button>
                 </div>
             </section>
 

@@ -10,23 +10,6 @@ function facturacionAuthorizationWsdl(string $ambiente): string
         : 'https://celcer.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl';
 }
 
-function facturacionMockAuthorizationXml(array $document, string $signedXml): string
-{
-    $dom = new DOMDocument('1.0', 'UTF-8');
-    $dom->formatOutput = true;
-    $auth = $dom->createElement('autorizacion');
-    $dom->appendChild($auth);
-    $auth->appendChild($dom->createElement('estado', 'AUTORIZADO'));
-    $auth->appendChild($dom->createElement('numeroAutorizacion', (string)($document['accessKey'] ?? '')));
-    $auth->appendChild($dom->createElement('fechaAutorizacion', date('c')));
-    $auth->appendChild($dom->createElement('ambiente', ((string)($document['environment'] ?? '1')) === '2' ? 'PRODUCCION' : 'PRUEBAS'));
-    $comp = $dom->createElement('comprobante');
-    $comp->appendChild($dom->createCDATASection($signedXml));
-    $auth->appendChild($comp);
-    $auth->appendChild($dom->createElement('mensajes'));
-    return $dom->saveXML() ?: '';
-}
-
 function facturacionEnsureList(mixed $value): array
 {
     if (!is_array($value)) {
@@ -76,9 +59,10 @@ function facturacionBuildAuthorizationXml(array $authorization): string
     return $dom->saveXML() ?: '';
 }
 
-function consultarAutorizacion(array $document): array
+function consultarAutorizacion(array $document, array $options = []): array
 {
-    $signature = facturacionLoadSignature();
+    $previousAuth = strtoupper(trim((string)($document['sri']['authorizationStatus'] ?? '')));
+    $previousStatus = strtolower(trim((string)($document['status'] ?? '')));
     $signedPath = (string)($document['files']['signedXml'] ?? '');
     if ($signedPath === '' || !file_exists($signedPath)) {
         throw new RuntimeException('No existe XML firmado para consultar autorizacion.');
@@ -89,22 +73,6 @@ function consultarAutorizacion(array $document): array
         mkdir($authorizedDir, 0777, true);
     }
     $authorizedPath = $authorizedDir . DIRECTORY_SEPARATOR . (string)$document['accessKey'] . '.xml';
-
-    if (($signature['signatureMode'] ?? 'mock') === 'mock') {
-        $signedXml = file_get_contents($signedPath);
-        if ($signedXml === false) {
-            throw new RuntimeException('No se pudo leer el XML firmado.');
-        }
-        file_put_contents($authorizedPath, facturacionMockAuthorizationXml($document, $signedXml));
-        $document['files']['authorizedXml'] = $authorizedPath;
-        $document['sri']['authorizationStatus'] = 'AUT';
-        $document['sri']['authorizationNumber'] = (string)($document['accessKey'] ?? '');
-        $document['sri']['authorizationDate'] = date('c');
-        $document['status'] = 'authorized';
-        $document['updatedAt'] = date('c');
-        facturacionAppendLog('info', 'Autorizacion mock generada', ['documentId' => $document['id'] ?? null]);
-        return $document;
-    }
 
     if (!class_exists('SoapClient')) {
         $runtime = 'PHP=' . PHP_VERSION . ' | SAPI=' . PHP_SAPI . ' | BIN=' . PHP_BINARY;
@@ -119,7 +87,10 @@ function consultarAutorizacion(array $document): array
         facturacionAuthorizationWsdl((string)($document['environment'] ?? '1'))
     );
 
-    $maxAttempts = 4;
+    // En esquema offline la autorizacion puede tardar algunos segundos/minutos.
+    // Permitimos personalizar intentos para llamadas de fondo (auto) sin bloquear la UI.
+    $maxAttempts = max(1, (int)($options['maxAttempts'] ?? 12));
+    $sleepMicros = max(0, (int)($options['sleepMicros'] ?? 2000000));
     $responseArray = [];
     $root = [];
     $autorizaciones = [];
@@ -130,14 +101,18 @@ function consultarAutorizacion(array $document): array
         if (!is_array($responseArray)) {
             $responseArray = [];
         }
-        $root = (array)($responseArray['RespuestaAutorizacionComprobante'] ?? []);
+        // El SOAP puede devolver la respuesta envuelta en
+        // RespuestaAutorizacionComprobante o directamente con las claves
+        // claveAccesoConsultada/numeroComprobantes/autorizaciones.
+        // Soportamos ambos formatos para no dejar comprobantes en PPR por parseo.
+        $root = (array)($responseArray['RespuestaAutorizacionComprobante'] ?? $responseArray);
         $autorizacionesRaw = (array)($root['autorizaciones'] ?? []);
         $autorizaciones = facturacionEnsureList($autorizacionesRaw['autorizacion'] ?? []);
         if ($autorizaciones !== []) {
             break;
         }
-        if ($attempt < $maxAttempts) {
-            usleep(1500000);
+        if ($attempt < $maxAttempts && $sleepMicros > 0) {
+            usleep($sleepMicros);
         }
         $attempt += 1;
     }
@@ -145,13 +120,24 @@ function consultarAutorizacion(array $document): array
     $document['sri']['response'] = $responseArray;
 
     if ($autorizaciones === []) {
+        if ($previousAuth === 'AUT' || $previousStatus === 'authorized') {
+            $document['sri']['authorizationStatus'] = 'AUT';
+            $document['status'] = 'authorized';
+            $document['updatedAt'] = date('c');
+            facturacionAppendLog('warning', 'SRI no devolvio autorizacion en esta consulta; se conserva estado AUT previo', [
+                'documentId' => $document['id'] ?? null,
+                'accessKey' => $document['accessKey'] ?? null,
+                'attempts' => min($attempt, $maxAttempts),
+            ]);
+            return $document;
+        }
         $document['sri']['authorizationStatus'] = 'PPR';
         $document['status'] = 'sent';
         $document['updatedAt'] = date('c');
         facturacionAppendLog('warning', 'SRI aun no entrega autorizacion (PPR)', [
             'documentId' => $document['id'] ?? null,
             'accessKey' => $document['accessKey'] ?? null,
-            'attempts' => $attempt,
+            'attempts' => min($attempt, $maxAttempts),
             'response' => $root,
         ]);
         return $document;
@@ -159,7 +145,9 @@ function consultarAutorizacion(array $document): array
 
     $authorization = is_array($autorizaciones[0]) ? $autorizaciones[0] : [];
     $estado = strtoupper(trim((string)($authorization['estado'] ?? '')));
-    $document['sri']['authorizationStatus'] = $estado === 'AUTORIZADO' ? 'AUT' : ($estado === 'NO AUTORIZADO' ? 'NAT' : ($estado !== '' ? $estado : 'PPR'));
+    $document['sri']['authorizationStatus'] = $estado === 'AUTORIZADO'
+        ? 'AUT'
+        : (in_array($estado, ['NO AUTORIZADO', 'RECHAZADO'], true) ? 'NAT' : ($estado !== '' ? $estado : 'PPR'));
     $document['sri']['authorizationNumber'] = (string)($authorization['numeroAutorizacion'] ?? '');
     $document['sri']['authorizationDate'] = (string)($authorization['fechaAutorizacion'] ?? date('c'));
 
@@ -171,7 +159,7 @@ function consultarAutorizacion(array $document): array
             'documentId' => $document['id'] ?? null,
             'authorizationNumber' => $document['sri']['authorizationNumber'],
         ]);
-    } elseif ($estado === 'NO AUTORIZADO') {
+    } elseif (in_array($estado, ['NO AUTORIZADO', 'RECHAZADO'], true)) {
         $document['status'] = 'error';
         facturacionAppendLog('error', 'Comprobante no autorizado por SRI', [
             'documentId' => $document['id'] ?? null,

@@ -112,7 +112,12 @@ if ($method === 'GET') {
     }));
 
     if ($q === '') {
-        ok(array_slice($products, 0, 200));
+        usort($products, static function ($a, $b): int {
+            $aCode = strtolower((string)($a['barcode'] ?? $a['id'] ?? ''));
+            $bCode = strtolower((string)($b['barcode'] ?? $b['id'] ?? ''));
+            return strcmp($aCode, $bCode);
+        });
+        ok($products);
     }
 
     $filtered = array_values(array_filter($products, function ($p) use ($q) {

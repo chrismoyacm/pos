@@ -214,8 +214,14 @@
     departments: [],
     selectedDepartmentId: null,
     catalogSelectedId: null,
+    catalogSelectedIds: [],
+    catalogBulkStep: 'config',
+    catalogBulkAction: '',
+    catalogBulkValue: null,
+    catalogBulkBusy: false,
     promotions: [],
     selectedPromotionId: null,
+    promoSelectedProductIds: [],
     importRows: [],
     catalogPage: 1,
     catalogPageSize: 20,
@@ -467,6 +473,29 @@
 
   function selectedCatalogProduct() {
     return state.products.find(product => product.id === state.catalogSelectedId) || null;
+  }
+
+  function isCatalogProductSelected(productId) {
+    return state.catalogSelectedIds.indexOf((productId || '').toString()) >= 0;
+  }
+
+  function selectedCatalogProducts() {
+    const ids = new Set(state.catalogSelectedIds.map(function (id) { return (id || '').toString(); }));
+    return state.products.filter(function (product) { return ids.has((product?.id || '').toString()); });
+  }
+
+  function toggleCatalogProductSelection(productId, forceChecked) {
+    const id = (productId || '').toString();
+    if (!id) return;
+    const selected = isCatalogProductSelected(id);
+    const shouldSelect = forceChecked === undefined ? !selected : !!forceChecked;
+    if (shouldSelect && !selected) {
+      state.catalogSelectedIds.push(id);
+      return;
+    }
+    if (!shouldSelect && selected) {
+      state.catalogSelectedIds = state.catalogSelectedIds.filter(function (rowId) { return rowId !== id; });
+    }
   }
 
   function setPackagePreviewHtml(html, className) {
@@ -740,15 +769,22 @@
     state.catalogTotalPages = pg.totalPages;
 
     const $tbody = $('#catalog-body').empty();
+    const visibleIds = pg.pageRows.map(function (product) { return (product?.id || '').toString(); }).filter(Boolean);
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(function (id) { return isCatalogProductSelected(id); });
+    const anyVisibleSelected = visibleIds.some(function (id) { return isCatalogProductSelected(id); });
+    $('#catalog-select-all')
+      .prop('checked', allVisibleSelected)
+      .prop('indeterminate', !allVisibleSelected && anyVisibleSelected);
 
     pg.pageRows.forEach(product => {
       const selected = product.id === state.catalogSelectedId;
+      const checked = isCatalogProductSelected(product.id);
       const wholesalePrice = product?.wholesale?.price ?? 0;
       const iva = normalizeIvaLabel(product?.iva);
       const provider = product?.provider || '';
       const $tr = $(`
         <tr class="${selected ? 'row-selected' : ''}">
-          <td><input type="checkbox" ${selected ? 'checked' : ''}></td>
+          <td><input type="checkbox" ${checked ? 'checked' : ''}></td>
           <td>${escapeHtml(product.barcode || product.id || '')}</td>
           <td>${escapeHtml(product.name || '')}</td>
           <td>${escapeHtml(product.department || 'Sin Departamento')}</td>
@@ -763,12 +799,19 @@
           <td class="catalog-center">${escapeHtml(String(iva))}</td>
         </tr>
       `);
+      const $check = $tr.find('input[type=checkbox]');
+      $check.on('click', function (event) {
+        event.stopPropagation();
+      });
+      $check.on('change', function () {
+        toggleCatalogProductSelection(product.id, $(this).is(':checked'));
+        updateCatalogActionsState();
+        renderCatalog();
+      });
       $tr.on('click', function (e) {
-        if ($(e.target).is('input[type=checkbox]')) {
-          e.preventDefault();
-        }
+        if ($(e.target).is('input[type=checkbox]')) return;
         state.catalogSelectedId = product.id;
-        $('#catalog-modify-btn').prop('disabled', false);
+        updateCatalogActionsState();
         renderCatalog();
       });
       $tbody.append($tr);
@@ -776,14 +819,475 @@
 
     if (!rows.some(product => product.id === state.catalogSelectedId)) {
       state.catalogSelectedId = null;
-      $('#catalog-modify-btn').prop('disabled', true);
     }
 
     if (pg.pageRows.length === 0) {
       $tbody.append('<tr><td colspan="13" class="muted">No hay productos para mostrar.</td></tr>');
     }
 
+    updateCatalogActionsState();
     renderCatalogPager();
+  }
+
+  function updateCatalogActionsState() {
+    const selectedCount = state.catalogSelectedIds.length;
+    if (selectedCount === 1 && !state.catalogSelectedId) {
+      state.catalogSelectedId = state.catalogSelectedIds[0];
+    }
+    const canModify = selectedCount === 1 && !!selectedCatalogProduct();
+    $('#catalog-modify-btn').prop('disabled', !canModify);
+    $('#catalog-refresh-btn')
+      .prop('disabled', selectedCount === 0)
+      .text(selectedCount > 0 ? ('Actualizar varios (' + selectedCount + ')...') : 'Actualizar varios...');
+  }
+
+  function showCatalogBulkFeedback(message, tone) {
+    const $box = $('#catalog-bulk-feedback');
+    if ($box.length === 0) return;
+    $box.removeClass('is-success is-error is-info');
+    if (!message) {
+      $box.prop('hidden', true).text('');
+      return;
+    }
+    const safeTone = (tone || 'info').toString();
+    $box.addClass('is-' + safeTone).text(message).prop('hidden', false);
+  }
+
+  function createProductUpdatePayload(product) {
+    const wholesalePrice = Number(product?.wholesale?.price || 0);
+    const wholesaleMinQty = Number(product?.wholesale?.minQty || 6);
+    return {
+      action: 'update_product',
+      id: product?.id || '',
+      barcode: product?.barcode || '',
+      name: product?.name || '',
+      cost: Number(product?.cost || 0),
+      margin: Number(product?.margin || 20),
+      price: Number(product?.price || 0),
+      specialPrice: Number(product?.specialPrice || 0),
+      wholesalePrice: wholesalePrice,
+      wholesaleMinQty: wholesaleMinQty,
+      stock: Number(product?.stock || 0),
+      minStock: Number(product?.minStock || 0),
+      maxStock: Number(product?.maxStock || 0),
+      inventoryEnabled: product?.inventoryEnabled !== false,
+      department: product?.department || 'Sin Departamento',
+      unitType: product?.unitType || 'unit',
+      provider: product?.provider || '',
+      iva: normalizeIvaLabel(product?.iva),
+      packageItems: Array.isArray(product?.packageItems) ? product.packageItems : []
+    };
+  }
+
+  function renderCatalogBulkActionConfig() {
+    const action = (state.catalogBulkAction || '').toString();
+    const $box = $('#catalog-bulk-config-area');
+    if ($box.length === 0) return;
+
+    if (!action) {
+      $box.html('');
+      return;
+    }
+
+    if (action === 'price_delta') {
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <select id="catalog-bulk-price-direction">
+            <option value="increase">Aumentar</option>
+            <option value="decrease">Disminuir</option>
+          </select>
+          <input type="number" id="catalog-bulk-price-value" step="0.01" min="0" placeholder="Valor">
+          <select id="catalog-bulk-price-mode">
+            <option value="percent">Porcentaje (%)</option>
+            <option value="fixed">Valor fijo ($)</option>
+          </select>
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'margin') {
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <span>Nueva ganancia/utilidad (%)</span>
+          <input type="number" id="catalog-bulk-margin-value" step="0.01" min="0" placeholder="Ej: 30">
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'tax') {
+      const options = availableIvaLabels()
+        .map(function (label) {
+          const text = label === 'No' ? 'Sin IVA' : ('IVA ' + label);
+          return '<option value="' + escapeHtml(label) + '">' + escapeHtml(text) + '</option>';
+        })
+        .join('');
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <span>Nuevo impuesto</span>
+          <select id="catalog-bulk-tax-value">${options}</select>
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'unit_type') {
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <span>Nuevo tipo de venta</span>
+          <select id="catalog-bulk-unit-type-value">
+            <option value="unit">Unidad</option>
+            <option value="bulk">Granel</option>
+          </select>
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'department') {
+      const values = ['Sin Departamento'].concat(state.departments.map(function (dep) { return dep.name || ''; }).filter(Boolean));
+      const uniqueValues = Array.from(new Set(values));
+      const options = uniqueValues.map(function (name) {
+        return '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+      }).join('');
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <span>Nuevo departamento</span>
+          <select id="catalog-bulk-department-value">${options}</select>
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'inventory_delta') {
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <select id="catalog-bulk-stock-direction">
+            <option value="increase">Aumentar</option>
+            <option value="decrease">Disminuir</option>
+          </select>
+          <input type="number" id="catalog-bulk-stock-value" step="1" min="1" placeholder="Cantidad">
+        </div>
+      `);
+      return;
+    }
+
+    if (action === 'provider') {
+      const providers = Array.from(new Set(state.products.map(function (product) { return (product?.provider || '').toString().trim(); }).filter(Boolean)));
+      const options = ['<option value="">-- Escribir proveedor --</option>'].concat(providers.map(function (name) {
+        return '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+      })).join('');
+      $box.html(`
+        <div class="catalog-bulk-inline">
+          <span>Nuevo proveedor</span>
+          <select id="catalog-bulk-provider-existing">${options}</select>
+          <input type="text" id="catalog-bulk-provider-value" placeholder="Nombre del proveedor">
+        </div>
+      `);
+      $('#catalog-bulk-provider-existing').on('change', function () {
+        const val = ($(this).val() || '').toString();
+        if (val) {
+          $('#catalog-bulk-provider-value').val(val);
+        }
+      });
+      return;
+    }
+
+    if (action === 'delete') {
+      $box.html('<p class="muted">Se eliminaran los productos seleccionados del catalogo.</p>');
+      return;
+    }
+  }
+
+  function readCatalogBulkConfig() {
+    const action = (state.catalogBulkAction || '').toString();
+    if (!action) {
+      return { ok: false, error: 'Selecciona una accion para continuar.' };
+    }
+
+    if (action === 'price_delta') {
+      const raw = Number($('#catalog-bulk-price-value').val());
+      if (!(raw > 0)) {
+        return { ok: false, error: 'Ingresa un valor valido para el precio.' };
+      }
+      return {
+        ok: true,
+        action,
+        direction: ($('#catalog-bulk-price-direction').val() || 'increase').toString(),
+        mode: ($('#catalog-bulk-price-mode').val() || 'percent').toString(),
+        amount: raw
+      };
+    }
+
+    if (action === 'margin') {
+      const raw = Number($('#catalog-bulk-margin-value').val());
+      if (raw < 0 || Number.isNaN(raw)) {
+        return { ok: false, error: 'Ingresa una utilidad valida.' };
+      }
+      return { ok: true, action, margin: raw };
+    }
+
+    if (action === 'tax') {
+      return { ok: true, action, iva: normalizeIvaLabel($('#catalog-bulk-tax-value').val()) };
+    }
+
+    if (action === 'unit_type') {
+      const unitType = ($('#catalog-bulk-unit-type-value').val() || 'unit').toString();
+      return { ok: true, action, unitType: unitType === 'bulk' ? 'bulk' : 'unit' };
+    }
+
+    if (action === 'department') {
+      const department = ($('#catalog-bulk-department-value').val() || 'Sin Departamento').toString();
+      return { ok: true, action, department: department || 'Sin Departamento' };
+    }
+
+    if (action === 'inventory_delta') {
+      const qty = Number($('#catalog-bulk-stock-value').val());
+      if (!(qty > 0)) {
+        return { ok: false, error: 'Ingresa una cantidad valida para inventario.' };
+      }
+      return {
+        ok: true,
+        action,
+        direction: ($('#catalog-bulk-stock-direction').val() || 'increase').toString(),
+        amount: Math.round(qty)
+      };
+    }
+
+    if (action === 'provider') {
+      const provider = ($('#catalog-bulk-provider-value').val() || '').toString().trim();
+      if (!provider) {
+        return { ok: false, error: 'Ingresa el nombre del proveedor.' };
+      }
+      return { ok: true, action, provider };
+    }
+
+    if (action === 'delete') {
+      return { ok: true, action };
+    }
+
+    return { ok: false, error: 'Accion no soportada.' };
+  }
+
+  function catalogBulkSummaryText(config) {
+    const action = (config?.action || '').toString();
+    if (action === 'price_delta') {
+      const op = config.direction === 'decrease' ? 'Disminuir precios' : 'Aumentar precios';
+      const unit = config.mode === 'percent' ? '%' : '$';
+      return {
+        title: 'Accion: ' + op,
+        value: 'Nuevo valor: ' + String(config.amount) + unit
+      };
+    }
+    if (action === 'margin') {
+      return { title: 'Accion: Modificar ganancia/utilidad', value: 'Nuevo valor: ' + String(config.margin) + '%' };
+    }
+    if (action === 'tax') {
+      return { title: 'Accion: Modificar impuesto', value: 'Nuevo valor: ' + (config.iva === 'No' ? 'Sin IVA' : ('IVA(' + config.iva + ')')) };
+    }
+    if (action === 'unit_type') {
+      return { title: 'Accion: Modificar tipo de venta', value: 'Nuevo valor: ' + unitTypeLabel(config.unitType) };
+    }
+    if (action === 'department') {
+      return { title: 'Accion: Cambiar departamento', value: 'Nuevo valor: ' + String(config.department || 'Sin Departamento') };
+    }
+    if (action === 'inventory_delta') {
+      return {
+        title: 'Accion: Modificar inventario',
+        value: 'Nuevo valor: ' + (config.direction === 'decrease' ? 'Disminuir' : 'Aumentar') + ' ' + String(config.amount) + ' unidades'
+      };
+    }
+    if (action === 'provider') {
+      return { title: 'Accion: Cambiar proveedor', value: 'Nuevo valor: ' + String(config.provider || '') };
+    }
+    return { title: 'Accion: Eliminar productos', value: 'Se eliminaran los productos seleccionados.' };
+  }
+
+  function renderCatalogBulkSummary(config) {
+    const text = catalogBulkSummaryText(config);
+    $('#catalog-bulk-summary-title').text(text.title || '');
+    $('#catalog-bulk-summary-value').text(text.value || '');
+    const $tbody = $('#catalog-bulk-summary-body').empty();
+    selectedCatalogProducts().forEach(function (product) {
+      $tbody.append(
+        '<tr><td>' + escapeHtml(product?.barcode || product?.id || '') + '</td><td>' + escapeHtml(product?.name || '') + '</td></tr>'
+      );
+    });
+  }
+
+  function showCatalogBulkStep(stepName) {
+    state.catalogBulkStep = stepName;
+    $('#catalog-bulk-step-config').prop('hidden', stepName !== 'config');
+    $('#catalog-bulk-step-summary').prop('hidden', stepName !== 'summary');
+    $('#catalog-bulk-step-progress').prop('hidden', stepName !== 'progress');
+    const inProgress = stepName === 'progress' && state.catalogBulkBusy;
+    $('#catalog-bulk-back-btn').prop('disabled', inProgress || stepName === 'config');
+    $('#catalog-bulk-next-btn').prop('disabled', inProgress).text(stepName === 'summary' ? 'Comenzar' : 'Siguiente');
+    if (stepName === 'progress') {
+      $('#catalog-bulk-next-btn').prop('disabled', true).text('Procesando...');
+      $('#catalog-bulk-back-btn').prop('disabled', true);
+    }
+  }
+
+  function resetCatalogBulkModal() {
+    state.catalogBulkStep = 'config';
+    state.catalogBulkAction = '';
+    state.catalogBulkValue = null;
+    state.catalogBulkBusy = false;
+    $('input[name="catalog-bulk-action"]').prop('checked', false);
+    $('#catalog-bulk-selected-text').text('Seleccionaste ' + state.catalogSelectedIds.length + ' productos, deseas...');
+    $('#catalog-bulk-config-area').empty();
+    $('#catalog-bulk-summary-title').text('');
+    $('#catalog-bulk-summary-value').text('');
+    $('#catalog-bulk-summary-body').empty();
+    $('#catalog-bulk-progress-fill').css('width', '0%');
+    $('#catalog-bulk-progress-text').text('0%');
+    $('#catalog-bulk-progress-detail').text('0 de 0 completados');
+    $('#catalog-bulk-result-list').empty();
+    showCatalogBulkFeedback('', 'info');
+    showCatalogBulkStep('config');
+  }
+
+  function closeCatalogBulkModal() {
+    if (state.catalogBulkBusy) return;
+    $('#catalog-bulk-modal').removeClass('active').attr('aria-hidden', 'true');
+    resetCatalogBulkModal();
+  }
+
+  function openCatalogBulkModal() {
+    if (state.catalogSelectedIds.length === 0) {
+      window.alert('Selecciona al menos un producto para actualizar varios.');
+      return;
+    }
+    resetCatalogBulkModal();
+    $('#catalog-bulk-modal').addClass('active').attr('aria-hidden', 'false');
+  }
+
+  function runCatalogBulkExecution() {
+    const config = state.catalogBulkValue;
+    const rows = selectedCatalogProducts();
+    const total = rows.length;
+    if (!config || total === 0) {
+      showCatalogBulkFeedback('No hay productos para procesar.', 'error');
+      return;
+    }
+
+    showCatalogBulkStep('progress');
+    state.catalogBulkBusy = true;
+    showCatalogBulkFeedback('Ejecutando cambios, espera un momento...', 'info');
+
+    let doneCount = 0;
+    let successCount = 0;
+    let errorCount = 0;
+
+    const updateProgress = function () {
+      const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      $('#catalog-bulk-progress-fill').css('width', pct + '%');
+      $('#catalog-bulk-progress-text').text(pct + '%');
+      $('#catalog-bulk-progress-detail').text(doneCount + ' de ' + total + ' completados');
+    };
+
+    const appendResult = function (message, tone) {
+      const safeTone = (tone || 'info').toString();
+      const color = safeTone === 'error' ? '#b91c1c' : (safeTone === 'success' ? '#166534' : '#1d4ed8');
+      $('#catalog-bulk-result-list').append('<p style="color:' + color + ';">' + escapeHtml(message) + '</p>');
+    };
+
+    const applyRow = function (index) {
+      if (index >= rows.length) {
+        state.catalogBulkBusy = false;
+        $('#catalog-bulk-next-btn').prop('disabled', false).text('Cerrar');
+        $('#catalog-bulk-cancel-btn').prop('disabled', false);
+        $('#catalog-bulk-back-btn').prop('disabled', true);
+        if (errorCount === 0) {
+          showCatalogBulkFeedback('Actualizacion completada: ' + successCount + ' productos procesados.', 'success');
+        } else if (successCount > 0) {
+          showCatalogBulkFeedback('Proceso completado con errores: ' + successCount + ' ok, ' + errorCount + ' con error.', 'info');
+        } else {
+          showCatalogBulkFeedback('No se pudo procesar ningun producto.', 'error');
+        }
+        updateCatalogActionsState();
+        renderCatalog();
+        return;
+      }
+
+      const product = rows[index];
+      const code = product?.barcode || product?.id || '';
+      let method = 'POST';
+      let payload = null;
+
+      if (config.action === 'delete') {
+        payload = { action: 'delete_product', id: product.id };
+      } else if (config.action === 'tax') {
+        payload = { action: 'update_product_tax', id: product.id, iva: config.iva };
+      } else {
+        payload = createProductUpdatePayload(product);
+        if (config.action === 'price_delta') {
+          const sign = config.direction === 'decrease' ? -1 : 1;
+          const basePrice = Number(product?.price || 0);
+          const delta = config.mode === 'percent'
+            ? (basePrice * Number(config.amount || 0) / 100)
+            : Number(config.amount || 0);
+          const nextPrice = Math.max(0, basePrice + (sign * delta));
+          payload.price = Number(nextPrice.toFixed(2));
+          if (Number(payload.cost || 0) > 0) {
+            payload.margin = Number((((payload.price - payload.cost) / payload.cost) * 100).toFixed(2));
+          }
+        } else if (config.action === 'margin') {
+          payload.margin = Number(config.margin || 0);
+          payload.price = Number((Number(payload.cost || 0) * (1 + (payload.margin / 100))).toFixed(2));
+        } else if (config.action === 'unit_type') {
+          payload.unitType = config.unitType === 'bulk' ? 'bulk' : 'unit';
+          if (payload.unitType !== 'package') {
+            payload.packageItems = [];
+          }
+        } else if (config.action === 'department') {
+          payload.department = (config.department || 'Sin Departamento').toString();
+        } else if (config.action === 'inventory_delta') {
+          const sign = config.direction === 'decrease' ? -1 : 1;
+          const amount = Number(config.amount || 0);
+          payload.stock = Math.max(0, Math.round(Number(payload.stock || 0) + (sign * amount)));
+        } else if (config.action === 'provider') {
+          payload.provider = (config.provider || '').toString();
+        }
+      }
+
+      $.ajax({
+        url: '../api/products.php',
+        method: method,
+        contentType: 'application/json',
+        data: JSON.stringify(payload)
+      }).done(function (res) {
+        if (!res.ok) {
+          errorCount += 1;
+          appendResult('Error en [' + code + ']: ' + (res.error || 'No se pudo actualizar.'), 'error');
+          return;
+        }
+
+        successCount += 1;
+        if (config.action === 'delete') {
+          state.products = state.products.filter(function (row) { return (row?.id || '') !== (product?.id || ''); });
+          state.catalogSelectedIds = state.catalogSelectedIds.filter(function (rowId) { return rowId !== (product?.id || ''); });
+          if ((state.catalogSelectedId || '') === (product?.id || '')) {
+            state.catalogSelectedId = null;
+          }
+        } else if (res.data) {
+          upsertProductInState(res.data);
+        }
+        appendResult('OK [' + code + ']', 'success');
+      }).fail(function (xhr) {
+        errorCount += 1;
+        appendResult('Error en [' + code + ']: ' + ajaxErrorMessage(xhr, 'No se pudo actualizar.'), 'error');
+      }).always(function () {
+        doneCount += 1;
+        updateProgress();
+        applyRow(index + 1);
+      });
+    };
+
+    $('#catalog-bulk-cancel-btn').prop('disabled', true);
+    applyRow(0);
   }
 
   function resetDepartmentForm() {
@@ -819,13 +1323,20 @@
     if (state.mode === 'new') {
       state.selectedId = null;
       fillForm(defaultFormValues());
+      showSaveFeedback('Modo nuevo activo. Completa los datos y presiona Guardar Producto.', 'info');
     } else if (state.mode === 'modify') {
       const sel = selectedProduct();
       if (sel) {
         fillForm(productToForm(sel));
+        showSaveFeedback('Modo modificar activo. Edita los campos y presiona Guardar Producto.', 'info');
+      } else if (state.products.length === 0) {
+        showSaveFeedback('No hay productos disponibles para modificar.', 'error');
+      } else {
+        showSaveFeedback('Selecciona un producto de la lista para poder modificarlo.', 'error');
       }
     } else {
       updateDeleteSummary();
+      showSaveFeedback('', 'info');
     }
 
     renderProductList();
@@ -844,6 +1355,11 @@
       }
       if ((state.mode === 'modify' || state.mode === 'delete') && !state.selectedId && state.products.length > 0) {
         state.selectedId = state.products[0].id;
+      }
+      const available = new Set(state.products.map(function (product) { return (product?.id || '').toString(); }));
+      state.catalogSelectedIds = state.catalogSelectedIds.filter(function (id) { return available.has((id || '').toString()); });
+      if (!available.has((state.catalogSelectedId || '').toString())) {
+        state.catalogSelectedId = null;
       }
       if (isProductosPage()) {
         applyProductMode();
@@ -884,11 +1400,11 @@
     showSaveFeedback('', 'info');
     const payload = readForm();
     if (!payload.name) {
-      window.alert('La descripción es requerida.');
+      showSaveFeedback('La descripcion es requerida.', 'error');
       return;
     }
     if ((payload.department || '') === NEW_DEPARTMENT_OPTION_VALUE) {
-      window.alert('Seleccione un departamento válido.');
+      showSaveFeedback('Selecciona un departamento valido.', 'error');
       return;
     }
 
@@ -900,7 +1416,7 @@
       return (product?.id || '') !== (payload.id || '');
     });
     if (duplicate) {
-      window.alert('Ya existe otro producto con el mismo código de barras.');
+      showSaveFeedback('Ya existe otro producto con el mismo codigo de barras.', 'error');
       return;
     }
 
@@ -909,7 +1425,7 @@
     payload.action = isNew ? 'create_product' : 'update_product';
 
     if (!isNew && !payload.id) {
-      window.alert('Selecciona un producto para modificar.');
+      showSaveFeedback('Selecciona un producto para modificar.', 'error');
       return;
     }
 
@@ -1227,18 +1743,79 @@
       state.catalogPage = 1;
       renderCatalog();
     });
-    $('#catalog-refresh-btn').on('click', function () {
-      $.when(loadDepartments(), loadProducts('')).done(() => {
-        renderCatalog();
+
+    $('#catalog-select-all').on('change', function () {
+      const checked = $(this).is(':checked');
+      const visibleRows = paginateRows(filteredCatalogProducts(), state.catalogPage, state.catalogPageSize).pageRows;
+      visibleRows.forEach(function (product) {
+        toggleCatalogProductSelection(product.id, checked);
       });
+      updateCatalogActionsState();
+      renderCatalog();
     });
+
+    $('#catalog-refresh-btn').on('click', function () {
+      openCatalogBulkModal();
+    });
+
     $('#catalog-modify-btn').on('click', function () {
-      const product = selectedCatalogProduct();
+      const selected = selectedCatalogProducts();
+      const product = selected.length === 1 ? selected[0] : selectedCatalogProduct();
       if (!product) {
+        window.alert('Selecciona un solo producto para modificar.');
         return;
       }
       window.location.href = 'index.php?mod=productos&sub=modify&pid=' + encodeURIComponent(product.id);
     });
+
+    $('input[name="catalog-bulk-action"]').on('change', function () {
+      state.catalogBulkAction = ($(this).val() || '').toString();
+      showCatalogBulkFeedback('', 'info');
+      renderCatalogBulkActionConfig();
+    });
+
+    $('#catalog-bulk-cancel-btn').on('click', function () {
+      closeCatalogBulkModal();
+    });
+
+    $('#catalog-bulk-back-btn').on('click', function () {
+      if (state.catalogBulkBusy) return;
+      if (state.catalogBulkStep === 'summary') {
+        showCatalogBulkStep('config');
+      }
+    });
+
+    $('#catalog-bulk-next-btn').on('click', function () {
+      if (state.catalogBulkBusy) return;
+      if (state.catalogBulkStep === 'config') {
+        const config = readCatalogBulkConfig();
+        if (!config.ok) {
+          showCatalogBulkFeedback(config.error || 'Completa los datos para continuar.', 'error');
+          return;
+        }
+        state.catalogBulkValue = config;
+        renderCatalogBulkSummary(config);
+        showCatalogBulkFeedback('', 'info');
+        showCatalogBulkStep('summary');
+        return;
+      }
+
+      if (state.catalogBulkStep === 'summary') {
+        runCatalogBulkExecution();
+        return;
+      }
+
+      if (state.catalogBulkStep === 'progress' && !state.catalogBulkBusy) {
+        closeCatalogBulkModal();
+      }
+    });
+
+    $('#catalog-bulk-modal').on('click', function (event) {
+      if (event.target === this) {
+        closeCatalogBulkModal();
+      }
+    });
+
     $('#catalog-export-btn').on('click', exportCatalog);
   }
 
@@ -1453,14 +2030,16 @@
     $('#promo-end-date').val(data.endDate || '');
     $('#promo-active').prop('checked', data.active !== false);
     $('#promo-notes').val(data.notes || '');
-
-    const ids = Array.isArray(data.productIds) ? data.productIds : [];
-    $('#promo-products').val(ids);
+    const ids = Array.isArray(data.productIds) ? data.productIds.map(function (id) { return id.toString(); }) : [];
+    state.promoSelectedProductIds = Array.from(new Set(ids));
+    $('#promo-products-search').val('');
+    setPromotionProductOptions();
+    renderPromotionSelectedProducts();
   }
 
   function readPromotionForm() {
-    const selected = $('#promo-products').val() || [];
-    const productIds = Array.isArray(selected) ? selected.map(v => v.toString()) : [];
+    syncPromotionSelectionFromSelect();
+    const productIds = Array.from(new Set((state.promoSelectedProductIds || []).map(function (id) { return id.toString(); }).filter(Boolean)));
     return {
       id: $('#promo-form').data('promo-id') || '',
       name: ($('#promo-name').val() || '').toString().trim(),
@@ -1474,12 +2053,62 @@
     };
   }
 
+  function promotionProductMatchesQuery(product, query) {
+    const q = (query || '').toString().trim().toLowerCase();
+    if (!q) return true;
+    const barcode = (product?.barcode || '').toString().toLowerCase();
+    const id = (product?.id || '').toString().toLowerCase();
+    const name = (product?.name || '').toString().toLowerCase();
+    return barcode.includes(q) || id.includes(q) || name.includes(q);
+  }
+
+  function syncPromotionSelectionFromSelect() {
+    const $sel = $('#promo-products');
+    const visibleIds = $sel.find('option').toArray().map(function (opt) {
+      return ($(opt).val() || '').toString();
+    });
+    const rawSelected = $sel.val() || [];
+    const selectedVisible = (Array.isArray(rawSelected) ? rawSelected : [rawSelected]).map(function (id) { return (id || '').toString(); }).filter(Boolean);
+    const keptHidden = (state.promoSelectedProductIds || []).filter(function (id) {
+      return visibleIds.indexOf((id || '').toString()) < 0;
+    });
+    state.promoSelectedProductIds = Array.from(new Set(keptHidden.concat(selectedVisible)));
+  }
+
+  function renderPromotionSelectedProducts() {
+    const $box = $('#promo-selected-products').empty();
+    const selectedIds = Array.from(new Set((state.promoSelectedProductIds || []).map(function (id) { return id.toString(); }).filter(Boolean)));
+    if (selectedIds.length === 0) {
+      $box.append('<div class="promo-selected-empty">No hay productos seleccionados.</div>');
+      return;
+    }
+
+    selectedIds.forEach(function (id) {
+      const product = state.products.find(function (row) { return (row?.id || '').toString() === id; }) || null;
+      const code = (product?.barcode || id || '').toString();
+      const name = (product?.name || 'Producto').toString();
+      $box.append(
+        '<div class="promo-selected-item">' +
+          '<span>' + escapeHtml(code) + ' - ' + escapeHtml(name) + '</span>' +
+          '<small>' + escapeHtml(id) + '</small>' +
+        '</div>'
+      );
+    });
+  }
+
   function setPromotionProductOptions() {
+    const query = ($('#promo-products-search').val() || '').toString();
+    const selectedIds = Array.from(new Set((state.promoSelectedProductIds || []).map(function (id) { return id.toString(); })));
     const $sel = $('#promo-products').empty();
     state.products.forEach(product => {
+      if (!promotionProductMatchesQuery(product, query)) {
+        return;
+      }
       const label = (product.barcode || product.id || '') + ' - ' + (product.name || 'Producto');
       $sel.append(`<option value="${escapeHtml(product.id || '')}">${escapeHtml(label)}</option>`);
     });
+    $sel.val(selectedIds);
+    renderPromotionSelectedProducts();
   }
 
   function renderPromotionList() {
@@ -1586,6 +2215,14 @@
 
   function bindPromotionsPage() {
     $('#promo-search').on('input', renderPromotionList);
+    $('#promo-products-search').on('input', function () {
+      syncPromotionSelectionFromSelect();
+      setPromotionProductOptions();
+    });
+    $('#promo-products').on('change', function () {
+      syncPromotionSelectionFromSelect();
+      renderPromotionSelectedProducts();
+    });
     $('#promo-new-btn').on('click', function () {
       state.selectedPromotionId = null;
       $('#promo-delete-btn').prop('disabled', true);

@@ -55,6 +55,9 @@
       <input type="email" name="email">
     </label>
   </form>
+  <div class="facturacion-note">
+    El ambiente efectivo del comprobante se toma del <code>Modo SRI</code> configurado en Perfil y firma. Este campo se conserva solo como referencia visual del emisor.
+  </div>
   <div class="facturacion-card-footer">
     <div class="facturacion-status" id="facturacion-emisor-status"></div>
     <button class="btn-primary" type="button" id="facturacion-emisor-save">Guardar datos emisor</button>

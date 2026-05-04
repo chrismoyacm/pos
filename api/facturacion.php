@@ -74,6 +74,127 @@ function facturacionInferIdentificationType(string $identification): string
     return 'Consumidor final';
 }
 
+function facturacionAcquireAutoAuthLock()
+{
+    $lockPath = facturacionStoragePath('autorizacion_auto.lock');
+    $handle = @fopen($lockPath, 'c+');
+    if (!is_resource($handle)) {
+        return false;
+    }
+    if (!flock($handle, LOCK_EX | LOCK_NB)) {
+        fclose($handle);
+        return false;
+    }
+    return $handle;
+}
+
+function facturacionReleaseAutoAuthLock($lockHandle): void
+{
+    if (!is_resource($lockHandle)) {
+        return;
+    }
+    @flock($lockHandle, LOCK_UN);
+    @fclose($lockHandle);
+}
+
+function facturacionShouldRetryAuthorization(array $document, int $minSecondsBetweenChecks = 45): bool
+{
+    $status = strtoupper(trim((string)($document['status'] ?? '')));
+    $auth = strtoupper(trim((string)($document['sri']['authorizationStatus'] ?? '')));
+    $reception = strtoupper(trim((string)($document['sri']['receptionStatus'] ?? '')));
+    if ($status === 'AUTHORIZED' || $auth === 'AUT') {
+        return false;
+    }
+    if ($reception !== 'RECIBIDA') {
+        return false;
+    }
+    if (!in_array($auth, ['', 'PPR'], true)) {
+        return false;
+    }
+
+    $lastCheck = (string)($document['sri']['authorizationLastCheckAt'] ?? '');
+    if ($lastCheck === '') {
+        return true;
+    }
+    $lastTs = strtotime($lastCheck);
+    if ($lastTs === false) {
+        return true;
+    }
+    return (time() - $lastTs) >= $minSecondsBetweenChecks;
+}
+
+function facturacionFinalizeIfAuthorized(array $document): array
+{
+    $auth = strtoupper(trim((string)($document['sri']['authorizationStatus'] ?? '')));
+    if ($auth !== 'AUT' && strtolower((string)($document['status'] ?? '')) !== 'authorized') {
+        return $document;
+    }
+
+    if ((string)($document['files']['pdf'] ?? '') === '') {
+        $document = generarPDF($document);
+        $document = facturacionPersistDocument($document);
+    }
+    if (!facturacionEmailAlreadyQueued((string)($document['id'] ?? ''))) {
+        $document = enviarEmailCliente($document);
+        $document = facturacionPersistDocument($document);
+    }
+    return $document;
+}
+
+function facturacionAutoProcessPendingAuthorizations(): void
+{
+    $signature = facturacionLoadSignature();
+    $lock = facturacionAcquireAutoAuthLock();
+    if ($lock === false) {
+        return;
+    }
+
+    try {
+        $documents = facturacionLoadDocuments();
+        if ($documents === []) {
+            return;
+        }
+
+        $processed = 0;
+        $maxPerRun = 4;
+        foreach ($documents as $document) {
+            if (!is_array($document)) {
+                continue;
+            }
+            if (!facturacionShouldRetryAuthorization($document)) {
+                continue;
+            }
+
+            $documentId = (string)($document['id'] ?? '');
+            try {
+                $document['sri']['authorizationLastCheckAt'] = date('c');
+                $document = consultarAutorizacion($document, ['maxAttempts' => 1, 'sleepMicros' => 0]);
+                $document['sri']['authorizationLastCheckAt'] = date('c');
+                $document['sri']['authorizationAttemptsAuto'] = (int)($document['sri']['authorizationAttemptsAuto'] ?? 0) + 1;
+                $document = facturacionPersistDocument($document);
+                $document = facturacionFinalizeIfAuthorized($document);
+            } catch (Throwable $e) {
+                $document['sri']['authorizationLastCheckAt'] = date('c');
+                $document['sri']['authorizationAttemptsAuto'] = (int)($document['sri']['authorizationAttemptsAuto'] ?? 0) + 1;
+                $document = facturacionPersistDocument($document);
+                facturacionAppendLog('warning', 'Fallo en reintento automatico de autorizacion', [
+                    'documentId' => $documentId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            $processed += 1;
+            if ($processed >= $maxPerRun) {
+                break;
+            }
+        }
+    } finally {
+        facturacionReleaseAutoAuthLock($lock);
+    }
+}
+
+facturacionAutoProcessPendingAuthorizations();
+
 if ($method === 'GET') {
     $action = strtolower(trim((string)($_GET['action'] ?? 'overview')));
     $documents = facturacionLoadDocuments();

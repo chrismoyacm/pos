@@ -7,6 +7,7 @@
     const navButtons = Array.from(root.querySelectorAll('.config-nav'));
     const panels = Array.from(root.querySelectorAll('.config-panel'));
     const statusNode = document.getElementById('cfg-status');
+    const taxStatusNode = document.getElementById('cfg-tax-status');
 
     const usersTableBody = document.querySelector('#cfg-users-table tbody');
     const searchInput = document.getElementById('cfg-user-search');
@@ -25,6 +26,10 @@
         currentUser: null,
         selectedUserId: 0,
         userFilter: '',
+        taxDraftOptions: [],
+        taxDraftDefaultRate: 0,
+        taxDraftIncludeNew: false,
+        taxEditIndex: -1,
         scannerProbe: {
             buffer: '',
             deltas: [],
@@ -50,12 +55,213 @@
         };
     }
 
+    function taxRateToNumber(value) {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            return 0;
+        }
+        return Math.round(parsed * 10000) / 10000;
+    }
+
+    function taxRatesEqual(a, b) {
+        return Math.abs(Number(a || 0) - Number(b || 0)) < 0.0001;
+    }
+
+    function taxNameWithoutRate(label) {
+        return (label || '').toString().replace(/\s*\d+([.,]\d+)?\s*%$/i, '').trim();
+    }
+
+    function formatTaxRateLabel(rate) {
+        const num = Number(rate || 0);
+        return Number.isInteger(num) ? String(num) : String(num.toFixed(2)).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1');
+    }
+
+    function taxOptionLabel(option) {
+        const baseName = taxNameWithoutRate(option && option.name ? option.name : 'IVA') || 'IVA';
+        return baseName + ' ' + formatTaxRateLabel(option && option.percentage ? option.percentage : 0) + '%';
+    }
+
+    function renderTaxEditor(option, index) {
+        const opt = option || null;
+        const rate = taxRateToNumber(opt ? opt.percentage : 0);
+        $('#cfg-tax-edit-index').val(String(typeof index === 'number' ? index : -1));
+        $('#cfg-tax-name').val(opt ? taxNameWithoutRate(opt.name || 'IVA') : 'IVA');
+        $('#cfg-tax-rate').val(rate > 0 ? rate : '');
+        $('#cfg-tax-include-new').prop('checked', !!(opt && state.taxDraftIncludeNew && taxRatesEqual(state.taxDraftDefaultRate, rate)));
+        $('#cfg-tax-add-btn').text((typeof index === 'number' && index >= 0) ? 'Guardar cambios' : 'Guardar impuesto');
+        state.taxEditIndex = typeof index === 'number' ? index : -1;
+    }
+
+    function renderTaxesTable() {
+        const $body = $('#cfg-tax-list-body').empty();
+        if (!Array.isArray(state.taxDraftOptions) || state.taxDraftOptions.length === 0) {
+            $body.append('<tr><td colspan="5" class="cfg-tax-empty">No hay impuestos registrados.</td></tr>');
+            return;
+        }
+
+        state.taxDraftOptions.forEach(function (option, index) {
+            const rate = taxRateToNumber(option.percentage);
+            const isDefault = !!state.taxDraftIncludeNew && taxRatesEqual(state.taxDraftDefaultRate, rate);
+            $body.append(
+                '<tr>' +
+                    '<td>' + escapeHtml(taxOptionLabel(option)) + '</td>' +
+                    '<td>' + escapeHtml(formatTaxRateLabel(rate)) + '%</td>' +
+                    '<td>' + (isDefault ? '<span class="cfg-tax-default-badge">Si</span>' : 'No') + '</td>' +
+                    '<td>' + (option.active === false ? 'Inactivo' : 'Activo') + '</td>' +
+                    '<td>' +
+                        '<div class="cfg-tax-actions">' +
+                            '<button type="button" class="btn-secondary cfg-tax-edit-btn" data-tax-idx="' + index + '">Modificar</button>' +
+                            '<button type="button" class="btn-danger cfg-tax-delete-btn" data-tax-idx="' + index + '">Eliminar</button>' +
+                        '</div>' +
+                    '</td>' +
+                '</tr>'
+            );
+        });
+    }
+
+    function loadTaxesDraftFromSettings(taxes) {
+        const taxOptions = Array.isArray(taxes && taxes.iva_options)
+            ? taxes.iva_options.map(normalizeTaxOption).filter(Boolean)
+            : [];
+        state.taxDraftOptions = taxOptions;
+        state.taxDraftDefaultRate = taxRateToNumber(taxes && taxes.default_vat ? taxes.default_vat : 0);
+        state.taxDraftIncludeNew = !!(taxes && taxes.included_new_products);
+        state.taxEditIndex = -1;
+        renderTaxEditor(null, -1);
+        renderTaxesTable();
+    }
+
+    async function upsertTaxFromEditor(autoPersist) {
+        const shouldPersist = autoPersist !== false;
+        const nameRaw = ($('#cfg-tax-name').val() || '').toString().trim();
+        const rate = taxRateToNumber($('#cfg-tax-rate').val() || 0);
+        const useDefault = $('#cfg-tax-include-new').is(':checked');
+        const editIndex = Number($('#cfg-tax-edit-index').val() || -1);
+
+        if (!nameRaw) {
+            setTaxStatus('El nombre del impuesto es requerido.', true);
+            return false;
+        }
+        if (!(rate > 0) || rate > 100) {
+            setTaxStatus('El porcentaje de impuesto debe ser mayor a 0 y menor o igual a 100.', true);
+            return false;
+        }
+
+        const cleanName = taxNameWithoutRate(nameRaw) || 'IVA';
+
+        const option = {
+            id: '',
+            name: cleanName + ' ' + formatTaxRateLabel(rate) + '%',
+            percentage: rate,
+            active: true,
+        };
+
+        const duplicateIndex = state.taxDraftOptions.findIndex(function (opt, idx) {
+            if (editIndex >= 0 && idx === editIndex) return false;
+            return taxRatesEqual(opt.percentage, rate);
+        });
+
+        if (editIndex >= 0 && editIndex < state.taxDraftOptions.length) {
+            const currentId = (state.taxDraftOptions[editIndex].id || '').toString();
+            state.taxDraftOptions[editIndex] = $.extend({}, option, { id: currentId });
+        } else if (duplicateIndex >= 0) {
+            const currentId = (state.taxDraftOptions[duplicateIndex].id || '').toString();
+            state.taxDraftOptions[duplicateIndex] = $.extend({}, option, { id: currentId });
+        } else {
+            state.taxDraftOptions.push(option);
+        }
+
+        if (useDefault) {
+            state.taxDraftDefaultRate = rate;
+            state.taxDraftIncludeNew = true;
+        } else if (state.taxDraftIncludeNew && taxRatesEqual(state.taxDraftDefaultRate, rate)) {
+            state.taxDraftIncludeNew = false;
+            state.taxDraftDefaultRate = 0;
+        }
+
+        renderTaxesTable();
+        renderTaxEditor(null, -1);
+        if (shouldPersist) {
+            const ok = await saveSettingsSection('taxes', {
+                useGlobalStatus: false,
+                savingMessage: editIndex >= 0 ? 'Guardando cambios del impuesto...' : 'Guardando impuesto...',
+                onError: function (err) {
+                    setTaxStatus(err && err.message ? err.message : 'No se pudo guardar el impuesto.', true);
+                }
+            });
+            if (ok) {
+                setTaxStatus(editIndex >= 0 ? 'Impuesto actualizado correctamente.' : 'Impuesto guardado correctamente.', false);
+            }
+        } else {
+            setTaxStatus(editIndex >= 0 ? 'Impuesto actualizado correctamente.' : 'Impuesto agregado correctamente.', false);
+        }
+        return true;
+    }
+
+    async function deleteTaxByIndex(index, autoPersist) {
+        const shouldPersist = autoPersist !== false;
+        const idx = Number(index);
+        if (!(idx >= 0) || idx >= state.taxDraftOptions.length) {
+            setTaxStatus('No se pudo identificar el impuesto a eliminar.', true);
+            return false;
+        }
+
+        const removed = state.taxDraftOptions[idx];
+        const removedLabel = taxOptionLabel(removed);
+        if (!window.confirm('Eliminar el impuesto "' + removedLabel + '"?')) {
+            setTaxStatus('Eliminacion cancelada.', false);
+            return false;
+        }
+        const removedRate = taxRateToNumber(removed && removed.percentage ? removed.percentage : 0);
+        state.taxDraftOptions.splice(idx, 1);
+
+        if (state.taxDraftIncludeNew && taxRatesEqual(state.taxDraftDefaultRate, removedRate)) {
+            if (state.taxDraftOptions.length > 0) {
+                state.taxDraftDefaultRate = taxRateToNumber(state.taxDraftOptions[0].percentage);
+            } else {
+                state.taxDraftDefaultRate = 0;
+                state.taxDraftIncludeNew = false;
+            }
+        }
+
+        if (state.taxDraftOptions.length === 0) {
+            state.taxDraftIncludeNew = false;
+            state.taxDraftDefaultRate = 0;
+        }
+
+        renderTaxesTable();
+        renderTaxEditor(null, -1);
+        if (shouldPersist) {
+            const ok = await saveSettingsSection('taxes', {
+                useGlobalStatus: false,
+                savingMessage: 'Guardando eliminacion del impuesto...',
+                onError: function (err) {
+                    setTaxStatus(err && err.message ? err.message : 'No se pudo eliminar el impuesto.', true);
+                }
+            });
+            if (ok) {
+                setTaxStatus('Impuesto eliminado correctamente.', false);
+            }
+        } else {
+            setTaxStatus('Impuesto eliminado correctamente.', false);
+        }
+        return true;
+    }
+
     function setStatus(message, isError) {
         if (!statusNode) {
             return;
         }
         statusNode.textContent = message || '';
         statusNode.style.color = isError ? '#b91c1c' : '#0f766e';
+    }
+
+    function setTaxStatus(message, isError) {
+        if (!taxStatusNode) {
+            return;
+        }
+        taxStatusNode.textContent = message || '';
+        taxStatusNode.style.color = isError ? '#b91c1c' : '#0f766e';
     }
 
     async function apiGet(action) {
@@ -186,19 +392,9 @@
         $('#cfg-ticket-extra-bottom').val(ticket.extra_bottom_line || '');
         $('#cfg-ticket-logo-url').val(ticket.logo_url || '');
 
-        const taxOptions = Array.isArray(taxes.iva_options)
-            ? taxes.iva_options.map(normalizeTaxOption).filter(Boolean)
-            : [];
-        const defaultRate = Number(taxes.default_vat || 0);
-        const defaultOption = taxOptions.find(function (option) {
-            return Math.abs(Number(option.percentage || 0) - defaultRate) < 0.0001;
-        });
-
-        $('#cfg-tax-name').val((defaultOption && defaultOption.name) || taxes.vat_name || 'IVA');
-        $('#cfg-tax-rate').val(defaultRate);
+        loadTaxesDraftFromSettings(taxes);
         $('#cfg-tax-enabled').prop('checked', taxes.enabled !== false);
         $('#cfg-tax-country').val(taxes.country || 'EC');
-        $('#cfg-tax-include-new').prop('checked', !!taxes.included_new_products);
         $('#cfg-tax-breakdown-ticket').prop('checked', taxes.breakdown_on_ticket !== false);
         $('#cfg-tax-prices-include').prop('checked', !!taxes.prices_include_taxes);
         $('#cfg-tax-withholding-mode').val(taxes.withholding_mode || 'none');
@@ -240,32 +436,14 @@
     }
 
     function collectSettings() {
-        const currentTaxes = (state.settings && state.settings.taxes) ? state.settings.taxes : {};
-        const existingTaxOptions = Array.isArray(currentTaxes.iva_options)
-            ? currentTaxes.iva_options.map(normalizeTaxOption).filter(Boolean)
-            : [];
-        const selectedRate = Number($('#cfg-tax-rate').val() || 0);
-        const rawTaxName = ($('#cfg-tax-name').val() || '').toString().trim() || 'IVA';
-        const selectedName = rawTaxName.replace(/\s*\d+([.,]\d+)?\s*%$/i, '').trim() || rawTaxName;
-        const selectedTaxLabel = selectedName + ' ' + selectedRate + '%';
-        const selectedInclude = $('#cfg-tax-include-new').is(':checked');
-
-        if (selectedRate > 0) {
-            const idx = existingTaxOptions.findIndex(function (opt) {
-                return Math.abs(Number(opt.percentage || 0) - selectedRate) < 0.0001;
-            });
-            if (idx >= 0) {
-                existingTaxOptions[idx].name = selectedTaxLabel;
-                existingTaxOptions[idx].active = true;
-            } else {
-                existingTaxOptions.push({
-                    id: '',
-                    name: selectedTaxLabel,
-                    percentage: selectedRate,
-                    active: true,
-                });
-            }
-        }
+        const editorName = ($('#cfg-tax-name').val() || '').toString().trim();
+        const taxOptions = Array.isArray(state.taxDraftOptions) ? state.taxDraftOptions.slice() : [];
+        const selectedRate = state.taxDraftIncludeNew ? taxRateToNumber(state.taxDraftDefaultRate) : 0;
+        const defaultOption = taxOptions.find(function (opt) {
+            return taxRatesEqual(opt.percentage, selectedRate);
+        }) || null;
+        const selectedName = taxNameWithoutRate((defaultOption && defaultOption.name) || editorName || 'IVA') || 'IVA';
+        const selectedInclude = !!state.taxDraftIncludeNew && selectedRate > 0;
 
         return {
             enabledOptions: {
@@ -310,7 +488,7 @@
                 breakdown_on_ticket: $('#cfg-tax-breakdown-ticket').is(':checked'),
                 prices_include_taxes: $('#cfg-tax-prices-include').is(':checked'),
                 withholding_mode: ($('#cfg-tax-withholding-mode').val() || 'none').toString(),
-                iva_options: existingTaxOptions,
+                iva_options: taxOptions,
             },
             corte: {
                 allow_negative_close: $('#cfg-corte-negative').is(':checked'),
@@ -676,18 +854,31 @@
         };
     }
 
-    async function saveSettingsSection(section) {
+    async function saveSettingsSection(section, messages) {
+        const msg = messages && typeof messages === 'object' ? messages : {};
+        const useGlobalStatus = msg.useGlobalStatus !== false;
         try {
-            setStatus('Guardando configuración...', false);
+            if (useGlobalStatus) {
+                setStatus(msg.savingMessage || 'Guardando configuración...', false);
+            }
             const all = collectSettings();
             const payloadSettings = {};
             payloadSettings[section] = all[section];
             const data = await apiPost('save_settings', { settings: payloadSettings });
             state.settings = data.settings || state.settings;
             fillSettingsForm();
-            setStatus('Configuración guardada', false);
+            if (useGlobalStatus) {
+                setStatus(msg.successMessage || 'Configuración guardada', false);
+            }
+            return true;
         } catch (err) {
-            setStatus(err.message || 'No se pudo guardar', true);
+            if (useGlobalStatus) {
+                setStatus(err.message || 'No se pudo guardar', true);
+            }
+            if (msg.onError && typeof msg.onError === 'function') {
+                msg.onError(err);
+            }
+            return false;
         }
     }
 
@@ -746,7 +937,38 @@
         $('#cfg-save-boxes').on('click', function () { saveSettingsSection('boxes'); });
         $('#cfg-save-branding').on('click', function () { saveSettingsSection('branding'); });
         $('#cfg-save-ticket').on('click', function () { saveSettingsSection('ticket'); });
-        $('#cfg-save-tax').on('click', function () { saveSettingsSection('taxes'); });
+        $('#cfg-tax-add-btn').on('click', async function () {
+            await upsertTaxFromEditor(true);
+        });
+        $('#cfg-tax-clear-btn').on('click', function () {
+            renderTaxEditor(null, -1);
+            setTaxStatus('Editor de impuesto limpio.', false);
+        });
+        $('#cfg-save-tax').on('click', async function () {
+            const ok = await saveSettingsSection('taxes', {
+                useGlobalStatus: false,
+                savingMessage: 'Guardando preferencias de impuestos...',
+                onError: function (err) {
+                    setTaxStatus(err && err.message ? err.message : 'No se pudo guardar las preferencias de impuestos.', true);
+                }
+            });
+            if (ok) {
+                setTaxStatus('Preferencias de impuestos guardadas correctamente.', false);
+            }
+        });
+        $(root).on('click', '.cfg-tax-edit-btn', function () {
+            const idx = Number($(this).data('tax-idx'));
+            const tax = Array.isArray(state.taxDraftOptions) ? state.taxDraftOptions[idx] : null;
+            if (!tax) {
+                return;
+            }
+            renderTaxEditor(tax, idx);
+            setTaxStatus('Editando impuesto. Actualiza y presiona "Guardar impuesto".', false);
+        });
+        $(root).on('click', '.cfg-tax-delete-btn', async function () {
+            const idx = Number($(this).data('tax-idx'));
+            await deleteTaxByIndex(idx, true);
+        });
         $('#cfg-save-corte').on('click', function () { saveSettingsSection('corte'); });
         $('#cfg-save-units').on('click', function () { saveSettingsSection('units'); });
         $('#cfg-save-printer').on('click', function () { saveSettingsSection('devices'); });
@@ -822,3 +1044,4 @@
 
     init();
 })();
+

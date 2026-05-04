@@ -29,15 +29,6 @@ function enviarSRI(array $document): array
         throw new RuntimeException($message);
     }
 
-    if (($signature['signatureMode'] ?? 'mock') === 'mock') {
-        $document['sri']['receptionStatus'] = 'RECIBIDA';
-        $document['sri']['response'] = ['mode' => 'mock', 'message' => 'Comprobante recibido en modo de prueba'];
-        $document['status'] = 'sent';
-        $document['updatedAt'] = date('c');
-        facturacionAppendLog('info', 'Envio SRI mock ejecutado', ['documentId' => $document['id'] ?? null]);
-        return $document;
-    }
-
     if (!class_exists('SoapClient')) {
         $runtime = 'PHP=' . PHP_VERSION . ' | SAPI=' . PHP_SAPI . ' | BIN=' . PHP_BINARY;
         throw new RuntimeException(

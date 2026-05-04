@@ -251,15 +251,6 @@ function firmarXML(array $document): array
     }
     $target = $signedDir . DIRECTORY_SEPARATOR . (string) $document['accessKey'] . '.xml';
 
-    if (($signature['signatureMode'] ?? 'mock') === 'mock') {
-        copy($source, $target);
-        $document['files']['signedXml'] = $target;
-        $document['status'] = 'signed';
-        $document['updatedAt'] = date('c');
-        facturacionAppendLog('info', 'XML firmado en modo mock', ['documentId' => $document['id'] ?? null]);
-        return $document;
-    }
-
     $certificatePath = trim((string) ($signature['certificatePath'] ?? ''));
     $certificatePassword = (string) ($signature['certificatePassword'] ?? '');
     if ($certificatePath === '' || !file_exists($certificatePath)) {
@@ -373,9 +364,7 @@ function firmarXML(array $document): array
         $signatureValueNode->setAttribute('Id', $signatureValueId);
     }
 
-    if ($dom->save($target) === false) {
-        throw new RuntimeException('No se pudo guardar el XML firmado.');
-    }
+    facturacionSaveSignedXml($dom, $target);
 
     $document['files']['signedXml'] = $target;
     $document['status'] = 'signed';
@@ -387,4 +376,48 @@ function firmarXML(array $document): array
     ]);
 
     return $document;
+}
+
+function facturacionSaveSignedXml(DOMDocument $dom, string $target): void
+{
+    $dir = dirname($target);
+    if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
+        throw new RuntimeException('No se pudo crear la carpeta para el XML firmado: ' . $dir);
+    }
+
+    if (!is_writable($dir)) {
+        throw new RuntimeException('La carpeta de XML firmados no tiene permisos de escritura: ' . $dir);
+    }
+
+    $tempPath = tempnam($dir, 'signed-');
+    if ($tempPath === false) {
+        throw new RuntimeException('No se pudo crear archivo temporal para el XML firmado en: ' . $dir);
+    }
+
+    try {
+        if ($dom->save($tempPath) === false || !file_exists($tempPath) || filesize($tempPath) === 0) {
+            throw new RuntimeException('No se pudo escribir el contenido del XML firmado temporal.');
+        }
+
+        if (file_exists($target) && !is_writable($target)) {
+            throw new RuntimeException('El archivo XML firmado existente no tiene permisos de escritura: ' . $target);
+        }
+
+        if (@rename($tempPath, $target)) {
+            $tempPath = '';
+            return;
+        }
+
+        if (@copy($tempPath, $target)) {
+            @unlink($tempPath);
+            $tempPath = '';
+            return;
+        }
+
+        throw new RuntimeException('No se pudo mover el XML firmado al destino final: ' . $target);
+    } finally {
+        if ($tempPath !== '' && file_exists($tempPath)) {
+            @unlink($tempPath);
+        }
+    }
 }

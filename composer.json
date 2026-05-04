@@ -15,6 +15,7 @@
     ],
     "minimum-stability": "stable",
     "require": {
-        "robrichards/xmlseclibs": "^3.1"
+        "robrichards/xmlseclibs": "^3.1",
+        "dompdf/dompdf": "3.0"
     }
 }

@@ -1,14 +1,14 @@
 <section class="facturacion-card" id="facturacion-firma-page">
   <div class="facturacion-card-head">
     <h3>Perfil y firma</h3>
-    <p>Configuracion de certificado digital, modo de firma y despacho por correo.</p>
+    <p>Configuracion del certificado digital, modo SRI y despacho por correo.</p>
   </div>
   <form class="facturacion-form facturacion-grid-3" id="facturacion-firma-form">
     <label class="factura-field">
-      <span>Modo de firma</span>
+      <span>Modo SRI</span>
       <select name="signatureMode">
-        <option value="mock">Mock / pruebas</option>
-        <option value="real">Real</option>
+        <option value="mock">Pruebas SRI</option>
+        <option value="real">Produccion SRI</option>
       </select>
     </label>
     <label class="factura-field factura-field--wide">
@@ -45,7 +45,7 @@
     </label>
   </form>
   <div class="facturacion-note">
-    La firma real requiere integrar <code>xmlseclibs</code> con XAdES-BES. Mientras tanto el modo mock permite probar el flujo completo sin salir del POS.
+    Ambos modos firman y consumen servicios reales del SRI. <code>Pruebas SRI</code> usa certificacion y <code>Produccion SRI</code> usa el ambiente productivo.
   </div>
   <div class="facturacion-card-footer">
     <div class="facturacion-status" id="facturacion-firma-status"></div>

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
+require_once __DIR__ . '/../utils/db.php';
 
 date_default_timezone_set('America/Guayaquil');
 
@@ -76,9 +77,9 @@ function facturacionAppendLog(string $level, string $message, array $context = [
         $rows = array_slice($rows, -3000);
     }
     facturacionWriteJson('logs.json', $rows);
-    if (!function_exists('dbEnabled') || !dbEnabled()) {
-        facturacionWriteJsonDisk('logs.json', $rows);
-    }
+    // Mantener siempre una copia en disco para depuracion y revisiones manuales,
+    // incluso cuando el almacenamiento principal este mapeado a BD.
+    facturacionWriteJsonDisk('logs.json', $rows);
 }
 
 function facturacionDefaultEmitter(): array
@@ -113,6 +114,51 @@ function facturacionDefaultSignature(): array
     ];
 }
 
+function facturacionNormalizeSignatureMode(string $mode): string
+{
+    return in_array($mode, ['mock', 'real'], true) ? $mode : 'mock';
+}
+
+function facturacionEnvironmentFromSignatureMode(string $mode): string
+{
+    return facturacionNormalizeSignatureMode($mode) === 'real' ? '2' : '1';
+}
+
+function facturacionResolveCertificatePath(string $path): string
+{
+    $candidate = trim($path);
+    if ($candidate === '') {
+        return '';
+    }
+
+    if (file_exists($candidate)) {
+        return $candidate;
+    }
+
+    $normalized = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $candidate);
+    $marker = DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'facturacion' . DIRECTORY_SEPARATOR . 'certificados' . DIRECTORY_SEPARATOR;
+    $markerPos = stripos($normalized, $marker);
+    if ($markerPos !== false) {
+        $relative = substr($normalized, $markerPos + strlen($marker));
+        if (is_string($relative) && $relative !== '') {
+            $rebased = facturacionCertificatesDir() . DIRECTORY_SEPARATOR . ltrim($relative, DIRECTORY_SEPARATOR);
+            if (file_exists($rebased)) {
+                return $rebased;
+            }
+        }
+    }
+
+    $basename = basename($candidate);
+    if ($basename !== '' && $basename !== '.' && $basename !== '..') {
+        $byName = facturacionCertificatesDir() . DIRECTORY_SEPARATOR . $basename;
+        if (file_exists($byName)) {
+            return $byName;
+        }
+    }
+
+    return $candidate;
+}
+
 function facturacionLoadEmitter(): array
 {
     return array_merge(facturacionDefaultEmitter(), facturacionReadJson('emisor.json', []));
@@ -142,7 +188,9 @@ function facturacionSaveEmitter(array $data): array
 
 function facturacionLoadSignature(): array
 {
-    return array_merge(facturacionDefaultSignature(), facturacionReadJson('firma.json', []));
+    $signature = array_merge(facturacionDefaultSignature(), facturacionReadJson('firma.json', []));
+    $signature['certificatePath'] = facturacionResolveCertificatePath((string)($signature['certificatePath'] ?? ''));
+    return $signature;
 }
 
 function facturacionCertificatesDir(): string
@@ -193,7 +241,7 @@ function facturacionSaveSignature(array $data): array
     $incomingCertificatePassword = (string)($data['certificatePassword'] ?? '');
 
     $next = array_merge($current, [
-        'signatureMode' => in_array((string)($data['signatureMode'] ?? 'mock'), ['mock', 'real'], true) ? (string)$data['signatureMode'] : 'mock',
+        'signatureMode' => facturacionNormalizeSignatureMode((string)($data['signatureMode'] ?? 'mock')),
         // Keep previous certificate data when form submits empty values.
         'certificatePath' => $incomingCertificatePath !== '' ? $incomingCertificatePath : (string)($current['certificatePath'] ?? ''),
         'certificatePassword' => $incomingCertificatePassword !== '' ? $incomingCertificatePassword : (string)($current['certificatePassword'] ?? ''),
@@ -327,13 +375,539 @@ function facturacionSyncProductServicesFromProducts(): array
     return $rows;
 }
 
+function facturacionCanUseDb(): bool
+{
+    static $ready = null;
+    if ($ready !== null) {
+        return $ready;
+    }
+
+    $ready = false;
+    if (!function_exists('dbEnabled') || !dbEnabled() || !function_exists('db')) {
+        return false;
+    }
+
+    try {
+        facturacionEnsureDbSchema();
+        $ready = true;
+    } catch (Throwable $e) {
+        facturacionAppendLog('warning', 'No se pudo inicializar esquema SQL de facturacion. Se usara JSON.', [
+            'error' => $e->getMessage(),
+        ]);
+        $ready = false;
+    }
+
+    return $ready;
+}
+
+function facturacionEnsureDbSchema(): void
+{
+    $pdo = db();
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS (
+            ID VARCHAR(32) NOT NULL,
+            DOC_TYPE VARCHAR(8) NOT NULL DEFAULT '01',
+            DOC_NAME VARCHAR(80) NOT NULL DEFAULT 'Factura',
+            STATUS VARCHAR(40) NOT NULL DEFAULT 'draft',
+            CREATED_AT DATETIME NULL,
+            UPDATED_AT DATETIME NULL,
+            ENVIRONMENT VARCHAR(4) NULL,
+            ISSUE_DATE VARCHAR(20) NULL,
+            ISSUE_DATE_KEY VARCHAR(20) NULL,
+            ESTABLISHMENT_ID VARCHAR(40) NULL,
+            ESTAB VARCHAR(8) NULL,
+            PTO_EMI VARCHAR(8) NULL,
+            SECUENCIAL VARCHAR(16) NULL,
+            CODIGO_NUMERICO VARCHAR(16) NULL,
+            ACCESS_KEY VARCHAR(64) NULL,
+            GUIDE_NUMBER VARCHAR(40) NULL,
+            IS_NEGOTIABLE TINYINT(1) NOT NULL DEFAULT 0,
+            ORIGIN_SALE_ID VARCHAR(64) NULL,
+            BUYER_IDENTIFICATION VARCHAR(32) NULL,
+            BUYER_IDENTIFICATION_TYPE VARCHAR(40) NULL,
+            BUYER_RAZON_SOCIAL VARCHAR(255) NULL,
+            BUYER_ADDRESS VARCHAR(255) NULL,
+            BUYER_PHONE VARCHAR(64) NULL,
+            BUYER_EMAIL VARCHAR(255) NULL,
+            EMITTER_JSON LONGTEXT NULL,
+            POINT_JSON LONGTEXT NULL,
+            TOTALS_JSON LONGTEXT NULL,
+            FILES_JSON LONGTEXT NULL,
+            SRI_JSON LONGTEXT NULL,
+            DOCUMENT_JSON LONGTEXT NULL,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_DOC_ACCESS_KEY (ACCESS_KEY),
+            KEY IDX_FACT_ELEC_DOC_STATUS (STATUS),
+            KEY IDX_FACT_ELEC_DOC_ISSUE_DATE (ISSUE_DATE_KEY)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS_DETALLE (
+            ID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            DOCUMENT_ID VARCHAR(32) NOT NULL,
+            LINE_NO INT NOT NULL,
+            PRODUCT_ID VARCHAR(64) NULL,
+            CODIGO_PRINCIPAL VARCHAR(64) NULL,
+            CODIGO_AUXILIAR VARCHAR(64) NULL,
+            DESCRIPCION VARCHAR(255) NULL,
+            CANTIDAD DECIMAL(14,4) NOT NULL DEFAULT 0,
+            PRECIO_UNITARIO DECIMAL(14,6) NOT NULL DEFAULT 0,
+            DESCUENTO DECIMAL(14,2) NOT NULL DEFAULT 0,
+            PRECIO_TOTAL_SIN_IMPUESTO DECIMAL(14,2) NOT NULL DEFAULT 0,
+            IVA_LABEL VARCHAR(16) NULL,
+            TAX_CODE VARCHAR(8) NULL,
+            TAX_PERCENT_CODE VARCHAR(8) NULL,
+            TAX_RATE DECIMAL(9,4) NOT NULL DEFAULT 0,
+            TAX_VALUE DECIMAL(14,2) NOT NULL DEFAULT 0,
+            ICE_VALUE DECIMAL(14,2) NOT NULL DEFAULT 0,
+            RAW_JSON LONGTEXT NULL,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_DET_DOC_LINE (DOCUMENT_ID, LINE_NO),
+            KEY IDX_FACT_ELEC_DET_DOC (DOCUMENT_ID),
+            CONSTRAINT FK_FACT_ELEC_DET_DOC
+                FOREIGN KEY (DOCUMENT_ID) REFERENCES FACT_ELEC_DOCUMENTOS(ID)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS_PAGOS (
+            ID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            DOCUMENT_ID VARCHAR(32) NOT NULL,
+            LINE_NO INT NOT NULL,
+            FORMA_PAGO VARCHAR(8) NULL,
+            LABEL_NAME VARCHAR(80) NULL,
+            TOTAL DECIMAL(14,2) NOT NULL DEFAULT 0,
+            PLAZO INT NOT NULL DEFAULT 0,
+            UNIDAD_TIEMPO VARCHAR(20) NULL,
+            RAW_JSON LONGTEXT NULL,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_PAY_DOC_LINE (DOCUMENT_ID, LINE_NO),
+            KEY IDX_FACT_ELEC_PAY_DOC (DOCUMENT_ID),
+            CONSTRAINT FK_FACT_ELEC_PAY_DOC
+                FOREIGN KEY (DOCUMENT_ID) REFERENCES FACT_ELEC_DOCUMENTOS(ID)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS_ADICIONALES (
+            ID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            DOCUMENT_ID VARCHAR(32) NOT NULL,
+            LINE_NO INT NOT NULL,
+            FIELD_NAME VARCHAR(255) NOT NULL,
+            FIELD_VALUE TEXT NULL,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_ADD_DOC_LINE (DOCUMENT_ID, LINE_NO),
+            KEY IDX_FACT_ELEC_ADD_DOC (DOCUMENT_ID),
+            CONSTRAINT FK_FACT_ELEC_ADD_DOC
+                FOREIGN KEY (DOCUMENT_ID) REFERENCES FACT_ELEC_DOCUMENTOS(ID)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS_IMPUESTOS (
+            ID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            DOCUMENT_ID VARCHAR(32) NOT NULL,
+            LINE_NO INT NOT NULL,
+            CODIGO VARCHAR(8) NULL,
+            CODIGO_PORCENTAJE VARCHAR(8) NULL,
+            TARIFA DECIMAL(9,4) NOT NULL DEFAULT 0,
+            BASE_IMPONIBLE DECIMAL(14,2) NOT NULL DEFAULT 0,
+            VALOR DECIMAL(14,2) NOT NULL DEFAULT 0,
+            RAW_JSON LONGTEXT NULL,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_TAX_DOC_LINE (DOCUMENT_ID, LINE_NO),
+            KEY IDX_FACT_ELEC_TAX_DOC (DOCUMENT_ID),
+            CONSTRAINT FK_FACT_ELEC_TAX_DOC
+                FOREIGN KEY (DOCUMENT_ID) REFERENCES FACT_ELEC_DOCUMENTOS(ID)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+}
+
+function facturacionEncodeJson(mixed $value): string
+{
+    $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (!is_string($encoded) || $encoded === '') {
+        return '{}';
+    }
+    return $encoded;
+}
+
+function facturacionDecodeJson(mixed $value, mixed $default): mixed
+{
+    if (!is_string($value) || trim($value) === '') {
+        return $default;
+    }
+    $decoded = json_decode($value, true);
+    return $decoded === null ? $default : $decoded;
+}
+
+function facturacionIsoToDbDateTime(?string $value): ?string
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+    $ts = strtotime($raw);
+    if ($ts === false) {
+        return null;
+    }
+    return date('Y-m-d H:i:s', $ts);
+}
+
+function facturacionDbDateTimeToIso(?string $value): string
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return '';
+    }
+    $ts = strtotime($raw);
+    if ($ts === false) {
+        return '';
+    }
+    return date('c', $ts);
+}
+
+function facturacionDocumentFromDbRow(array $row): array
+{
+    $snapshot = facturacionDecodeJson($row['DOCUMENT_JSON'] ?? '', []);
+    if (is_array($snapshot) && $snapshot !== []) {
+        return $snapshot;
+    }
+
+    return [
+        'id' => (string)($row['ID'] ?? ''),
+        'docType' => (string)($row['DOC_TYPE'] ?? '01'),
+        'docName' => (string)($row['DOC_NAME'] ?? 'Factura'),
+        'status' => (string)($row['STATUS'] ?? 'draft'),
+        'createdAt' => facturacionDbDateTimeToIso((string)($row['CREATED_AT'] ?? '')),
+        'updatedAt' => facturacionDbDateTimeToIso((string)($row['UPDATED_AT'] ?? '')),
+        'environment' => (string)($row['ENVIRONMENT'] ?? ''),
+        'issueDate' => (string)($row['ISSUE_DATE'] ?? ''),
+        'issueDateKey' => (string)($row['ISSUE_DATE_KEY'] ?? ''),
+        'establishmentId' => (string)($row['ESTABLISHMENT_ID'] ?? ''),
+        'estab' => (string)($row['ESTAB'] ?? ''),
+        'ptoEmi' => (string)($row['PTO_EMI'] ?? ''),
+        'secuencial' => (string)($row['SECUENCIAL'] ?? ''),
+        'codigoNumerico' => (string)($row['CODIGO_NUMERICO'] ?? ''),
+        'accessKey' => (string)($row['ACCESS_KEY'] ?? ''),
+        'guideNumber' => (string)($row['GUIDE_NUMBER'] ?? ''),
+        'isNegotiable' => (bool)($row['IS_NEGOTIABLE'] ?? false),
+        'originSaleId' => (string)($row['ORIGIN_SALE_ID'] ?? ''),
+        'buyer' => [
+            'identification' => (string)($row['BUYER_IDENTIFICATION'] ?? ''),
+            'identificationType' => (string)($row['BUYER_IDENTIFICATION_TYPE'] ?? ''),
+            'razonSocial' => (string)($row['BUYER_RAZON_SOCIAL'] ?? ''),
+            'address' => (string)($row['BUYER_ADDRESS'] ?? ''),
+            'phone' => (string)($row['BUYER_PHONE'] ?? ''),
+            'email' => (string)($row['BUYER_EMAIL'] ?? ''),
+        ],
+        'emitter' => facturacionDecodeJson($row['EMITTER_JSON'] ?? '', []),
+        'point' => facturacionDecodeJson($row['POINT_JSON'] ?? '', []),
+        'totals' => facturacionDecodeJson($row['TOTALS_JSON'] ?? '', []),
+        'files' => facturacionDecodeJson($row['FILES_JSON'] ?? '', []),
+        'sri' => facturacionDecodeJson($row['SRI_JSON'] ?? '', []),
+        'details' => [],
+        'payments' => [],
+        'additionalFields' => [],
+    ];
+}
+
+function facturacionPersistDocumentDb(array $document): array
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+
+    try {
+        $createdAt = facturacionIsoToDbDateTime((string)($document['createdAt'] ?? date('c')));
+        $document['updatedAt'] = date('c');
+        $updatedAt = facturacionIsoToDbDateTime((string)$document['updatedAt']);
+
+        $upsert = $pdo->prepare(
+            "INSERT INTO FACT_ELEC_DOCUMENTOS (
+                ID, DOC_TYPE, DOC_NAME, STATUS, CREATED_AT, UPDATED_AT, ENVIRONMENT, ISSUE_DATE, ISSUE_DATE_KEY,
+                ESTABLISHMENT_ID, ESTAB, PTO_EMI, SECUENCIAL, CODIGO_NUMERICO, ACCESS_KEY, GUIDE_NUMBER, IS_NEGOTIABLE,
+                ORIGIN_SALE_ID, BUYER_IDENTIFICATION, BUYER_IDENTIFICATION_TYPE, BUYER_RAZON_SOCIAL, BUYER_ADDRESS,
+                BUYER_PHONE, BUYER_EMAIL, EMITTER_JSON, POINT_JSON, TOTALS_JSON, FILES_JSON, SRI_JSON, DOCUMENT_JSON
+            ) VALUES (
+                :id, :doc_type, :doc_name, :status, :created_at, :updated_at, :environment, :issue_date, :issue_date_key,
+                :establishment_id, :estab, :pto_emi, :secuencial, :codigo_numerico, :access_key, :guide_number, :is_negotiable,
+                :origin_sale_id, :buyer_identification, :buyer_identification_type, :buyer_razon_social, :buyer_address,
+                :buyer_phone, :buyer_email, :emitter_json, :point_json, :totals_json, :files_json, :sri_json, :document_json
+            )
+            ON DUPLICATE KEY UPDATE
+                DOC_TYPE = VALUES(DOC_TYPE),
+                DOC_NAME = VALUES(DOC_NAME),
+                STATUS = VALUES(STATUS),
+                UPDATED_AT = VALUES(UPDATED_AT),
+                ENVIRONMENT = VALUES(ENVIRONMENT),
+                ISSUE_DATE = VALUES(ISSUE_DATE),
+                ISSUE_DATE_KEY = VALUES(ISSUE_DATE_KEY),
+                ESTABLISHMENT_ID = VALUES(ESTABLISHMENT_ID),
+                ESTAB = VALUES(ESTAB),
+                PTO_EMI = VALUES(PTO_EMI),
+                SECUENCIAL = VALUES(SECUENCIAL),
+                CODIGO_NUMERICO = VALUES(CODIGO_NUMERICO),
+                ACCESS_KEY = VALUES(ACCESS_KEY),
+                GUIDE_NUMBER = VALUES(GUIDE_NUMBER),
+                IS_NEGOTIABLE = VALUES(IS_NEGOTIABLE),
+                ORIGIN_SALE_ID = VALUES(ORIGIN_SALE_ID),
+                BUYER_IDENTIFICATION = VALUES(BUYER_IDENTIFICATION),
+                BUYER_IDENTIFICATION_TYPE = VALUES(BUYER_IDENTIFICATION_TYPE),
+                BUYER_RAZON_SOCIAL = VALUES(BUYER_RAZON_SOCIAL),
+                BUYER_ADDRESS = VALUES(BUYER_ADDRESS),
+                BUYER_PHONE = VALUES(BUYER_PHONE),
+                BUYER_EMAIL = VALUES(BUYER_EMAIL),
+                EMITTER_JSON = VALUES(EMITTER_JSON),
+                POINT_JSON = VALUES(POINT_JSON),
+                TOTALS_JSON = VALUES(TOTALS_JSON),
+                FILES_JSON = VALUES(FILES_JSON),
+                SRI_JSON = VALUES(SRI_JSON),
+                DOCUMENT_JSON = VALUES(DOCUMENT_JSON)"
+        );
+
+        $buyer = is_array($document['buyer'] ?? null) ? $document['buyer'] : [];
+        $upsert->execute([
+            ':id' => (string)($document['id'] ?? ''),
+            ':doc_type' => (string)($document['docType'] ?? '01'),
+            ':doc_name' => (string)($document['docName'] ?? 'Factura'),
+            ':status' => (string)($document['status'] ?? 'draft'),
+            ':created_at' => $createdAt,
+            ':updated_at' => $updatedAt,
+            ':environment' => (string)($document['environment'] ?? ''),
+            ':issue_date' => (string)($document['issueDate'] ?? ''),
+            ':issue_date_key' => (string)($document['issueDateKey'] ?? ''),
+            ':establishment_id' => (string)($document['establishmentId'] ?? ''),
+            ':estab' => (string)($document['estab'] ?? ''),
+            ':pto_emi' => (string)($document['ptoEmi'] ?? ''),
+            ':secuencial' => (string)($document['secuencial'] ?? ''),
+            ':codigo_numerico' => (string)($document['codigoNumerico'] ?? ''),
+            ':access_key' => (string)($document['accessKey'] ?? ''),
+            ':guide_number' => (string)($document['guideNumber'] ?? ''),
+            ':is_negotiable' => !empty($document['isNegotiable']) ? 1 : 0,
+            ':origin_sale_id' => (string)($document['originSaleId'] ?? ''),
+            ':buyer_identification' => (string)($buyer['identification'] ?? ''),
+            ':buyer_identification_type' => (string)($buyer['identificationType'] ?? ''),
+            ':buyer_razon_social' => (string)($buyer['razonSocial'] ?? ''),
+            ':buyer_address' => (string)($buyer['address'] ?? ''),
+            ':buyer_phone' => (string)($buyer['phone'] ?? ''),
+            ':buyer_email' => (string)($buyer['email'] ?? ''),
+            ':emitter_json' => facturacionEncodeJson($document['emitter'] ?? []),
+            ':point_json' => facturacionEncodeJson($document['point'] ?? []),
+            ':totals_json' => facturacionEncodeJson($document['totals'] ?? []),
+            ':files_json' => facturacionEncodeJson($document['files'] ?? []),
+            ':sri_json' => facturacionEncodeJson($document['sri'] ?? []),
+            ':document_json' => facturacionEncodeJson($document),
+        ]);
+
+        $documentId = (string)($document['id'] ?? '');
+        $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_DETALLE WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
+        $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_PAGOS WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
+        $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_ADICIONALES WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
+        $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_IMPUESTOS WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
+
+        $insertDetail = $pdo->prepare(
+            "INSERT INTO FACT_ELEC_DOCUMENTOS_DETALLE (
+                DOCUMENT_ID, LINE_NO, PRODUCT_ID, CODIGO_PRINCIPAL, CODIGO_AUXILIAR, DESCRIPCION,
+                CANTIDAD, PRECIO_UNITARIO, DESCUENTO, PRECIO_TOTAL_SIN_IMPUESTO, IVA_LABEL, TAX_CODE,
+                TAX_PERCENT_CODE, TAX_RATE, TAX_VALUE, ICE_VALUE, RAW_JSON
+            ) VALUES (
+                :document_id, :line_no, :product_id, :codigo_principal, :codigo_auxiliar, :descripcion,
+                :cantidad, :precio_unitario, :descuento, :precio_total_sin_impuesto, :iva_label, :tax_code,
+                :tax_percent_code, :tax_rate, :tax_value, :ice_value, :raw_json
+            )"
+        );
+        $lineNo = 1;
+        foreach (($document['details'] ?? []) as $detail) {
+            if (!is_array($detail)) {
+                continue;
+            }
+            $tax = is_array($detail['tax'] ?? null) ? $detail['tax'] : [];
+            $insertDetail->execute([
+                ':document_id' => $documentId,
+                ':line_no' => $lineNo,
+                ':product_id' => (string)($detail['productId'] ?? ''),
+                ':codigo_principal' => (string)($detail['codigoPrincipal'] ?? ''),
+                ':codigo_auxiliar' => (string)($detail['codigoAuxiliar'] ?? ''),
+                ':descripcion' => (string)($detail['descripcion'] ?? ''),
+                ':cantidad' => (float)($detail['cantidad'] ?? 0),
+                ':precio_unitario' => (float)($detail['precioUnitario'] ?? 0),
+                ':descuento' => (float)($detail['descuento'] ?? 0),
+                ':precio_total_sin_impuesto' => (float)($detail['precioTotalSinImpuesto'] ?? 0),
+                ':iva_label' => (string)($detail['iva'] ?? ''),
+                ':tax_code' => (string)($tax['codigo'] ?? ''),
+                ':tax_percent_code' => (string)($tax['codigoPorcentaje'] ?? ''),
+                ':tax_rate' => (float)($tax['tarifa'] ?? 0),
+                ':tax_value' => (float)($detail['taxValue'] ?? 0),
+                ':ice_value' => (float)($detail['valorICE'] ?? 0),
+                ':raw_json' => facturacionEncodeJson($detail),
+            ]);
+            $lineNo += 1;
+        }
+
+        $insertPayment = $pdo->prepare(
+            "INSERT INTO FACT_ELEC_DOCUMENTOS_PAGOS (
+                DOCUMENT_ID, LINE_NO, FORMA_PAGO, LABEL_NAME, TOTAL, PLAZO, UNIDAD_TIEMPO, RAW_JSON
+            ) VALUES (
+                :document_id, :line_no, :forma_pago, :label_name, :total, :plazo, :unidad_tiempo, :raw_json
+            )"
+        );
+        $lineNo = 1;
+        foreach (($document['payments'] ?? []) as $payment) {
+            if (!is_array($payment)) {
+                continue;
+            }
+            $insertPayment->execute([
+                ':document_id' => $documentId,
+                ':line_no' => $lineNo,
+                ':forma_pago' => (string)($payment['formaPago'] ?? ''),
+                ':label_name' => (string)($payment['label'] ?? ''),
+                ':total' => (float)($payment['total'] ?? 0),
+                ':plazo' => (int)($payment['plazo'] ?? 0),
+                ':unidad_tiempo' => (string)($payment['unidadTiempo'] ?? ''),
+                ':raw_json' => facturacionEncodeJson($payment),
+            ]);
+            $lineNo += 1;
+        }
+
+        $insertAdditional = $pdo->prepare(
+            "INSERT INTO FACT_ELEC_DOCUMENTOS_ADICIONALES (
+                DOCUMENT_ID, LINE_NO, FIELD_NAME, FIELD_VALUE
+            ) VALUES (
+                :document_id, :line_no, :field_name, :field_value
+            )"
+        );
+        $lineNo = 1;
+        foreach (($document['additionalFields'] ?? []) as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $insertAdditional->execute([
+                ':document_id' => $documentId,
+                ':line_no' => $lineNo,
+                ':field_name' => (string)($field['name'] ?? ''),
+                ':field_value' => (string)($field['value'] ?? ''),
+            ]);
+            $lineNo += 1;
+        }
+
+        $insertTaxGroup = $pdo->prepare(
+            "INSERT INTO FACT_ELEC_DOCUMENTOS_IMPUESTOS (
+                DOCUMENT_ID, LINE_NO, CODIGO, CODIGO_PORCENTAJE, TARIFA, BASE_IMPONIBLE, VALOR, RAW_JSON
+            ) VALUES (
+                :document_id, :line_no, :codigo, :codigo_porcentaje, :tarifa, :base_imponible, :valor, :raw_json
+            )"
+        );
+        $lineNo = 1;
+        $taxGroups = is_array(($document['totals'] ?? [])['taxGroups'] ?? null) ? $document['totals']['taxGroups'] : [];
+        foreach ($taxGroups as $taxGroup) {
+            if (!is_array($taxGroup)) {
+                continue;
+            }
+            $insertTaxGroup->execute([
+                ':document_id' => $documentId,
+                ':line_no' => $lineNo,
+                ':codigo' => (string)($taxGroup['codigo'] ?? ''),
+                ':codigo_porcentaje' => (string)($taxGroup['codigoPorcentaje'] ?? ''),
+                ':tarifa' => (float)($taxGroup['tarifa'] ?? 0),
+                ':base_imponible' => (float)($taxGroup['baseImponible'] ?? 0),
+                ':valor' => (float)($taxGroup['valor'] ?? 0),
+                ':raw_json' => facturacionEncodeJson($taxGroup),
+            ]);
+            $lineNo += 1;
+        }
+
+        $pdo->commit();
+        return $document;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function facturacionLoadDocumentsDb(): array
+{
+    $stmt = db()->query("SELECT * FROM FACT_ELEC_DOCUMENTOS ORDER BY CREATED_AT DESC, ID DESC");
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $documents = [];
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $documents[] = facturacionDocumentFromDbRow($row);
+    }
+    return $documents;
+}
+
+function facturacionFindDocumentDb(string $id): ?array
+{
+    $stmt = db()->prepare("SELECT * FROM FACT_ELEC_DOCUMENTOS WHERE ID = :id LIMIT 1");
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row) || $row === []) {
+        return null;
+    }
+    return facturacionDocumentFromDbRow($row);
+}
+
+function facturacionMigrateLegacyJsonDocumentsToDb(): void
+{
+    if (!facturacionCanUseDb()) {
+        return;
+    }
+
+    static $alreadyChecked = false;
+    if ($alreadyChecked) {
+        return;
+    }
+    $alreadyChecked = true;
+
+    $legacy = facturacionReadJson('documentos.json', []);
+    if (!is_array($legacy) || $legacy === []) {
+        return;
+    }
+
+    $countStmt = db()->query("SELECT COUNT(*) FROM FACT_ELEC_DOCUMENTOS");
+    $existing = (int)($countStmt ? $countStmt->fetchColumn() : 0);
+    if ($existing > 0) {
+        return;
+    }
+
+    foreach ($legacy as $document) {
+        if (!is_array($document) || !isset($document['id'])) {
+            continue;
+        }
+        facturacionPersistDocumentDb($document);
+    }
+}
+
 function facturacionLoadDocuments(): array
 {
+    if (facturacionCanUseDb()) {
+        facturacionMigrateLegacyJsonDocumentsToDb();
+        return facturacionLoadDocumentsDb();
+    }
     return facturacionReadJson('documentos.json', []);
 }
 
 function facturacionSaveDocuments(array $rows): void
 {
+    if (facturacionCanUseDb()) {
+        foreach ($rows as $row) {
+            if (!is_array($row) || !isset($row['id'])) {
+                continue;
+            }
+            facturacionPersistDocumentDb($row);
+        }
+        return;
+    }
     facturacionWriteJson('documentos.json', $rows);
 }
 
@@ -430,6 +1004,28 @@ function facturacionRound(float $value): float
     return round($value, 2);
 }
 
+/**
+ * Extrae base e impuesto desde un valor que ya incluye IVA.
+ * Se usa para evitar sumar nuevamente el impuesto al total del producto.
+ *
+ * @return array{base: float, tax: float}
+ */
+function facturacionSplitTaxIncluded(float $gross, float $ratePercent): array
+{
+    if ($gross <= 0 || $ratePercent <= 0) {
+        return ['base' => facturacionRound(max(0.0, $gross)), 'tax' => 0.0];
+    }
+
+    $factor = 1 + ($ratePercent / 100);
+    if ($factor <= 0) {
+        return ['base' => facturacionRound(max(0.0, $gross)), 'tax' => 0.0];
+    }
+
+    $base = facturacionRound($gross / $factor);
+    $tax = facturacionRound($gross - $base);
+    return ['base' => $base, 'tax' => $tax];
+}
+
 function facturacionFormatDecimal(float $value, int $scale = 2): string
 {
     return number_format($value, $scale, '.', '');
@@ -438,6 +1034,9 @@ function facturacionFormatDecimal(float $value, int $scale = 2): string
 function facturacionBuildInvoiceDocument(array $payload): array
 {
     $emitter = facturacionLoadEmitter();
+    $signature = facturacionLoadSignature();
+    $resolvedEnvironment = facturacionEnvironmentFromSignatureMode((string)($signature['signatureMode'] ?? 'mock'));
+    $emitter['ambiente'] = $resolvedEnvironment;
     $points = facturacionLoadPoints();
     $services = facturacionLoadProductServices();
     $documents = facturacionLoadDocuments();
@@ -464,7 +1063,7 @@ function facturacionBuildInvoiceDocument(array $payload): array
 
     $secuencial = str_pad((string)(((int)($point['secuencialActual'] ?? 0)) + 1), 9, '0', STR_PAD_LEFT);
     $codigoNumerico = str_pad((string)random_int(1, 99999999), 8, '0', STR_PAD_LEFT);
-    $accessKey = facturacionGenerateAccessKey($issueDateKey, '01', (string)$emitter['ruc'], (string)$emitter['ambiente'], (string)$point['estab'], (string)$point['ptoEmi'], $secuencial, $codigoNumerico, (string)$emitter['tipoEmision']);
+    $accessKey = facturacionGenerateAccessKey($issueDateKey, '01', (string)$emitter['ruc'], $resolvedEnvironment, (string)$point['estab'], (string)$point['ptoEmi'], $secuencial, $codigoNumerico, (string)$emitter['tipoEmision']);
 
     $serviceMap = [];
     foreach ($services as $service) {
@@ -482,16 +1081,20 @@ function facturacionBuildInvoiceDocument(array $payload): array
             continue;
         }
         $qty = max(0.0, (float)($item['cantidad'] ?? 0));
-        $price = max(0.0, (float)($item['precioUnitario'] ?? 0));
+        // El precio ingresado en UI se trata como precio final (impuesto incluido).
+        $inputUnitPrice = max(0.0, (float)($item['precioUnitario'] ?? 0));
         if ($qty <= 0) {
             continue;
         }
 
         $discount = max(0.0, (float)($item['descuento'] ?? 0));
-        $lineBase = facturacionRound(($qty * $price) - $discount);
+        $lineGross = facturacionRound(($qty * $inputUnitPrice) - $discount);
         $iva = trim((string)($item['iva'] ?? '0%'));
         $taxDef = facturacionTaxDefinition($iva);
-        $taxValue = facturacionRound($lineBase * ($taxDef['tarifa'] / 100));
+        $split = facturacionSplitTaxIncluded($lineGross, (float)($taxDef['tarifa'] ?? 0));
+        $lineBase = (float)($split['base'] ?? 0);
+        $taxValue = (float)($split['tax'] ?? 0);
+        $unitBasePrice = $qty > 0 ? round($lineBase / $qty, 6) : 0.0;
         $service = $serviceMap[(string)($item['productId'] ?? '')] ?? null;
         $iceValue = facturacionRound((float)($item['valorICE'] ?? ($service['iceValue'] ?? 0)));
 
@@ -501,7 +1104,8 @@ function facturacionBuildInvoiceDocument(array $payload): array
             'codigoAuxiliar' => trim((string)($item['codigoAuxiliar'] ?? ($service['codigoAuxiliar'] ?? ($item['barcode'] ?? '')))),
             'descripcion' => trim((string)($item['descripcion'] ?? '')),
             'cantidad' => $qty,
-            'precioUnitario' => $price,
+            // SRI requiere base imponible en detalle, no precio final con IVA.
+            'precioUnitario' => $unitBasePrice,
             'descuento' => $discount,
             'precioTotalSinImpuesto' => $lineBase,
             'iva' => $iva === '' ? '0%' : $iva,
@@ -618,7 +1222,7 @@ function facturacionBuildInvoiceDocument(array $payload): array
         'status' => 'draft',
         'createdAt' => date('c'),
         'updatedAt' => date('c'),
-        'environment' => (string)$emitter['ambiente'],
+        'environment' => $resolvedEnvironment,
         'issueDate' => $issueDateUi,
         'issueDateKey' => $issueDateKey,
         'establishmentId' => (string)$point['id'],
@@ -684,6 +1288,10 @@ function facturacionBuildInvoiceDocument(array $payload): array
 
 function facturacionPersistDocument(array $document): array
 {
+    if (facturacionCanUseDb()) {
+        return facturacionPersistDocumentDb($document);
+    }
+
     $rows = facturacionLoadDocuments();
     $updated = false;
     foreach ($rows as $index => $row) {
@@ -704,6 +1312,10 @@ function facturacionPersistDocument(array $document): array
 
 function facturacionFindDocument(string $id): ?array
 {
+    if (facturacionCanUseDb()) {
+        return facturacionFindDocumentDb($id);
+    }
+
     foreach (facturacionLoadDocuments() as $row) {
         if ((string)($row['id'] ?? '') === $id) {
             return $row;
@@ -1144,6 +1756,28 @@ function facturacionValidateSignedXmlStructure(string $xmlPath): array
     $xmlRaw = file_get_contents($xmlPath);
     if ($xmlRaw === false || stripos($xmlRaw, 'encoding="UTF-8"') === false) {
         $errors[] = 'El XML firmado debe declararse en UTF-8.';
+    }
+
+    $xsdPath = facturacionStoragePath('xsd_factura_sri/XML y XSD Factura/factura_V2.1.0.xsd');
+    $xmldsigXsdPath = facturacionStoragePath('xsd_factura_sri/XML y XSD Factura/xmldsig-core-schema.xsd');
+    if (!file_exists($xsdPath)) {
+        $errors[] = 'No se encontro el XSD oficial factura_V2.1.0.xsd para validar el comprobante.';
+    } elseif (!file_exists($xmldsigXsdPath)) {
+        $errors[] = 'No se encontro xmldsig-core-schema.xsd requerido por el XSD oficial.';
+    } else {
+        $previousUseErrors = libxml_use_internal_errors(true);
+        libxml_clear_errors();
+        $isValidSchema = $dom->schemaValidate($xsdPath);
+        if (!$isValidSchema) {
+            foreach (libxml_get_errors() as $libxmlError) {
+                $msg = trim((string)($libxmlError->message ?? ''));
+                if ($msg !== '') {
+                    $errors[] = 'XSD: ' . $msg;
+                }
+            }
+            libxml_clear_errors();
+        }
+        libxml_use_internal_errors($previousUseErrors);
     }
 
     return [

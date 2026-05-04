@@ -18,6 +18,7 @@ function legacyMappedRead(string $fileName): ?array
     try {
         return match ($base) {
             'users.json' => legacyReadEntityWithOverlay($base, 'legacyReadUsers'),
+            'sales.json' => legacyReadEntityWithOverlay($base, 'legacyReadDocumentStoreSalesCompat'),
             'products.json' => legacyReadEntityWithOverlay($base, 'legacyReadProducts'),
             'customers.json' => legacyReadEntityWithOverlay($base, 'legacyReadCustomers'),
             'departments.json' => legacyReadEntityWithOverlay($base, 'legacyReadDepartments'),
@@ -34,6 +35,17 @@ function legacyMappedRead(string $fileName): ?array
     } catch (Throwable $e) {
         return null;
     }
+}
+
+/** @return array<int|string, mixed> */
+function legacyReadDocumentStoreSalesCompat(): array
+{
+    $cached = legacyReadDocumentStore('app/sales.json');
+    if ($cached !== []) {
+        return $cached;
+    }
+
+    return legacyReadDocumentStore('sales.json');
 }
 
 function legacyMappedWrite(string $fileName, array $data): bool
@@ -1790,7 +1802,7 @@ function legacyWriteInventoryMovements(array $movements): bool
 function legacyReadCustomers(): array
 {
     $pdo = db();
-    $sql = 'SELECT c.ID, c.NOMBRES, c.APELLIDOS, c.EMAIL, c.TELEFONO, c.DOMICILIO1, c.DOMICILIO2,
+    $sql = 'SELECT c.ID, c.NOMBRES, c.APELLIDOS, c.IDENTIFICACION, c.EMAIL, c.TELEFONO, c.DOMICILIO1, c.DOMICILIO2,
                    c.PARROQUIA, c.CANTON, c.PROVINCIA, c.CODIGO_POSTAL, c.NOTAS,
                    IFNULL(cr.TIENE_CREDITO, 0) AS TIENE_CREDITO,
                    IFNULL(cr.LIMITE_CREDITO, 0) AS LIMITE_CREDITO,
@@ -1816,11 +1828,14 @@ function legacyReadCustomers(): array
         }
 
         $creditBalance = safeFloat($row['SALDO_ACTUAL'] ?? 0);
+        $taxId = trim((string)($row['IDENTIFICACION'] ?? ''));
         $out[] = [
             'id' => 'c-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT),
             'name' => $name,
             'firstName' => $first,
             'lastName' => $last,
+            'taxId' => $taxId,
+            'identification' => $taxId,
             'phone' => trim((string)($row['TELEFONO'] ?? '')),
             'email' => trim((string)($row['EMAIL'] ?? '')),
             'address1' => trim((string)($row['DOMICILIO1'] ?? '')),
@@ -1853,18 +1868,18 @@ function legacyWriteCustomers(array $customers): bool
         $exists = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2 WHERE ID = :id');
         $update = $pdo->prepare(
             'UPDATE CLIENTESV2
-             SET NOMBRES = :nombres, APELLIDOS = :apellidos, EMAIL = :email, TELEFONO = :telefono,
+             SET NOMBRES = :nombres, APELLIDOS = :apellidos, IDENTIFICACION = :identificacion, EMAIL = :email, TELEFONO = :telefono,
                  DOMICILIO1 = :dom1, DOMICILIO2 = :dom2, PARROQUIA = :parroquia, CANTON = :canton,
                  PROVINCIA = :provincia, CODIGO_POSTAL = :cp, NOTAS = :notas, ACTIVO = 1
              WHERE ID = :id'
         );
 
         $insert = $pdo->prepare(
-            'INSERT INTO CLIENTESV2 (ID, FOLIO, NOMBRES, APELLIDOS, EMAIL, TELEFONO, DOMICILIO1, DOMICILIO2,
+            'INSERT INTO CLIENTESV2 (ID, FOLIO, NOMBRES, APELLIDOS, IDENTIFICACION, EMAIL, TELEFONO, DOMICILIO1, DOMICILIO2,
                                      PARROQUIA, CANTON, PROVINCIA, CODIGO_POSTAL, NOTAS,
                                      TOTAL_VENTAS, TOTAL_GANANCIAS, TOTAL_TICKETS, ACTIVO, DE_SISTEMA,
                                      OLD_CLIENTE_ID, OLD_FACTURACION_CLIENTES_ID)
-             VALUES (:id, :folio, :nombres, :apellidos, :email, :telefono, :dom1, :dom2,
+             VALUES (:id, :folio, :nombres, :apellidos, :identificacion, :email, :telefono, :dom1, :dom2,
                      :parroquia, :canton, :provincia, :cp, :notas,
                      0, 0, 0, 1, :de_sistema, :old_cliente_id, :old_facturacion_clientes_id)'
         );
@@ -1902,6 +1917,7 @@ function legacyWriteCustomers(array $customers): bool
 
             $nombres = legacyFitTableValue('CLIENTESV2', 'NOMBRES', $first);
             $apellidos = legacyFitTableValue('CLIENTESV2', 'APELLIDOS', $last);
+            $identificacion = legacyFitTableValue('CLIENTESV2', 'IDENTIFICACION', trim((string)($customer['taxId'] ?? ($customer['identification'] ?? ''))));
             $email = legacyFitTableValue('CLIENTESV2', 'EMAIL', trim((string)($customer['email'] ?? '')));
             $telefono = legacyFitTableValue('CLIENTESV2', 'TELEFONO', trim((string)($customer['phone'] ?? '')));
             $dom1 = legacyFitTableValue('CLIENTESV2', 'DOMICILIO1', trim((string)($customer['address1'] ?? '')));
@@ -1920,6 +1936,7 @@ function legacyWriteCustomers(array $customers): bool
                 ':id' => $id,
                 ':nombres' => $nombres,
                 ':apellidos' => $apellidos,
+                ':identificacion' => $identificacion,
                 ':email' => $email,
                 ':telefono' => $telefono,
                 ':dom1' => $dom1,

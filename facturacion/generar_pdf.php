@@ -3,6 +3,14 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/helpers.php';
 
+$autoload = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+if (file_exists($autoload)) {
+    require_once $autoload;
+}
+
+use Dompdf\Dompdf;
+use Dompdf\Options;
+
 function generarPDF(array $document): array
 {
     $pdfDir = facturacionStoragePath('pdf');
@@ -10,11 +18,7 @@ function generarPDF(array $document): array
         mkdir($pdfDir, 0777, true);
     }
 
-    if (class_exists('TCPDF')) {
-        throw new RuntimeException('La integración real con TCPDF aún no está implementada en esta instalación.');
-    }
-
-    $path = $pdfDir . DIRECTORY_SEPARATOR . (string)$document['accessKey'] . '.html';
+    $path = $pdfDir . DIRECTORY_SEPARATOR . (string)$document['accessKey'] . '.pdf';
     $buyer = $document['buyer'] ?? [];
     $totals = $document['totals'] ?? [];
     $rows = '';
@@ -29,7 +33,7 @@ function generarPDF(array $document): array
     }
 
     $html = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura</title>'
-        . '<style>body{font-family:Arial,sans-serif;font-size:12px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px}th{background:#f3f4f6}h1{font-size:20px;margin:0 0 10px} .meta{margin:0 0 14px}</style>'
+        . '<style>@page{margin:24px}body{font-family:DejaVu Sans,Arial,sans-serif;font-size:12px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px}th{background:#f3f4f6}h1{font-size:20px;margin:0 0 10px} .meta{margin:0 0 14px}.totals{margin-top:14px}.totals td{border:none;padding:3px 0}.right{text-align:right}</style>'
         . '</head><body>'
         . '<h1>Factura</h1>'
         . '<p class="meta"><strong>Clave de acceso:</strong> ' . htmlspecialchars((string)($document['accessKey'] ?? '')) . '<br>'
@@ -40,15 +44,29 @@ function generarPDF(array $document): array
         . '<table><thead><tr><th>Codigo</th><th>Descripcion</th><th>Cantidad</th><th>P. Unitario</th><th>Total</th></tr></thead><tbody>'
         . $rows
         . '</tbody></table>'
-        . '<p><strong>Subtotal:</strong> ' . htmlspecialchars(facturacionFormatDecimal((float)($totals['subtotalSinImpuestos'] ?? 0))) . '<br>'
-        . '<strong>IVA:</strong> ' . htmlspecialchars(facturacionFormatDecimal((float)(($totals['iva15'] ?? 0) + ($totals['iva12'] ?? 0)))) . '<br>'
-        . '<strong>Valor a pagar:</strong> ' . htmlspecialchars(facturacionFormatDecimal((float)($totals['importeTotal'] ?? 0))) . '</p>'
+        . '<table class="totals">'
+        . '<tr><td><strong>Subtotal</strong></td><td class="right">' . htmlspecialchars(facturacionFormatDecimal((float)($totals['subtotalSinImpuestos'] ?? 0))) . '</td></tr>'
+        . '<tr><td><strong>IVA</strong></td><td class="right">' . htmlspecialchars(facturacionFormatDecimal((float)(($totals['iva15'] ?? 0) + ($totals['iva12'] ?? 0)))) . '</td></tr>'
+        . '<tr><td><strong>Valor a pagar</strong></td><td class="right">' . htmlspecialchars(facturacionFormatDecimal((float)($totals['importeTotal'] ?? 0))) . '</td></tr>'
+        . '</table>'
         . '</body></html>';
 
-    file_put_contents($path, $html);
+    if (class_exists(Dompdf::class)) {
+        $options = new Options();
+        $options->set('isRemoteEnabled', false);
+        $options->set('isHtml5ParserEnabled', true);
+        $dompdf = new Dompdf($options);
+        $dompdf->loadHtml($html, 'UTF-8');
+        $dompdf->setPaper('A4', 'portrait');
+        $dompdf->render();
+        file_put_contents($path, $dompdf->output());
+        facturacionAppendLog('info', 'Representacion impresa generada en PDF', ['documentId' => $document['id'] ?? null]);
+    } else {
+        throw new RuntimeException('No se encontro Dompdf para generar el PDF real.');
+    }
+
     $document['files']['pdf'] = $path;
     $document['updatedAt'] = date('c');
-    facturacionAppendLog('info', 'Representación impresa generada en HTML fallback', ['documentId' => $document['id'] ?? null]);
     return $document;
 }
 

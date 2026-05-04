@@ -10,6 +10,101 @@
     return (str || '').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
   }
 
+  function normalizeTaxId(value) {
+    return (value || '').toString().replace(/\D+/g, '').trim();
+  }
+
+  function isValidProvinceCode(code) {
+    const n = Number(code || 0);
+    return n >= 1 && n <= 24;
+  }
+
+  function modulo10Check(digits10) {
+    let sum = 0;
+    for (let i = 0; i < 9; i += 1) {
+      let n = Number(digits10.charAt(i));
+      if (i % 2 === 0) {
+        n *= 2;
+        if (n > 9) n -= 9;
+      }
+      sum += n;
+    }
+    const verifier = (10 - (sum % 10)) % 10;
+    return verifier === Number(digits10.charAt(9));
+  }
+
+  function modulo11Verifier(base, coeffs, verifierDigit) {
+    let sum = 0;
+    for (let i = 0; i < coeffs.length; i += 1) {
+      sum += Number(base.charAt(i)) * coeffs[i];
+    }
+    const mod = 11 - (sum % 11);
+    const expected = mod === 11 ? 0 : (mod === 10 ? 0 : mod);
+    return expected === Number(verifierDigit);
+  }
+
+  function validateCedulaEcuador(digits) {
+    if (digits.length !== 10) return false;
+    if (!isValidProvinceCode(digits.slice(0, 2))) return false;
+    const third = Number(digits.charAt(2));
+    if (third < 0 || third > 5) return false;
+    return modulo10Check(digits);
+  }
+
+  function validateRucEcuador(digits) {
+    if (digits.length !== 13) return false;
+    if (digits === '9999999999999') return true;
+    if (!isValidProvinceCode(digits.slice(0, 2))) return false;
+
+    const third = Number(digits.charAt(2));
+    const estab = digits.slice(10, 13);
+    if (estab === '000') return false;
+
+    if (third >= 0 && third <= 5) {
+      return validateCedulaEcuador(digits.slice(0, 10));
+    }
+    if (third === 6) {
+      if (!modulo11Verifier(digits.slice(0, 8), [3, 2, 7, 6, 5, 4, 3, 2], digits.charAt(8))) return false;
+      return digits.slice(9, 13) !== '0000';
+    }
+    if (third === 9) {
+      if (!modulo11Verifier(digits.slice(0, 9), [4, 3, 2, 7, 6, 5, 4, 3, 2], digits.charAt(9))) return false;
+      return estab !== '000';
+    }
+    return false;
+  }
+
+  function validateTaxId(value) {
+    const digits = normalizeTaxId(value);
+    if (!digits) {
+      return { ok: true, value: '', message: '' };
+    }
+    if (digits.length === 10) {
+      if (!validateCedulaEcuador(digits)) {
+        return { ok: false, value: digits, message: 'Cedula invalida. Revise provincia, tercer digito y digito verificador.' };
+      }
+      return { ok: true, value: digits, message: 'Cedula valida.' };
+    }
+    if (digits.length === 13) {
+      if (!validateRucEcuador(digits)) {
+        return { ok: false, value: digits, message: 'RUC invalido. Revise tipo de contribuyente, establecimiento y digito verificador.' };
+      }
+      return { ok: true, value: digits, message: 'RUC valido.' };
+    }
+    return { ok: false, value: digits, message: 'La identificacion debe tener 10 digitos (cedula) o 13 digitos (RUC).' };
+  }
+
+  function setTaxIdFeedback(validation) {
+    const $help = $('#cli-tax-id-help');
+    if (!$help.length) return;
+    const msg = (validation && validation.message) ? validation.message : '';
+    if (!msg) {
+      $help.text('').css('color', '');
+      return;
+    }
+    $help.text(msg).css('color', validation.ok ? '#047857' : '#b91c1c');
+  }
+
   const state = {
     customers: [],
     selectedId: null,
@@ -140,6 +235,8 @@
     $('#cli-id').val('');
     $('#cli-first').val('');
     $('#cli-last').val('');
+    $('#cli-tax-id').val('');
+    setTaxIdFeedback({ ok: true, message: '' });
     $('#cli-phone').val('');
     $('#cli-email').val('');
     $('#cli-address1').val('');
@@ -158,6 +255,9 @@
     $('#cli-id').val(c?.id || '');
     $('#cli-first').val(c?.firstName || '');
     $('#cli-last').val(c?.lastName || '');
+    const taxId = (c?.taxId || c?.identification || '').toString();
+    $('#cli-tax-id').val(taxId);
+    setTaxIdFeedback(validateTaxId(taxId));
     $('#cli-phone').val(c?.phone || '');
     $('#cli-email').val(c?.email || '');
     $('#cli-address1').val(c?.address1 || '');
@@ -192,11 +292,14 @@
     const lastName = $('#cli-last').val().toString().trim();
     const name = (firstName + ' ' + lastName).trim();
     const paymentDueDate = ($('#cli-payment-day').val() || '').toString().trim();
+    const taxIdValidation = validateTaxId($('#cli-tax-id').val().toString());
+    setTaxIdFeedback(taxIdValidation);
     return {
       id: $('#cli-id').val().toString().trim(),
       name,
       firstName,
       lastName,
+      taxId: taxIdValidation.value,
       phone: $('#cli-phone').val().toString().trim(),
       email: $('#cli-email').val().toString().trim(),
       address1: $('#cli-address1').val().toString().trim(),
@@ -224,6 +327,7 @@
         `<tr class="${selected ? 'row-selected' : ''}" data-id="${escapeHtml(c.id || '')}">
           <td style="width:120px">${escapeHtml(c.id || '')}</td>
           <td>${escapeHtml(c.name || '')}</td>
+          <td>${escapeHtml(c.taxId || c.identification || '')}</td>
         </tr>`
       );
       $tr.on('click', () => selectCustomer(c.id));
@@ -231,7 +335,7 @@
     });
 
     if (pg.pageRows.length === 0) {
-      $tbody.append('<tr><td colspan="2" class="muted">No hay clientes para mostrar.</td></tr>');
+      $tbody.append('<tr><td colspan="3" class="muted">No hay clientes para mostrar.</td></tr>');
     }
 
     renderPager();
@@ -275,6 +379,13 @@
 
   function save() {
     const payload = readForm();
+    const taxIdValidation = validateTaxId(payload.taxId || '');
+    setTaxIdFeedback(taxIdValidation);
+    if (!taxIdValidation.ok) {
+      alert(taxIdValidation.message);
+      $('#cli-tax-id').focus();
+      return;
+    }
     if (!payload.name) {
       alert('Nombre requerido');
       return;
@@ -342,6 +453,13 @@
     $('#cli-new').on('click', startNew);
     $('#cli-save').on('click', save);
     $('#cli-del').on('click', del);
+    $('#cli-tax-id').on('input blur', function () {
+      const validation = validateTaxId($(this).val().toString());
+      if (validation.value !== $(this).val().toString()) {
+        $(this).val(validation.value);
+      }
+      setTaxIdFeedback(validation);
+    });
 
     // start locked until selection or "Nuevo"
     state.mode = 'idle';

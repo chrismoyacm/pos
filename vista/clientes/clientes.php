@@ -25,6 +25,7 @@ declare(strict_types=1);
           <tr>
             <th style="width:120px">Folio</th>
             <th>Nombre</th>
+            <th style="width:160px">Cedula / RUC</th>
           </tr>
         </thead>
       </table>
@@ -49,6 +50,11 @@ declare(strict_types=1);
           <div class="field-col">
             <label for="cli-last">Apellidos</label>
             <input id="cli-last" type="text" autocomplete="off">
+          </div>
+          <div class="field-col">
+            <label for="cli-tax-id">Cedula / RUC</label>
+            <input id="cli-tax-id" type="text" autocomplete="off">
+            <small id="cli-tax-id-help" class="muted"></small>
           </div>
 
           <div class="field-col">

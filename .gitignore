@@ -7,7 +7,12 @@ storage/*.json
 storage/data.sql
 storage/facturacion/*.json
 
+docs/FACTURACION_DB_SCHEMA.sql
+
 # Archivos sensibles facturación electrónica
+storage/facturacion/*.lock
+storage/facturacion/*.zip
+storage/facturacion/xsd_factura_sri/
 storage/facturacion/certificados/
 storage/facturacion/xml/
 storage/facturacion/pdf/
@@ -15,6 +20,9 @@ storage/facturacion/pdf/
 # logs y cache
 storage/logs/
 storage/cache/
+
+# dependencias
+vendor/
 
 # videos locales
 *.mp4
