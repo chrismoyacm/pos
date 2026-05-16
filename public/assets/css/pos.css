@@ -32,6 +32,12 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   background:#fff;border:1px solid #d1d5db;color:#111;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px
 }
 .topbar .logout-btn:hover{background:#f8fafc}
+.topbar-db-alert{
+  display:none;align-items:center;gap:8px;padding:10px 16px;background:#991b1b;color:#fff;
+  font-size:13px;font-weight:700;letter-spacing:.1px;border-bottom:1px solid rgba(255,255,255,.18)
+}
+.topbar-db-alert.is-visible{display:flex}
+.topbar-db-alert strong{font-weight:900}
 .shift-panel-overlay{
   position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.28);z-index:120
@@ -153,6 +159,10 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .grid tbody tr:hover td{background:#f8fbff}
 .venta-price-cell{cursor:pointer;position:relative;user-select:none}
 .venta-price-cell:hover{background:#eef6ff}
+.venta-price-stack{display:flex;flex-direction:column;align-items:flex-end;line-height:1.1}
+.venta-price-original{font-size:11px;text-decoration:line-through;color:#6b7280}
+.venta-price-discounted{font-weight:700}
+.ventas-wrap .grid tbody tr.row-selected .venta-price-original{color:rgba(255,255,255,.78)}
 .venta-price-cell::after{
   content:'';
   font-size:10px;
@@ -188,13 +198,21 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   background:rgba(0,0,0,.35);z-index:50
 }
 .modal.active{display:flex}
+.modal#modal-cliente{z-index:70}
 .modal-card{background:#fff;min-width:360px;max-width:520px;border-radius:8px;border:1px solid #d8dee6;box-shadow:0 10px 30px rgba(0,0,0,.15)}
 .modal-card--wide{width:min(1100px,94vw);max-width:none}
+.modal-card--bulk{width:min(720px,94vw);max-width:none}
 .modal-card header{padding:12px 16px;border-bottom:1px solid #e5e7eb;font-weight:700}
 .modal-card section{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .modal-card footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
 .modal-card input{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%}
 .modal-card input:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
+.bulk-product-name{font-size:20px;font-weight:700;text-align:center;padding:8px 0}
+.bulk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.bulk-grid .field-col span{display:block;font-size:12px;color:#475569;font-weight:700;margin-bottom:6px}
+.bulk-grid input{text-align:center;font-size:28px;font-weight:700}
+.bulk-summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:15px;font-weight:700;color:#0f172a}
+@media (max-width: 640px){.bulk-grid{grid-template-columns:1fr}.bulk-summary{flex-direction:column}}
 .pay-method-picker{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -224,6 +242,35 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   padding:8px 10px;
 }
 .pay-credit-table-wrap{max-height:190px;overflow:auto;border:1px solid #dbe2ea;border-radius:6px}
+#modal-pago{
+  padding:16px;
+}
+#modal-pago .modal-card{
+  width:min(760px,96vw);
+  max-width:none;
+  max-height:min(92vh,900px);
+  display:flex;
+  flex-direction:column;
+}
+#modal-pago .modal-card section{
+  overflow:auto;
+  min-height:0;
+}
+#modal-pago .modal-card footer{
+  flex-wrap:wrap;
+  position:sticky;
+  bottom:0;
+  background:#fff;
+}
+#modal-pago .pay-credit-table-wrap{
+  max-height:160px;
+}
+#modal-pago .grid.grid-compact th,
+#modal-pago .grid.grid-compact td{
+  padding-top:6px;
+  padding-bottom:6px;
+  font-size:12px;
+}
 .pay-credit-row{cursor:pointer}
 .pay-credit-row:hover td{background:#eef6ff}
 .pay-credit-row.selected td{background:#dbeafe}
@@ -246,11 +293,28 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   .pay-method-picker{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pay-mixed-grid{grid-template-columns:1fr 1fr}
   .modal-sales-grid{grid-template-columns:1fr}
+  #modal-pago .modal-card{
+    width:min(96vw,680px);
+    max-height:94vh;
+  }
 }
 
 @media (max-width: 600px){
   .pay-mixed-grid{grid-template-columns:1fr}
   .pos-main{padding-bottom:74px}
+  #modal-pago{
+    padding:8px;
+  }
+  #modal-pago .modal-card footer{
+    justify-content:stretch;
+  }
+  #modal-pago .modal-card footer .btn-primary,
+  #modal-pago .modal-card footer .btn-secondary{
+    flex:1 1 100%;
+  }
+  #modal-pago .pay-credit-table-wrap{
+    max-height:130px;
+  }
 }
 .btn-primary{background:var(--primary);color:#fff;border:1px solid var(--primary-2);border-radius:6px;padding:8px 12px;cursor:pointer}
 .btn-secondary{background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px 12px;cursor:pointer}
@@ -577,6 +641,26 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 }
 .prod-package-empty{
   text-align:center;color:#6b7280;font-style:italic
+}
+.prod-package-summary{
+  margin-top:10px;
+  padding:9px 10px;
+  border-radius:6px;
+  font-size:12px;
+  font-weight:700;
+  border:1px solid #dbe3ea;
+  background:#f8fafc;
+  color:#334155;
+}
+.prod-package-summary.is-info{
+  border-color:#bfdbfe;
+  background:#eff6ff;
+  color:#1d4ed8;
+}
+.prod-package-summary.is-warn{
+  border-color:#fde68a;
+  background:#fffbeb;
+  color:#b45309;
 }
 .prod-inventory-box{
   border-top:1px solid #f0f0f0;padding-top:14px;max-width:760px

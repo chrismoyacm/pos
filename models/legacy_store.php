@@ -18,12 +18,12 @@ function legacyMappedRead(string $fileName): ?array
     try {
         return match ($base) {
             'users.json' => legacyReadEntityWithOverlay($base, 'legacyReadUsers'),
-            'sales.json' => legacyReadEntityWithOverlay($base, 'legacyReadDocumentStoreSalesCompat'),
-            'products.json' => legacyReadEntityWithOverlay($base, 'legacyReadProducts'),
-            'customers.json' => legacyReadEntityWithOverlay($base, 'legacyReadCustomers'),
+            'sales.json' => legacyReadSalesFromTickets(),
+            'products.json' => legacyReadProducts(),
+            'customers.json' => legacyReadCustomers(),
             'departments.json' => legacyReadEntityWithOverlay($base, 'legacyReadDepartments'),
             'promotions.json' => legacyReadEntityWithOverlay($base, 'legacyReadPromotions'),
-            'inventory_movements.json' => legacyReadEntityWithOverlay($base, 'legacyReadInventoryMovements'),
+            'inventory_movements.json' => legacyReadInventoryMovements(),
             'cash_movements.json' => legacyReadEntityWithOverlay($base, 'legacyReadCashMovements'),
             'credit_payments.json' => legacyReadEntityWithOverlay($base, 'legacyReadCreditPayments'),
             'providers.json' => legacyReadProviders(),
@@ -60,7 +60,7 @@ function legacyMappedWrite(string $fileName, array $data): bool
     try {
         return match ($base) {
             'users.json' => legacyWriteEntitySync($base, $data, 'legacyWriteUsers'),
-            'sales.json' => legacyWriteEntitySync($base, $data, 'legacyWriteSales'),
+            'sales.json' => false,
             'products.json' => legacyWriteEntitySync($base, $data, 'legacyWriteProducts'),
             'customers.json' => legacyWriteEntitySync($base, $data, 'legacyWriteCustomers'),
             'departments.json' => legacyWriteEntitySync($base, $data, 'legacyWriteDepartments'),
@@ -77,6 +77,210 @@ function legacyMappedWrite(string $fileName, array $data): bool
     } catch (Throwable $e) {
         return false;
     }
+}
+
+function legacyTicketRowStatus(array $ticketRow): string
+{
+    $activo = strtolower(trim((string)($ticketRow['ACTIVO'] ?? '1')));
+    $cancelado = strtolower(trim((string)($ticketRow['ESTA_CANCELADO'] ?? '0')));
+    if (in_array($activo, ['0', 'false', 'f', 'no', 'n'], true) || in_array($cancelado, ['1', 'true', 't', 'si', 's'], true)) {
+        return 'cancelled';
+    }
+
+    $abierto = strtolower(trim((string)($ticketRow['ESTA_ABIERTO'] ?? '0')));
+    $modificable = strtolower(trim((string)($ticketRow['ES_MODIFICABLE'] ?? '0')));
+    if (in_array($abierto, ['1', 'true', 't', 'si', 's'], true) || in_array($modificable, ['1', 'true', 't', 'si', 's'], true)) {
+        return 'pending';
+    }
+
+    return 'completed';
+}
+
+/** @return array<string, mixed> */
+function legacyReadTicketFooterMeta(array $ticketRow): array
+{
+    $raw = trim((string)($ticketRow['NOTAS_AL_PIE'] ?? ''));
+    if ($raw === '') {
+        return [];
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function legacyPaymentMethodFromMixedCode(string $code): string
+{
+    return match (strtoupper(trim($code))) {
+        'E' => 'cash',
+        'T' => 'transfer',
+        'C', 'R' => 'credit',
+        'V' => 'voucher',
+        'K', 'Q' => 'check',
+        default => 'cash',
+    };
+}
+
+/**
+ * @param array<int, string> $ticketIds
+ * @return array<string, array{cash:float, transfer:float, credit:float}>
+ */
+function legacyReadMixedPaymentsByTicket(array $ticketIds): array
+{
+    if ($ticketIds === [] || !legacyTableExists('pagos_mixtos')) {
+        return [];
+    }
+
+    $ph = implode(',', array_fill(0, count($ticketIds), '?'));
+    $stmt = db()->prepare('SELECT * FROM PAGOS_MIXTOS WHERE TICKET_ID IN (' . $ph . ')');
+    $stmt->execute($ticketIds);
+    $rows = $stmt->fetchAll();
+
+        $out = [];
+    foreach ($rows as $row) {
+        $ticketId = trim((string)($row['TICKET_ID'] ?? ''));
+        if ($ticketId === '') {
+            continue;
+        }
+        $out[$ticketId] = $out[$ticketId] ?? ['cash' => 0.0, 'transfer' => 0.0, 'credit' => 0.0];
+        $method = legacyPaymentMethodFromMixedCode((string)($row['FORMA_DE_PAGO'] ?? ''));
+        $amount = safeFloat($row['MONTO'] ?? 0);
+        if (array_key_exists($method, $out[$ticketId])) {
+            $out[$ticketId][$method] = round((float)$out[$ticketId][$method] + $amount, 2);
+        }
+    }
+
+    return $out;
+}
+
+/** @return array<int, array<string, mixed>> */
+function legacyReadSalesFromTickets(): array
+{
+    if (!legacyTableExists('ventatickets') || !legacyTableExists('ventatickets_articulos')) {
+        return legacyReadDocumentStoreSalesCompat();
+    }
+
+    $tickets = db()->query(
+        "SELECT * FROM VENTATICKETS
+         WHERE COALESCE(NULLIF(ACTIVO, ''), '1') <> '0'
+           AND COALESCE(NULLIF(ESTA_CANCELADO, ''), '0') <> '1'
+         ORDER BY CREADO_EN ASC, ID ASC"
+    )->fetchAll();
+
+    if (!is_array($tickets) || $tickets === []) {
+        return [];
+    }
+
+    $ticketIds = [];
+    foreach ($tickets as $ticketRow) {
+        $ticketId = trim((string)($ticketRow['ID'] ?? ''));
+        if ($ticketId === '') {
+            $ticketId = trim((string)($ticketRow['FOLIO'] ?? ''));
+        }
+        if ($ticketId !== '') {
+            $ticketIds[] = $ticketId;
+        }
+    }
+
+    $itemsByTicket = [];
+    if ($ticketIds !== []) {
+        $ph = implode(',', array_fill(0, count($ticketIds), '?'));
+        $stmt = db()->prepare(
+            'SELECT * FROM VENTATICKETS_ARTICULOS WHERE TICKET_ID IN (' . $ph . ') ORDER BY AGREGADO_EN ASC, ID ASC'
+        );
+        $stmt->execute($ticketIds);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as $row) {
+            $ticketId = trim((string)($row['TICKET_ID'] ?? ''));
+            if ($ticketId === '') {
+                continue;
+            }
+            $itemsByTicket[$ticketId] = $itemsByTicket[$ticketId] ?? [];
+            $itemsByTicket[$ticketId][] = $row;
+        }
+    }
+
+    $mixedPaymentsByTicket = legacyReadMixedPaymentsByTicket($ticketIds);
+    $sales = [];
+    foreach ($tickets as $ticketRow) {
+        $ticketId = trim((string)($ticketRow['ID'] ?? ''));
+        if ($ticketId === '') {
+            $ticketId = trim((string)($ticketRow['FOLIO'] ?? ''));
+        }
+        if ($ticketId === '') {
+            continue;
+        }
+
+        $detailRows = $itemsByTicket[$ticketId] ?? [];
+        $saleItems = [];
+        $returns = [];
+        foreach ($detailRows as $detail) {
+            $itemId = trim((string)($detail['ID'] ?? ''));
+            if ($itemId === '') {
+                $itemId = trim((string)($detail['PRODUCTO_CODIGO'] ?? ''));
+            }
+            $qty = safeFloat($detail['CANTIDAD'] ?? 0);
+            $returnedQty = safeFloat($detail['CANTIDAD_DEVUELTA'] ?? 0);
+            $price = safeFloat($detail['PRECIO_USADO'] ?? $detail['PAGADO_EN'] ?? 0);
+
+            $saleItems[] = [
+                'id' => $itemId,
+                'productId' => trim((string)($detail['PRODUCTO_CODIGO'] ?? '')),
+                'barcode' => trim((string)($detail['PRODUCTO_CODIGO'] ?? '')),
+                'name' => trim((string)($detail['PRODUCTO_NOMBRE'] ?? '')),
+                'qty' => $qty,
+                'price' => $price,
+            ];
+
+            if ($returnedQty > 0) {
+                $returns[] = [
+                    'id' => 'ret-db-' . $itemId,
+                    'itemId' => $itemId,
+                    'qty' => $returnedQty,
+                    'reason' => 'Devolucion registrada',
+                    'amount' => round($returnedQty * $price, 2),
+                    'createdAt' => legacyToIsoDateTime((string)($detail['AGREGADO_EN'] ?? $ticketRow['CREADO_EN'] ?? date('c'))),
+                ];
+            }
+        }
+
+        $footerMeta = legacyReadTicketFooterMeta($ticketRow);
+        $paymentMethod = strtolower(trim((string)($ticketRow['FORMA_PAGO'] ?? 'cash')));
+        $status = legacyTicketRowStatus($ticketRow);
+        $mixedPayments = $mixedPaymentsByTicket[$ticketId] ?? null;
+        if ($mixedPayments === null && is_array($footerMeta['mixedPayments'] ?? null)) {
+            $mixedPayments = [
+                'cash' => safeFloat($footerMeta['mixedPayments']['cash'] ?? 0),
+                'transfer' => safeFloat($footerMeta['mixedPayments']['transfer'] ?? 0),
+                'credit' => safeFloat($footerMeta['mixedPayments']['credit'] ?? 0),
+            ];
+        }
+
+        $sales[] = [
+            'ticketId' => $ticketId,
+            'createdAt' => legacyToIsoDateTime((string)($ticketRow['CREADO_EN'] ?? date('c'))),
+            'updatedAt' => legacyToIsoDateTime((string)($ticketRow['VENDIDO_EN'] ?? $ticketRow['CREADO_EN'] ?? date('c'))),
+            'status' => $status,
+            'items' => $saleItems,
+            'subtotal' => safeFloat($ticketRow['SUBTOTAL'] ?? 0),
+            'total' => safeFloat($ticketRow['TOTAL'] ?? 0),
+            'paidWith' => safeFloat($ticketRow['PAGO_CON'] ?? 0),
+            'change' => safeFloat($ticketRow['PAGADO_EN'] ?? 0),
+            'paymentMethod' => $paymentMethod !== '' ? $paymentMethod : 'cash',
+            'mixedPayments' => $mixedPayments,
+            'paymentNote' => trim((string)($ticketRow['NOTAS'] ?? '')),
+            'customerId' => trim((string)($ticketRow['CLIENTE_ID'] ?? '')),
+            'customerName' => trim((string)($ticketRow['NOMBRE'] ?? 'Publico en general')),
+            'amountPending' => safeFloat($ticketRow['TOTAL_CREDITO'] ?? 0),
+            'cashier' => trim((string)($ticketRow['CAJERO_ID'] ?? 'Cajero')),
+            'clientRequestId' => trim((string)($ticketRow['REFERENCIA'] ?? '')),
+            'discountPct' => safeFloat($footerMeta['discountPct'] ?? 0),
+            'discountAmount' => safeFloat($footerMeta['discountAmount'] ?? 0),
+            'transferMeta' => is_array($footerMeta['transferMeta'] ?? null) ? $footerMeta['transferMeta'] : ['reference' => '', 'phone' => ''],
+            'returns' => $returns,
+        ];
+    }
+
+    return $sales;
 }
 
 function legacyEntityOverlayKey(string $baseFileName): string
@@ -113,6 +317,34 @@ function legacyWriteEntitySync(string $baseFileName, array $data, callable $lega
         return false;
     }
     return legacyWriteEntityOverlay($baseFileName, $data);
+}
+
+/** @return array<string, array<string, mixed>> */
+function legacyReadProductsOverlayIndex(): array
+{
+    $overlay = legacyReadDocumentStore('app/products.json');
+    if (!is_array($overlay)) {
+        return [];
+    }
+
+    $byId = [];
+    foreach ($overlay as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $id = trim((string)($row['id'] ?? ''));
+        if ($id === '') {
+            continue;
+        }
+        $byId[$id] = $row;
+    }
+
+    return $byId;
+}
+
+function legacyWriteProductsOverlay(array $products): bool
+{
+    return legacyWriteDocumentStore('app/products.json', $products);
 }
 
 /** @return array<int, string> */
@@ -902,8 +1134,9 @@ function legacyTaxIdFromIvaValue(mixed $ivaValue): string
 function legacyReadProducts(): array
 {
     $pdo = db();
+    $overlayById = legacyReadProductsOverlayIndex();
     $sql = 'SELECT p.ID, p.CODIGO, p.DESCRIPCION, p.PCOSTO, p.PORCENTAJE_GANANCIA, p.PVENTA, p.PFINAL, p.MAYOREO,
-                   p.DINVENTARIO, p.DINVMINIMO, p.DINVMAXIMO, p.TVENTA, p.DEPT, p.USA_INVENTARIO, p.IMPUESTOS,
+                   p.DINVENTARIO, p.DINVMINIMO, p.DINVMAXIMO, p.TVENTA, p.ES_KIT, p.DEPT, p.USA_INVENTARIO, p.IMPUESTOS,
                    p.ELIMINADO_EN, d.NOMBRE AS DEPARTAMENTO
             FROM PRODUCTOS p
             LEFT JOIN DEPARTAMENTOS d ON d.ID = p.DEPT
@@ -928,10 +1161,16 @@ function legacyReadProducts(): array
             $department = 'Sin Departamento';
         }
 
-        $unitType = strtoupper(trim((string)($row['TVENTA'] ?? 'U'))) === 'D' ? 'bulk' : 'unit';
+        $kitFlag = strtolower(trim((string)($row['ES_KIT'] ?? 'f')));
+        $unitType = in_array($kitFlag, ['1', 'true', 't', 'si', 's', 'y', 'yes'], true)
+            ? 'package'
+            : (strtoupper(trim((string)($row['TVENTA'] ?? 'U'))) === 'D' ? 'bulk' : 'unit');
         $iva = legacyIvaLabelFromTaxId($row['IMPUESTOS'] ?? '0');
 
-        $out[] = [
+        $rawInventoryFlag = strtolower(trim((string)($row['USA_INVENTARIO'] ?? '1')));
+        $inventoryEnabled = !in_array($rawInventoryFlag, ['0', 'false', 'f', 'no', 'n'], true);
+
+        $product = [
             'id' => 'p-' . $id,
             'barcode' => trim((string)($row['CODIGO'] ?? '')),
             'name' => trim((string)($row['DESCRIPCION'] ?? '')),
@@ -942,9 +1181,7 @@ function legacyReadProducts(): array
             'stock' => safeInt($row['DINVENTARIO'] ?? 0),
             'minStock' => safeInt($row['DINVMINIMO'] ?? 0),
             'maxStock' => safeInt($row['DINVMAXIMO'] ?? 0),
-            // En dumps legacy, este campo suele venir en formato ambiguo ('f'/'0').
-            // Para no bloquear el módulo de inventario, habilitamos inventario en productos no-kit.
-            'inventoryEnabled' => $unitType !== 'package',
+            'inventoryEnabled' => $inventoryEnabled,
             'department' => $department,
             'unitType' => $unitType,
             'provider' => '',
@@ -954,6 +1191,18 @@ function legacyReadProducts(): array
                 ? ['minQty' => 2, 'price' => safeFloat($row['MAYOREO'] ?? 0)]
                 : null,
         ];
+
+        $overlay = $overlayById[$product['id']] ?? null;
+        if (is_array($overlay)) {
+            if (isset($overlay['packageItems']) && is_array($overlay['packageItems'])) {
+                $product['packageItems'] = $overlay['packageItems'];
+            }
+            if (isset($overlay['provider']) && trim((string)$overlay['provider']) !== '') {
+                $product['provider'] = trim((string)$overlay['provider']);
+            }
+        }
+
+        $out[] = $product;
     }
 
     return $out;
@@ -983,7 +1232,7 @@ function legacyWriteProducts(array $products): bool
              SET CODIGO = :codigo, DESCRIPCION = :descripcion, TVENTA = :tventa, PCOSTO = :pcosto,
                  PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
                  DINVENTARIO = :inventario, DINVMINIMO = :invmin, DINVMAXIMO = :invmax,
-                 PORCENTAJE_GANANCIA = :margen, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
+                 PORCENTAJE_GANANCIA = :margen, ES_KIT = :es_kit, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
                  ELIMINADO_EN = ""
              WHERE ID = :id'
         );
@@ -994,7 +1243,7 @@ function legacyWriteProducts(array $products): bool
                                     PFINAL, PMAYOREOFINAL, ES_KIT, USA_INVENTARIO, IMPUESTOS, ELIMINADO_EN)
              VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :mayoreo,
                      :inventario, :invmin, :invmax, :margen, 1,
-                     :pfinal, :pmayoreo, "f", :usa_inventario, :impuestos, "")'
+                     :pfinal, :pmayoreo, :es_kit, :usa_inventario, :impuestos, "")'
         );
 
         $seenIds = [];
@@ -1047,6 +1296,7 @@ function legacyWriteProducts(array $products): bool
                 ':invmin' => legacyFitTableValue('PRODUCTOS', 'DINVMINIMO', $minStock),
                 ':invmax' => legacyFitTableValue('PRODUCTOS', 'DINVMAXIMO', $maxStock),
                 ':margen' => $margin,
+                ':es_kit' => (($product['unitType'] ?? 'unit') === 'package') ? 't' : 'f',
                 ':usa_inventario' => !empty($product['inventoryEnabled']) ? '1' : '0',
                 ':impuestos' => $taxId,
             ];
@@ -1136,6 +1386,7 @@ function legacyUpsertProduct(array $product): bool
         ':invmin' => legacyFitTableValue('PRODUCTOS', 'DINVMINIMO', $minStock),
         ':invmax' => legacyFitTableValue('PRODUCTOS', 'DINVMAXIMO', $maxStock),
         ':margen' => $margin,
+        ':es_kit' => (($product['unitType'] ?? 'unit') === 'package') ? 't' : 'f',
         ':usa_inventario' => !empty($product['inventoryEnabled']) ? '1' : '0',
         ':impuestos' => $taxId,
     ];
@@ -1150,7 +1401,7 @@ function legacyUpsertProduct(array $product): bool
                  SET CODIGO = :codigo, DESCRIPCION = :descripcion, TVENTA = :tventa, PCOSTO = :pcosto,
                      PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
                      DINVENTARIO = :inventario, DINVMINIMO = :invmin, DINVMAXIMO = :invmax,
-                     PORCENTAJE_GANANCIA = :margen, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
+                     PORCENTAJE_GANANCIA = :margen, ES_KIT = :es_kit, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
                      ELIMINADO_EN = ""
                  WHERE ID = :id'
             );
@@ -1163,7 +1414,7 @@ function legacyUpsertProduct(array $product): bool
                                     PFINAL, PMAYOREOFINAL, ES_KIT, USA_INVENTARIO, IMPUESTOS, ELIMINADO_EN)
              VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :mayoreo,
                      :inventario, :invmin, :invmax, :margen, 1,
-                     :pfinal, :pmayoreo, "f", :usa_inventario, :impuestos, "")'
+                     :pfinal, :pmayoreo, :es_kit, :usa_inventario, :impuestos, "")'
         );
 
         return $insert->execute($params);
@@ -1617,6 +1868,18 @@ function legacyReadInventoryMovements(): array
         return [];
     }
 
+    $productNames = [];
+    if (legacyTableExists('PRODUCTOS')) {
+        $productRows = db()->query('SELECT ID, DESCRIPCION FROM PRODUCTOS')->fetchAll();
+        foreach ($productRows as $productRow) {
+            $pid = trim((string)($productRow['ID'] ?? ''));
+            if ($pid === '') {
+                continue;
+            }
+            $productNames[$pid] = trim((string)($productRow['DESCRIPCION'] ?? ''));
+        }
+    }
+
     $rows = db()->query('SELECT * FROM INVENTARIO_HISTORIAL ORDER BY CUANDO_FUE DESC, ID DESC LIMIT 20000')->fetchAll();
     $out = [];
     foreach ($rows as $row) {
@@ -1625,7 +1888,11 @@ function legacyReadInventoryMovements(): array
             continue;
         }
 
-        $productId = trim((string)($row['PRODUCTO_ID'] ?? ''));
+        $productIdRaw = trim((string)($row['PRODUCTO_ID'] ?? ''));
+        if ($productIdRaw === '') {
+            continue;
+        }
+        $productId = preg_match('/^p-\d+$/i', $productIdRaw) === 1 ? strtolower($productIdRaw) : ('p-' . $productIdRaw);
         $before = safeFloat($row['CANTIDAD_ANTERIOR'] ?? 0);
         $delta = safeFloat($row['CANTIDAD'] ?? 0);
         $after = $before + $delta;
@@ -1645,7 +1912,7 @@ function legacyReadInventoryMovements(): array
             'id' => $id,
             'type' => $type,
             'productId' => $productId,
-            'productName' => '',
+            'productName' => $productNames[$productIdRaw] ?? '',
             'delta' => $delta,
             'before' => $before,
             'after' => $after,

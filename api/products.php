@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
 require_once __DIR__ . '/../utils/db.php';
+require_once __DIR__ . '/../utils/persistence.php';
 
 $productsPath = storagePath('products.json');
 $promotionsPath = storagePath('promotions.json');
@@ -183,56 +184,26 @@ function persistProductTaxInDb(string $productJsonId, mixed $ivaValue, ?string $
 /**
  * @param array<int, array<string, mixed>> $products
  */
-function writeProductsSnapshotFast(string $productsPath, array $products): void
+function writeProductsSnapshotFast(string $productsPath, array $products): bool
 {
-    $savedInOverlay = false;
-    if (dbEnabled()) {
-        try {
-            $savedInOverlay = legacyWriteDocumentStore('app/products.json', $products);
-        } catch (Throwable) {
-            // Continue with disk fallback.
-        }
-    }
+    return writeJsonBackupFile($productsPath, $products);
+}
 
-    $dir = dirname($productsPath);
-    if (!is_dir($dir) && !@mkdir($dir, 0777, true) && !is_dir($dir)) {
-        if ($savedInOverlay) {
-            return;
-        }
-        errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
-    }
+function syncProductsBackupFromDb(string $productsPath): bool
+{
+    return writeProductsSnapshotFast($productsPath, legacyReadProducts());
+}
 
-    $encoded = json_encode($products, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-    if (!is_string($encoded)) {
-        errorResponse('No se pudo serializar JSON', 500);
-    }
-
-    $fp = fopen($productsPath, 'c+');
-    if ($fp === false) {
-        if ($savedInOverlay) {
-            return;
-        }
-        errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
-    }
-
-    try {
-        if (!flock($fp, LOCK_EX)) {
-            if ($savedInOverlay) {
-                return;
-            }
-            errorResponse('No se pudo bloquear el archivo de almacenamiento', 500);
-        }
-        ftruncate($fp, 0);
-        rewind($fp);
-        if (fwrite($fp, $encoded) === false && !$savedInOverlay) {
-            errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
-        }
-        fflush($fp);
-        flock($fp, LOCK_UN);
-    } finally {
-        fclose($fp);
+/**
+ * @param array<int, array<string, mixed>> $products
+ */
+function syncProductsOverlaySnapshot(array $products): void
+{
+    if (function_exists('legacyWriteProductsOverlay')) {
+        legacyWriteProductsOverlay($products);
     }
 }
+
 function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
 {
     $value = trim((string)$raw);
@@ -352,6 +323,14 @@ function normalizeProduct(array $body, ?array $existing = null): array
     $rawPackageItems = $body['packageItems'] ?? ($existing['packageItems'] ?? []);
     $packageItems = [];
 
+    if ($barcode !== '' && dbEnabled() && function_exists('legacyTableColumnMaxLengths')) {
+        $maxLengths = legacyTableColumnMaxLengths('PRODUCTOS');
+        $barcodeMax = (int)($maxLengths['CODIGO'] ?? 0);
+        if ($barcodeMax > 0 && mb_strlen($barcode, 'UTF-8') > $barcodeMax) {
+            errorResponse('El codigo de barras supera el maximo permitido de ' . $barcodeMax . ' caracteres.', 400);
+        }
+    }
+
     if (is_array($rawPackageItems)) {
         foreach ($rawPackageItems as $item) {
             if (!is_array($item)) {
@@ -359,19 +338,21 @@ function normalizeProduct(array $body, ?array $existing = null): array
             }
 
             $productId = trim((string)($item['productId'] ?? ''));
-            $barcode = trim((string)($item['barcode'] ?? ''));
+            $itemBarcode = trim((string)($item['barcode'] ?? ''));
             $itemName = trim((string)($item['name'] ?? ''));
             $qty = (int)($item['qty'] ?? 0);
+            $itemStock = (int)($item['stock'] ?? 0);
 
-            if ($qty <= 0 || ($productId === '' && $barcode === '') || $itemName === '') {
+            if ($qty <= 0 || ($productId === '' && $itemBarcode === '') || $itemName === '') {
                 continue;
             }
 
             $packageItems[] = [
                 'productId' => $productId,
-                'barcode' => $barcode,
+                'barcode' => $itemBarcode,
                 'name' => $itemName,
                 'qty' => $qty,
+                'stock' => max(0, $itemStock),
             ];
         }
     }
@@ -381,13 +362,6 @@ function normalizeProduct(array $body, ?array $existing = null): array
     }
     if ($price < 0 || $specialPrice < 0 || $cost < 0 || $wholesalePrice < 0) {
         errorResponse('Precios inválidos', 400);
-    }
-
-    if ($unitType === 'package') {
-        $inventoryEnabled = false;
-        $stock = 0;
-        $minStock = 0;
-        $maxStock = 0;
     }
 
     $product = [
@@ -553,16 +527,19 @@ if ($method === 'POST') {
             errorResponse('Producto no encontrado', 404);
         }
 
-        if (dbEnabled()) {
-            legacyWriteEntityOverlay('products.json', $products);
-        } else {
-            writeProductsSnapshotFast($productsPath, $products);
-        }
-
         try {
             persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+            if (dbEnabled()) {
+                persistenceMarkDbHealthy('products_tax');
+                syncProductsOverlaySnapshot($products);
+                syncProductsBackupFromDb($productsPath);
+            } else {
+                writeProductsSnapshotFast($productsPath, $products);
+                persistenceMarkDbFallback('products_tax');
+            }
         } catch (Throwable) {
-            // No bloquear UI: el valor ya queda en JSON/overlay.
+            writeProductsSnapshotFast($productsPath, $products);
+            persistenceMarkDbFallback('products_tax');
         }
 
         ok($updated);
@@ -598,9 +575,12 @@ if ($method === 'POST') {
             if (!legacyUpsertProduct($updated)) {
                 errorResponse('No se pudo actualizar el producto en la base de datos legacy', 500);
             }
-            legacyWriteEntityOverlay('products.json', $products);
+            persistenceMarkDbHealthy('products_update');
+            syncProductsOverlaySnapshot($products);
+            syncProductsBackupFromDb($productsPath);
         } else {
             writeJsonFile($productsPath, $products);
+            persistenceMarkDbFallback('products_update');
         }
 
         try {
@@ -630,9 +610,12 @@ if ($method === 'POST') {
 
         if (dbEnabled()) {
             legacyDeleteProduct($id);
-            legacyWriteEntityOverlay('products.json', $products);
+            persistenceMarkDbHealthy('products_delete');
+            syncProductsOverlaySnapshot($products);
+            syncProductsBackupFromDb($productsPath);
         } else {
             writeJsonFile($productsPath, $products);
+            persistenceMarkDbFallback('products_delete');
         }
 
         ok(['id' => $id]);
@@ -693,7 +676,17 @@ if ($method === 'POST') {
             }
         }
 
-        writeJsonFile($productsPath, $products);
+        if (dbEnabled()) {
+            if (!legacyWriteProducts($products)) {
+                errorResponse('No se pudo importar productos en la base de datos', 500);
+            }
+            persistenceMarkDbHealthy('products_import');
+            syncProductsOverlaySnapshot($products);
+            syncProductsBackupFromDb($productsPath);
+        } else {
+            writeJsonFile($productsPath, $products);
+            persistenceMarkDbFallback('products_import');
+        }
         ok([
             'created' => $created,
             'updated' => $updated,
@@ -714,9 +707,12 @@ if ($method === 'POST') {
         if (!legacyUpsertProduct($product)) {
             errorResponse('No se pudo guardar el producto en la base de datos legacy', 500);
         }
-        legacyWriteEntityOverlay('products.json', $products);
+        persistenceMarkDbHealthy('products_create');
+        syncProductsOverlaySnapshot($products);
+        syncProductsBackupFromDb($productsPath);
     } else {
         writeJsonFile($productsPath, $products);
+        persistenceMarkDbFallback('products_create');
     }
 
     try {
@@ -784,15 +780,19 @@ if ($method === 'PATCH') {
             errorResponse('Producto no encontrado', 404);
         }
 
-        if (dbEnabled()) {
-            legacyWriteEntityOverlay('products.json', $products);
-        } else {
-            writeProductsSnapshotFast($productsPath, $products);
-        }
         try {
             persistProductTaxInDb((string)$updated['id'], $updated['iva'] ?? 'No', (string)($updated['barcode'] ?? ''));
+            if (dbEnabled()) {
+                persistenceMarkDbHealthy('products_tax');
+                syncProductsOverlaySnapshot($products);
+                syncProductsBackupFromDb($productsPath);
+            } else {
+                writeProductsSnapshotFast($productsPath, $products);
+                persistenceMarkDbFallback('products_tax');
+            }
         } catch (Throwable) {
-            // No bloquear UI: el valor ya queda en JSON/overlay.
+            writeProductsSnapshotFast($productsPath, $products);
+            persistenceMarkDbFallback('products_tax');
         }
         ok($updated);
     }
@@ -829,9 +829,12 @@ if ($method === 'PATCH') {
         if (!legacyUpsertProduct($updated)) {
             errorResponse('No se pudo actualizar el producto en la base de datos legacy', 500);
         }
-        legacyWriteEntityOverlay('products.json', $products);
+        persistenceMarkDbHealthy('products_update');
+        syncProductsOverlaySnapshot($products);
+        syncProductsBackupFromDb($productsPath);
     } else {
         writeJsonFile($productsPath, $products);
+        persistenceMarkDbFallback('products_update');
     }
 
     try {
@@ -877,7 +880,14 @@ if ($method === 'DELETE') {
         errorResponse('Producto no encontrado', 404);
     }
 
-    writeJsonFile($productsPath, $products);
+    if (dbEnabled()) {
+        legacyDeleteProduct($id);
+        persistenceMarkDbHealthy('products_delete');
+        syncProductsBackupFromDb($productsPath);
+    } else {
+        writeJsonFile($productsPath, $products);
+        persistenceMarkDbFallback('products_delete');
+    }
     ok(['id' => $id]);
 }
 

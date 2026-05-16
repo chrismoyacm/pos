@@ -1,7 +1,12 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../utils/persistence.php';
+
 $userName = $_SESSION['name'] ?? $_SESSION['username'] ?? 'Usuario';
+$persistenceStatus = persistenceRefreshStatus('header');
+$showPersistenceAlert = (bool)($persistenceStatus['active'] ?? false);
+$persistenceMessage = trim((string)($persistenceStatus['message'] ?? ''));
 ?>
 <header class="topbar">
   <div class="logo">
@@ -13,6 +18,15 @@ $userName = $_SESSION['name'] ?? $_SESSION['username'] ?? 'Usuario';
     <button class="logout-btn" type="button" onclick="openShiftExitPanel()">Salir</button>
   </div>
 </header>
+<div
+  class="topbar-db-alert<?php echo $showPersistenceAlert ? ' is-visible' : ''; ?>"
+  id="topbar-db-alert"
+  role="alert"
+  <?php echo $showPersistenceAlert ? '' : 'hidden'; ?>
+>
+  <strong>Modo respaldo:</strong>
+  <span id="topbar-db-alert-text"><?php echo htmlspecialchars($persistenceMessage !== '' ? $persistenceMessage : 'Sin conexion a base de datos. Operando con respaldo JSON.'); ?></span>
+</div>
 
 <div class="shift-panel-overlay" id="shift-exit-overlay" hidden onclick="closeShiftPanels()">
   <div class="shift-panel-window" onclick="event.stopPropagation()">
@@ -211,5 +225,34 @@ $userName = $_SESSION['name'] ?? $_SESSION['username'] ?? 'Usuario';
     hideOverlay('shift-exit-overlay');
     hideOverlay('shift-close-overlay');
     getNode('shift-actual-cash').addEventListener('input', updateShiftDifference);
+
+    function updatePersistenceBanner(status) {
+      var alertNode = getNode('topbar-db-alert');
+      var textNode = getNode('topbar-db-alert-text');
+      if (!alertNode || !textNode || !status) return;
+
+      var active = Boolean(status.active);
+      var message = (status.message || 'Sin conexion a base de datos. Operando con respaldo JSON.').toString();
+      textNode.textContent = message;
+      alertNode.hidden = !active;
+      alertNode.classList.toggle('is-visible', active);
+    }
+
+    function refreshPersistenceBanner() {
+      fetch('../api/system_status.php', { cache: 'no-store' })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (!data || !data.ok || !data.data) return;
+          updatePersistenceBanner(data.data);
+        })
+        .catch(function () {
+          updatePersistenceBanner({
+            active: true,
+            message: 'Sin conexion a base de datos. Operando con respaldo JSON.'
+          });
+        });
+    }
+
+    window.setInterval(refreshPersistenceBanner, 15000);
   })();
 </script>

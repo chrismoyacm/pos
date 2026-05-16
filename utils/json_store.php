@@ -9,6 +9,25 @@ function storagePath(string $fileName): string
     return dirname(__DIR__) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . $fileName;
 }
 
+/**
+ * @return array<int|string, mixed>
+ */
+function readDiskJsonFile(string $path): array
+{
+    if (!file_exists($path)) {
+        return [];
+    }
+    $contents = file_get_contents($path);
+    if ($contents === false || trim($contents) === '') {
+        return [];
+    }
+    $decoded = json_decode($contents, true);
+    if (!is_array($decoded)) {
+        return [];
+    }
+    return $decoded;
+}
+
 function storageFileKey(string $path): string
 {
     $storageRoot = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR;
@@ -32,18 +51,41 @@ function readJsonFile(string $path): array
         return $mapped;
     }
 
-    if (!file_exists($path)) {
-        return [];
+    return readDiskJsonFile($path);
+}
+
+function writeJsonBackupFile(string $path, array $data): bool
+{
+    $dir = dirname($path);
+    if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
+        return false;
     }
-    $contents = file_get_contents($path);
-    if ($contents === false || trim($contents) === '') {
-        return [];
+
+    $fp = fopen($path, 'c+');
+    if ($fp === false) {
+        return false;
     }
-    $decoded = json_decode($contents, true);
-    if (!is_array($decoded)) {
-        return [];
+
+    try {
+        if (!flock($fp, LOCK_EX)) {
+            return false;
+        }
+
+        $encoded = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        if ($encoded === false) {
+            flock($fp, LOCK_UN);
+            return false;
+        }
+
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, $encoded);
+        fflush($fp);
+        flock($fp, LOCK_UN);
+        return true;
+    } finally {
+        fclose($fp);
     }
-    return $decoded;
 }
 
 function writeJsonFile(string $path, array $data): void
@@ -51,33 +93,8 @@ function writeJsonFile(string $path, array $data): void
     if (legacyMappedWrite(storageFileKey($path), $data)) {
         return;
     }
-
-    $dir = dirname($path);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0777, true);
-    }
-
-    $fp = fopen($path, 'c+');
-    if ($fp === false) {
-        errorResponse('No se pudo abrir el archivo de almacenamiento', 500);
-    }
-
-    try {
-        if (!flock($fp, LOCK_EX)) {
-            errorResponse('No se pudo bloquear el archivo de almacenamiento', 500);
-        }
-
-        ftruncate($fp, 0);
-        rewind($fp);
-        $encoded = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        if ($encoded === false) {
-            errorResponse('No se pudo serializar JSON', 500);
-        }
-        fwrite($fp, $encoded);
-        fflush($fp);
-        flock($fp, LOCK_UN);
-    } finally {
-        fclose($fp);
+    if (!writeJsonBackupFile($path, $data)) {
+        errorResponse('No se pudo escribir el archivo de almacenamiento', 500);
     }
 }
 

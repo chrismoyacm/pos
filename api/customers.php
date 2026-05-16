@@ -2,9 +2,144 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
+require_once __DIR__ . '/../utils/persistence.php';
 
 $customersPath = storagePath('customers.json');
 $request = getRequestInfo();
+
+function parseCustomerDbIdFromJsonId(string $id): ?int
+{
+    $raw = trim($id);
+    if ($raw === '') {
+        return null;
+    }
+    if (preg_match('/^c-(\d+)$/i', $raw, $m) === 1) {
+        return (int)$m[1];
+    }
+    if (preg_match('/^\d+$/', $raw) === 1) {
+        return (int)$raw;
+    }
+    return null;
+}
+
+function syncCustomersBackupFromDb(string $customersPath): void
+{
+    writeJsonBackupFile($customersPath, legacyReadCustomers());
+}
+
+function nextCustomerDbId(): int
+{
+    return (int)db()->query('SELECT COALESCE(MAX(CAST(ID AS UNSIGNED)), 0) + 1 FROM CLIENTESV2')->fetchColumn();
+}
+
+/**
+ * @param array<string, mixed> $customer
+ * @return array<string, mixed>
+ */
+function upsertCustomerInDb(array $customer, ?int $forcedId = null): array
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $id = $forcedId ?? parseCustomerDbIdFromJsonId((string)($customer['id'] ?? ''));
+        if ($id === null || $id <= 0) {
+            $id = nextCustomerDbId();
+        }
+
+        $fullName = trim((string)($customer['name'] ?? ''));
+        $first = trim((string)($customer['firstName'] ?? ''));
+        $last = trim((string)($customer['lastName'] ?? ''));
+        if ($first === '' && $last === '' && $fullName !== '') {
+            $parts = preg_split('/\s+/', $fullName, 2) ?: [];
+            $first = trim((string)($parts[0] ?? ''));
+            $last = trim((string)($parts[1] ?? ''));
+        }
+
+        $params = [
+            ':id' => $id,
+            ':folio' => (string)$id,
+            ':nombres' => $first,
+            ':apellidos' => $last,
+            ':identificacion' => trim((string)($customer['taxId'] ?? ($customer['identification'] ?? ''))),
+            ':email' => trim((string)($customer['email'] ?? '')),
+            ':telefono' => trim((string)($customer['phone'] ?? '')),
+            ':dom1' => trim((string)($customer['address1'] ?? '')),
+            ':dom2' => trim((string)($customer['address2'] ?? '')),
+            ':parroquia' => trim((string)($customer['parish'] ?? '')),
+            ':canton' => trim((string)($customer['canton'] ?? '')),
+            ':provincia' => trim((string)($customer['province'] ?? '')),
+            ':cp' => trim((string)($customer['zip'] ?? '')),
+            ':notas' => trim((string)($customer['notes'] ?? '')),
+        ];
+
+        $exists = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2 WHERE ID = :id');
+        $exists->execute([':id' => $id]);
+        if ((int)$exists->fetchColumn() > 0) {
+            $pdo->prepare(
+                'UPDATE CLIENTESV2
+                 SET NOMBRES = :nombres, APELLIDOS = :apellidos, IDENTIFICACION = :identificacion, EMAIL = :email, TELEFONO = :telefono,
+                     DOMICILIO1 = :dom1, DOMICILIO2 = :dom2, PARROQUIA = :parroquia, CANTON = :canton,
+                     PROVINCIA = :provincia, CODIGO_POSTAL = :cp, NOTAS = :notas, ACTIVO = 1
+                 WHERE ID = :id'
+            )->execute($params);
+        } else {
+            $pdo->prepare(
+                "INSERT INTO CLIENTESV2
+                 (ID, FOLIO, NOMBRES, APELLIDOS, IDENTIFICACION, EMAIL, TELEFONO, DOMICILIO1, DOMICILIO2,
+                  PARROQUIA, CANTON, PROVINCIA, CODIGO_POSTAL, NOTAS, TOTAL_VENTAS, TOTAL_GANANCIAS, TOTAL_TICKETS,
+                  ACTIVO, DE_SISTEMA, OLD_CLIENTE_ID, OLD_FACTURACION_CLIENTES_ID)
+                 VALUES
+                 (:id, :folio, :nombres, :apellidos, :identificacion, :email, :telefono, :dom1, :dom2,
+                  :parroquia, :canton, :provincia, :cp, :notas, 0, 0, 0, 1, '', '', '')"
+            )->execute($params);
+        }
+
+        if (legacyTableExists('CLIENTESV2_CREDITO')) {
+            $hasCredit = !empty($customer['creditAuthorized']) ? 1 : 0;
+            $existsCredit = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2_CREDITO WHERE CLIENTESV2_ID = :id');
+            $existsCredit->execute([':id' => $id]);
+            if ((int)$existsCredit->fetchColumn() > 0) {
+                $pdo->prepare(
+                    'UPDATE CLIENTESV2_CREDITO
+                     SET TIENE_CREDITO = :tiene_credito, ELIMINADO_EN = ""
+                     WHERE CLIENTESV2_ID = :id'
+                )->execute([
+                    ':id' => $id,
+                    ':tiene_credito' => $hasCredit,
+                ]);
+            } else {
+                $pdo->prepare(
+                    'INSERT INTO CLIENTESV2_CREDITO (CLIENTESV2_ID, TIENE_CREDITO, LIMITE_CREDITO, ULTIMO_ABONO, SALDO_ACTUAL, ELIMINADO_EN)
+                     VALUES (:id, :tiene_credito, 0, "", "0", "")'
+                )->execute([
+                    ':id' => $id,
+                    ':tiene_credito' => $hasCredit,
+                ]);
+            }
+        }
+
+        $pdo->commit();
+        $customer['id'] = 'c-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT);
+        return $customer;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function deleteCustomerInDb(string $id): bool
+{
+    $dbId = parseCustomerDbIdFromJsonId($id);
+    if ($dbId === null || $dbId <= 0) {
+        return false;
+    }
+
+    $stmt = db()->prepare('UPDATE CLIENTESV2 SET ACTIVO = 0 WHERE ID = :id');
+    $stmt->execute([':id' => $dbId]);
+    return $stmt->rowCount() > 0;
+}
 
 function normalizeCustomer(array $c): array
 {
@@ -230,13 +365,27 @@ if ($method === 'POST') {
         if ($id === '') {
             errorResponse('ID requerido', 400);
         }
-        $customers = readJsonFile($customersPath);
         $updated = normalizeCustomer($body);
         $updated['id'] = $id;
         if (trim($updated['name']) === '') {
             errorResponse('Nombre requerido', 400);
         }
         validateCustomerTaxIdOrFail($updated);
+        if (dbEnabled()) {
+            try {
+                $dbId = parseCustomerDbIdFromJsonId($id);
+                if ($dbId === null || $dbId <= 0) {
+                    errorResponse('Cliente no encontrado', 404);
+                }
+                $updated = upsertCustomerInDb($updated, $dbId);
+                persistenceMarkDbHealthy('customers_update');
+                syncCustomersBackupFromDb($customersPath);
+                ok($updated);
+            } catch (Throwable) {
+                persistenceMarkDbFallback('customers_update');
+            }
+        }
+        $customers = readJsonFile($customersPath);
         $found = false;
         foreach ($customers as &$c) {
             if ((string)($c['id'] ?? '') === $id) {
@@ -250,6 +399,7 @@ if ($method === 'POST') {
             errorResponse('Cliente no encontrado', 404);
         }
         writeJsonFile($customersPath, $customers);
+        persistenceMarkDbFallback('customers_update');
         ok($updated);
     }
 
@@ -257,6 +407,18 @@ if ($method === 'POST') {
         $id = (string)($body['id'] ?? '');
         if ($id === '') {
             errorResponse('ID requerido', 400);
+        }
+        if (dbEnabled()) {
+            try {
+                if (!deleteCustomerInDb($id)) {
+                    errorResponse('Cliente no encontrado', 404);
+                }
+                persistenceMarkDbHealthy('customers_delete');
+                syncCustomersBackupFromDb($customersPath);
+                ok(['id' => $id]);
+            } catch (Throwable) {
+                persistenceMarkDbFallback('customers_delete');
+            }
         }
         $customers = readJsonFile($customersPath);
         $before = count($customers);
@@ -267,19 +429,31 @@ if ($method === 'POST') {
             errorResponse('Cliente no encontrado', 404);
         }
         writeJsonFile($customersPath, $customers);
+        persistenceMarkDbFallback('customers_delete');
         ok(['id' => $id]);
     }
 
-    $customers = readJsonFile($customersPath);
     $incoming = normalizeCustomer($body);
-    $incoming['id'] = nextCustomerId($customers);
 
     if (trim($incoming['name']) === '') {
         errorResponse('Nombre requerido', 400);
     }
     validateCustomerTaxIdOrFail($incoming);
+    if (dbEnabled()) {
+        try {
+            $incoming = upsertCustomerInDb($incoming, null);
+            persistenceMarkDbHealthy('customers_create');
+            syncCustomersBackupFromDb($customersPath);
+            ok($incoming);
+        } catch (Throwable) {
+            persistenceMarkDbFallback('customers_create');
+        }
+    }
+    $customers = readJsonFile($customersPath);
+    $incoming['id'] = nextCustomerId($customers);
     $customers[] = $incoming;
     writeJsonFile($customersPath, $customers);
+    persistenceMarkDbFallback('customers_create');
     ok($incoming);
 }
 
@@ -292,13 +466,27 @@ if ($method === 'PATCH') {
     if ($id === '') {
         errorResponse('ID requerido', 400);
     }
-    $customers = readJsonFile($customersPath);
     $updated = normalizeCustomer($body);
     $updated['id'] = $id;
     if (trim($updated['name']) === '') {
         errorResponse('Nombre requerido', 400);
     }
     validateCustomerTaxIdOrFail($updated);
+    if (dbEnabled()) {
+        try {
+            $dbId = parseCustomerDbIdFromJsonId($id);
+            if ($dbId === null || $dbId <= 0) {
+                errorResponse('Cliente no encontrado', 404);
+            }
+            $updated = upsertCustomerInDb($updated, $dbId);
+            persistenceMarkDbHealthy('customers_update');
+            syncCustomersBackupFromDb($customersPath);
+            ok($updated);
+        } catch (Throwable) {
+            persistenceMarkDbFallback('customers_update');
+        }
+    }
+    $customers = readJsonFile($customersPath);
     $found = false;
     foreach ($customers as &$c) {
         if ((string)($c['id'] ?? '') === $id) {
@@ -312,6 +500,7 @@ if ($method === 'PATCH') {
         errorResponse('Cliente no encontrado', 404);
     }
     writeJsonFile($customersPath, $customers);
+    persistenceMarkDbFallback('customers_update');
     ok($updated);
 }
 
@@ -324,6 +513,18 @@ if ($method === 'DELETE') {
     if ($id === '') {
         errorResponse('ID requerido', 400);
     }
+    if (dbEnabled()) {
+        try {
+            if (!deleteCustomerInDb($id)) {
+                errorResponse('Cliente no encontrado', 404);
+            }
+            persistenceMarkDbHealthy('customers_delete');
+            syncCustomersBackupFromDb($customersPath);
+            ok(['id' => $id]);
+        } catch (Throwable) {
+            persistenceMarkDbFallback('customers_delete');
+        }
+    }
     $customers = readJsonFile($customersPath);
     $before = count($customers);
     $customers = array_values(array_filter($customers, function ($c) use ($id) {
@@ -333,6 +534,7 @@ if ($method === 'DELETE') {
         errorResponse('Cliente no encontrado', 404);
     }
     writeJsonFile($customersPath, $customers);
+    persistenceMarkDbFallback('customers_delete');
     ok(['id' => $id]);
 }
 

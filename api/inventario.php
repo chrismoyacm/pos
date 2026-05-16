@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
+require_once __DIR__ . '/../utils/persistence.php';
 
 $productsPath = storagePath('products.json');
 $inventoryMovementsPath = storagePath('inventory_movements.json');
@@ -45,9 +46,29 @@ function round2Inv(float $value): float
 
 function isInventoryManagedProductInv(array $product): bool
 {
-    $unitType = strtolower(trim((string)($product['unitType'] ?? 'unit')));
     $inventoryEnabled = (bool)($product['inventoryEnabled'] ?? true);
-    return $inventoryEnabled && $unitType !== 'package';
+    return $inventoryEnabled;
+}
+
+function parseInventoryProductDbId(string $productId): ?int
+{
+    $raw = trim($productId);
+    if ($raw === '') {
+        return null;
+    }
+    if (preg_match('/^p-(\d+)$/i', $raw, $m) === 1) {
+        return (int)$m[1];
+    }
+    if (preg_match('/^\d+$/', $raw) === 1) {
+        return (int)$raw;
+    }
+    return null;
+}
+
+function syncInventoryBackups(string $productsPath, string $inventoryMovementsPath): void
+{
+    writeJsonBackupFile($productsPath, legacyReadProducts());
+    writeJsonBackupFile($inventoryMovementsPath, legacyReadInventoryMovements());
 }
 
 if ($method === 'GET') {
@@ -178,86 +199,57 @@ if ($method === 'PATCH' || $method === 'POST') {
     }
 
     $products = readJsonFile($productsPath);
-    $found = false;
-    $beforeQty = 0;
-    $afterQty = 0;
-    $productName = '';
-    $beforeCost = 0.0;
-    $afterCost = 0.0;
-    $beforePrice = 0.0;
-    $afterPrice = 0.0;
-    $margin = 0.0;
-    foreach ($products as &$p) {
-        if ((string)($p['id'] ?? '') === $productId) {
-            if (!isInventoryManagedProductInv($p)) {
-                errorResponse('El producto no maneja inventario (kit o inventario desactivado)', 409);
-            }
-            $current = (int)($p['stock'] ?? 0);
-            $next = $current + $delta;
-            if ($next < 0) {
-                errorResponse('Stock insuficiente', 409, ['current' => $current, 'delta' => $delta]);
-            }
-
-            $currentCost = (float)($p['cost'] ?? 0);
-            $currentPrice = (float)($p['price'] ?? 0);
-            $marginValue = (float)($p['margin'] ?? 0);
-            if ($marginPct !== null && $marginPct >= 0) {
-                $marginValue = $marginPct;
-            }
-            if ($marginValue <= 0 && $currentCost > 0 && $currentPrice > 0) {
-                $marginValue = (($currentPrice - $currentCost) / $currentCost) * 100;
-            }
-
-            $newCost = $currentCost;
-            // For inventory entries, use weighted average cost if a valid entry cost was provided.
-            if ($delta > 0 && $entryUnitCost > 0 && $next > 0) {
-                $newCost = (($current * $currentCost) + ($delta * $entryUnitCost)) / $next;
-            }
-            $newPrice = $newCost * (1 + ($marginValue / 100));
-
-            if ($salePrice !== null && $salePrice >= 0) {
-                $newPrice = $salePrice;
-                if ($newCost > 0) {
-                    $marginValue = (($newPrice - $newCost) / $newCost) * 100;
-                }
-            }
-
-            $p['stock'] = $next;
-            $p['margin'] = round2Inv(max(0, $marginValue));
-            $p['cost'] = round2Inv($newCost);
-            $p['price'] = round2Inv(max(0, $newPrice));
-            if ($wholesalePrice !== null && $wholesalePrice >= 0) {
-                $currentWholesale = $p['wholesale'] ?? [];
-                if (!is_array($currentWholesale)) {
-                    $currentWholesale = [];
-                }
-                $minQty = (int)($currentWholesale['minQty'] ?? 0);
-                $p['wholesale'] = [
-                    'minQty' => $minQty > 0 ? $minQty : 1,
-                    'price' => round2Inv($wholesalePrice),
-                ];
-            }
-            $beforeQty = $current;
-            $afterQty = $next;
-            $beforeCost = round2Inv($currentCost);
-            $afterCost = (float)$p['cost'];
-            $beforePrice = round2Inv($currentPrice);
-            $afterPrice = (float)$p['price'];
-            $margin = round2Inv($marginValue);
-            $productName = (string)($p['name'] ?? '');
-            $found = true;
+    $selectedProduct = null;
+    foreach ($products as $product) {
+        if ((string)($product['id'] ?? '') === $productId) {
+            $selectedProduct = is_array($product) ? $product : null;
             break;
         }
     }
-    unset($p);
 
-    if (!$found) {
+    if (!is_array($selectedProduct)) {
         errorResponse('Producto no encontrado', 404);
     }
+    if (!isInventoryManagedProductInv($selectedProduct)) {
+        errorResponse('El producto no maneja inventario o tiene el inventario desactivado', 409);
+    }
 
-    writeJsonFile($productsPath, $products);
+    $current = round((float)($selectedProduct['stock'] ?? 0), 3);
+    $next = round($current + $delta, 3);
+    if ($next < 0) {
+        errorResponse('Stock insuficiente', 409, ['current' => $current, 'delta' => $delta]);
+    }
 
-    $movements = readJsonFile($inventoryMovementsPath);
+    $currentCost = (float)($selectedProduct['cost'] ?? 0);
+    $currentPrice = (float)($selectedProduct['price'] ?? 0);
+    $marginValue = (float)($selectedProduct['margin'] ?? 0);
+    if ($marginPct !== null && $marginPct >= 0) {
+        $marginValue = $marginPct;
+    }
+    if ($marginValue <= 0 && $currentCost > 0 && $currentPrice > 0) {
+        $marginValue = (($currentPrice - $currentCost) / $currentCost) * 100;
+    }
+
+    $newCost = $currentCost;
+    if ($delta > 0 && $entryUnitCost > 0 && $next > 0) {
+        $newCost = (($current * $currentCost) + ($delta * $entryUnitCost)) / $next;
+    }
+    $newPrice = $newCost * (1 + ($marginValue / 100));
+    if ($salePrice !== null && $salePrice >= 0) {
+        $newPrice = $salePrice;
+        if ($newCost > 0) {
+            $marginValue = (($newPrice - $newCost) / $newCost) * 100;
+        }
+    }
+
+    $beforeQty = $current;
+    $afterQty = $next;
+    $beforeCost = round2Inv($currentCost);
+    $afterCost = round2Inv($newCost);
+    $beforePrice = round2Inv($currentPrice);
+    $afterPrice = round2Inv(max(0, $newPrice));
+    $margin = round2Inv(max(0, $marginValue));
+    $productName = (string)($selectedProduct['name'] ?? '');
     $type = 'entry';
     if (in_array($movementType, ['entry', 'exit', 'sale'], true)) {
         $type = $movementType;
@@ -265,6 +257,106 @@ if ($method === 'PATCH' || $method === 'POST') {
         $type = 'exit';
     }
 
+    if (dbEnabled()) {
+        try {
+            $dbId = parseInventoryProductDbId($productId);
+            if ($dbId === null || $dbId <= 0) {
+                errorResponse('Producto no encontrado', 404);
+            }
+            $pdo = db();
+            $pdo->beginTransaction();
+            $wholesaleSql = '';
+            $wholesaleParams = [];
+            if ($wholesalePrice !== null && $wholesalePrice >= 0) {
+                $wholesaleSql = ', MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo';
+                $wholesaleParams = [
+                    ':mayoreo' => round2Inv($wholesalePrice),
+                    ':pmayoreo' => round2Inv($wholesalePrice),
+                ];
+            }
+            $stmt = $pdo->prepare(
+                'UPDATE PRODUCTOS
+                 SET DINVENTARIO = :stock, PCOSTO = :pcosto, PVENTA = :pventa, PFINAL = :pfinal, PORCENTAJE_GANANCIA = :margen' . $wholesaleSql . '
+                 WHERE ID = :id'
+            );
+            $stmt->execute(array_merge([
+                ':stock' => $afterQty,
+                ':pcosto' => $afterCost,
+                ':pventa' => $afterPrice,
+                ':pfinal' => $afterPrice,
+                ':margen' => $margin,
+                ':id' => $dbId,
+            ], $wholesaleParams));
+
+            if (legacyTableExists('inventario_historial')) {
+                $histId = 'mov-' . date('YmdHis') . '-' . substr(bin2hex(random_bytes(3)), 0, 6);
+                $pdo->prepare(
+                    'INSERT INTO INVENTARIO_HISTORIAL
+                     (ID, PRODUCTO_ID, CUANDO_FUE, CANTIDAD_ANTERIOR, CANTIDAD, DESCRIPCION, COSTO_UNITARIO, COSTO_DESPUES, AJUSTE_ID, RECIBO_INVENTARIO_ID, VENTA_ID, TRANSFERENCIA_ID, CAJA_ID, VENTA_POR_KIT, USUARIO_ID, ALMACEN_ID)
+                     VALUES
+                     (:id, :producto_id, :cuando_fue, :cantidad_anterior, :cantidad, :descripcion, :costo_unitario, :costo_despues, :ajuste_id, :recibo_id, :venta_id, :transferencia_id, :caja_id, :venta_por_kit, :usuario_id, :almacen_id)'
+                )->execute([
+                    ':id' => $histId,
+                    ':producto_id' => (string)$dbId,
+                    ':cuando_fue' => legacyToSqlDateTime(date('c')),
+                    ':cantidad_anterior' => $beforeQty,
+                    ':cantidad' => round($delta, 3),
+                    ':descripcion' => $note !== '' ? $note : ('Ajuste de inventario ' . $type),
+                    ':costo_unitario' => $beforeCost,
+                    ':costo_despues' => $afterCost,
+                    ':ajuste_id' => $source === 'inventario' ? $histId : '',
+                    ':recibo_id' => '',
+                    ':venta_id' => '',
+                    ':transferencia_id' => '',
+                    ':caja_id' => '1',
+                    ':venta_por_kit' => '0',
+                    ':usuario_id' => '',
+                    ':almacen_id' => '1',
+                ]);
+            }
+            $pdo->commit();
+            persistenceMarkDbHealthy('inventory_adjust');
+            syncInventoryBackups($productsPath, $inventoryMovementsPath);
+            ok([
+                'productId' => $productId,
+                'stock' => $afterQty,
+                'cost' => $afterCost,
+                'price' => $afterPrice,
+                'margin' => $margin,
+            ]);
+        } catch (Throwable) {
+            if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            persistenceMarkDbFallback('inventory_adjust');
+        }
+    }
+
+    foreach ($products as &$p) {
+        if ((string)($p['id'] ?? '') !== $productId) {
+            continue;
+        }
+        $p['stock'] = $afterQty;
+        $p['margin'] = $margin;
+        $p['cost'] = $afterCost;
+        $p['price'] = $afterPrice;
+        if ($wholesalePrice !== null && $wholesalePrice >= 0) {
+            $currentWholesale = $p['wholesale'] ?? [];
+            if (!is_array($currentWholesale)) {
+                $currentWholesale = [];
+            }
+            $minQty = (int)($currentWholesale['minQty'] ?? 0);
+            $p['wholesale'] = [
+                'minQty' => $minQty > 0 ? $minQty : 1,
+                'price' => round2Inv($wholesalePrice),
+            ];
+        }
+        break;
+    }
+    unset($p);
+
+    writeJsonFile($productsPath, $products);
+    $movements = readJsonFile($inventoryMovementsPath);
     $movements = appendInventoryMovementInv($movements, [
         'type' => $type,
         'productId' => $productId,
@@ -281,6 +373,7 @@ if ($method === 'PATCH' || $method === 'POST') {
         'source' => $source,
     ]);
     writeJsonFile($inventoryMovementsPath, $movements);
+    persistenceMarkDbFallback('inventory_adjust');
     ok([
         'productId' => $productId,
         'stock' => $afterQty,

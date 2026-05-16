@@ -84,7 +84,7 @@ declare(strict_types=1);
                   </label>
                   <label class="prod-field">
                     <span>Precio Venta</span>
-                    <input type="number" step="0.01" min="0" id="prod-price" readonly>
+                    <input type="number" step="0.01" min="0" id="prod-price">
                   </label>
                   <label class="prod-field">
                     <span>Precio Especial</span>
@@ -135,11 +135,13 @@ declare(strict_types=1);
                         <tr>
                           <th>Producto</th>
                           <th style="width:90px">Cantidad</th>
+                          <th style="width:90px">Stock</th>
                         </tr>
                       </thead>
                       <tbody id="prod-package-body"></tbody>
                     </table>
                   </div>
+                  <div class="prod-package-summary" id="prod-package-summary">No hay articulos agregados al paquete.</div>
                 </aside>
               </div>
 

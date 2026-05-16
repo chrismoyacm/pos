@@ -33,12 +33,12 @@ declare(strict_types=1);
 
   <div class="venta-footer">
     <div class="left">
-      <span><strong id="countItems">0</strong> Productos en la venta actual.</span>
-      <button type="button" class="btn" id="btn-cambiar"><span class="kbd">F5</span> Cambiar</button>
-      <button type="button" class="btn"><span class="kbd">F6</span> Pendiente</button>
-      <button type="button" class="btn" id="btn-eliminar">Eliminar</button>
-      <button type="button" class="btn" id="btn-cliente">Asignar cliente</button>
-      <span class="muted">Cliente:</span> <span id="clienteNombre" class="badge-blue">Público en general</span>
+      <span><strong id="countItems">0</strong> Productos en la venta actual.</span> 
+      <!--<button type="button" class="btn" id="btn-cambiar"><span class="kbd">F5</span> Cambiar</button>-->
+      <button type="button" class="btn" id="btn-pendiente"><span class="kbd">F6</span> Pendiente</button>
+      <!--<button type="button" class="btn" id="btn-eliminar">Eliminar</button>-->
+      <!--<button type="button" class="btn" id="btn-cliente">Asignar cliente</button>-->
+      <!--<span class="muted">Cliente:</span> <span id="clienteNombre" class="badge-blue">Público en general</span>-->
       <button type="button" class="btn" id="btn-cobrar"><span class="kbd">F12</span> Cobrar</button>
     </div>
     <div class="totales">

@@ -67,6 +67,7 @@
   }
 
   let _feedbackTimer = null;
+  const PRODUCT_NEW_DRAFT_KEY = 'pos.products.newDraft';
 
   function showSaveFeedback(message, tone) {
     const $box = $('#prod-save-feedback');
@@ -227,7 +228,8 @@
     catalogPageSize: 20,
     catalogTotal: 0,
     catalogTotalPages: 1,
-    taxOptions: []
+    taxOptions: [],
+    suspendDraftSync: false
   };
 
   const NEW_DEPARTMENT_OPTION_VALUE = '__new_department__';
@@ -346,6 +348,55 @@
     };
   }
 
+  function withDraftSyncSuspended(fn) {
+    state.suspendDraftSync = true;
+    try {
+      fn();
+    } finally {
+      state.suspendDraftSync = false;
+    }
+  }
+
+  function saveNewProductDraft() {
+    if (!isProductosPage() || state.mode !== 'new' || state.suspendDraftSync) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(PRODUCT_NEW_DRAFT_KEY, JSON.stringify(readForm()));
+    } catch (err) {
+      void err;
+    }
+  }
+
+  function clearNewProductDraft() {
+    try {
+      window.localStorage.removeItem(PRODUCT_NEW_DRAFT_KEY);
+    } catch (err) {
+      void err;
+    }
+  }
+
+  function readNewProductDraft() {
+    try {
+      const raw = window.localStorage.getItem(PRODUCT_NEW_DRAFT_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        return null;
+      }
+      return Object.assign(defaultFormValues(), parsed, {
+        id: '',
+        packageItems: Array.isArray(parsed.packageItems) ? parsed.packageItems : []
+      });
+    } catch (err) {
+      void err;
+      return null;
+    }
+  }
+
   function productToForm(product) {
     return {
       id: product?.id || '',
@@ -364,7 +415,8 @@
           productId: item?.productId || '',
           barcode: item?.barcode || '',
           name: item?.name || '',
-          qty: Number(item?.qty || 1)
+          qty: Number(item?.qty || 1),
+          stock: Number(item?.stock || 0)
         };
       }) : [],
       inventoryEnabled: product?.inventoryEnabled !== false,
@@ -376,34 +428,37 @@
 
   function fillForm(values) {
     const data = values || defaultFormValues();
-    state.packageItems = Array.isArray(data.packageItems) ? data.packageItems.map(function (item) {
-      return {
-        productId: item.productId || '',
-        barcode: item.barcode || '',
-        name: item.name || '',
-        qty: Number(item.qty || 1)
-      };
-    }) : [];
-    state.selectedPackageIndex = -1;
-    $('#prod-form').data('product-id', data.id || '');
-    $('#prod-barcode').val(data.barcode);
-    $('#prod-name').val(data.name);
-    $('#prod-cost').val(Number(data.cost).toFixed(2));
-    $('#prod-margin').val(Number(data.margin).toFixed(2));
-    $('#prod-price').val(Number(data.price).toFixed(2));
-    $('#prod-special-price').val(Number(data.specialPrice || 0).toFixed(2));
-    $('#prod-wholesale').val(Number(data.wholesalePrice).toFixed(2));
-    $('#prod-department').val(data.department);
-    $('#prod-department').data('selected', data.department);
-    syncIvaSelectOptions(normalizeIvaLabel(data.iva));
-    $('input[name="prod-unit-type"][value="' + data.unitType + '"]').prop('checked', true);
-    $('#prod-inventory-enabled').prop('checked', !!data.inventoryEnabled);
-    $('#prod-stock').val(String(data.stock));
-    $('#prod-min-stock').val(String(data.minStock));
-    $('#prod-max-stock').val(String(data.maxStock));
-    syncInventoryControls();
-    syncPackagePanelVisibility();
-    renderPackageItems();
+    withDraftSyncSuspended(function () {
+      state.packageItems = Array.isArray(data.packageItems) ? data.packageItems.map(function (item) {
+        return {
+          productId: item.productId || '',
+          barcode: item.barcode || '',
+          name: item.name || '',
+          qty: Number(item.qty || 1),
+          stock: Number(item.stock || 0)
+        };
+      }) : [];
+      state.selectedPackageIndex = -1;
+      $('#prod-form').data('product-id', data.id || '');
+      $('#prod-barcode').val(data.barcode);
+      $('#prod-name').val(data.name);
+      $('#prod-cost').val(Number(data.cost).toFixed(2));
+      $('#prod-margin').val(Number(data.margin).toFixed(2));
+      $('#prod-price').val(Number(data.price).toFixed(2));
+      $('#prod-special-price').val(Number(data.specialPrice || 0).toFixed(2));
+      $('#prod-wholesale').val(Number(data.wholesalePrice).toFixed(2));
+      $('#prod-department').val(data.department);
+      $('#prod-department').data('selected', data.department);
+      syncIvaSelectOptions(normalizeIvaLabel(data.iva));
+      $('input[name="prod-unit-type"][value="' + data.unitType + '"]').prop('checked', true);
+      $('#prod-inventory-enabled').prop('checked', !!data.inventoryEnabled);
+      $('#prod-stock').val(String(data.stock));
+      $('#prod-min-stock').val(String(data.minStock));
+      $('#prod-max-stock').val(String(data.maxStock));
+      syncInventoryControls();
+      syncPackagePanelVisibility();
+      renderPackageItems();
+    });
   }
 
   function recalcSalePriceFromMargin() {
@@ -414,27 +469,17 @@
   }
 
   function syncInventoryControls() {
-    const isKit = isPackageProduct();
     const $enabled = $('#prod-inventory-enabled');
     const $stockInputs = $('#prod-stock, #prod-min-stock, #prod-max-stock');
-
-    if (isKit) {
-      $enabled.prop('checked', false).prop('disabled', true);
-      $stockInputs.val('0').prop('disabled', true);
-      return;
-    }
-
     $enabled.prop('disabled', false);
-    const enabled = $enabled.is(':checked');
-    $stockInputs.prop('disabled', !enabled);
+    $stockInputs.prop('disabled', false);
   }
 
   function readForm() {
-    const isKit = ($('input[name="prod-unit-type"]:checked').val()?.toString() || 'unit') === 'package';
-    const inventoryEnabled = isKit ? false : $('#prod-inventory-enabled').is(':checked');
-    const stock = inventoryEnabled ? (parseInt($('#prod-stock').val().toString(), 10) || 0) : 0;
-    const minStock = inventoryEnabled ? (parseInt($('#prod-min-stock').val().toString(), 10) || 0) : 0;
-    const maxStock = inventoryEnabled ? (parseInt($('#prod-max-stock').val().toString(), 10) || 0) : 0;
+    const inventoryEnabled = $('#prod-inventory-enabled').is(':checked');
+    const stock = parseInt($('#prod-stock').val().toString(), 10) || 0;
+    const minStock = parseInt($('#prod-min-stock').val().toString(), 10) || 0;
+    const maxStock = parseInt($('#prod-max-stock').val().toString(), 10) || 0;
 
     return {
       id: $('#prod-form').data('product-id') || '',
@@ -453,7 +498,8 @@
           productId: item.productId || '',
           barcode: item.barcode || '',
           name: item.name || '',
-          qty: Number(item.qty || 1)
+          qty: Number(item.qty || 1),
+          stock: Number(item.stock || 0)
         };
       }),
       inventoryEnabled: inventoryEnabled,
@@ -534,6 +580,54 @@
     );
   }
 
+  function findProductByPackageItem(item) {
+    const productId = (item?.productId || '').toString();
+    const barcode = (item?.barcode || '').toString().trim();
+    return state.products.find(function (product) {
+      if ((product?.id || '').toString() === productId && productId) {
+        return true;
+      }
+      return barcode && (product?.barcode || '').toString().trim() === barcode;
+    }) || null;
+  }
+
+  function packageItemStock(item) {
+    const product = findProductByPackageItem(item);
+    if (product) {
+      return Number(product.stock ?? 0);
+    }
+    return Number(item?.stock || 0);
+  }
+
+  function packageKitLimitSummary() {
+    if (!state.packageItems.length) {
+      return {
+        tone: 'muted',
+        message: 'No hay articulos agregados al paquete.'
+      };
+    }
+
+    const limits = [];
+    for (let i = 0; i < state.packageItems.length; i += 1) {
+      const item = state.packageItems[i];
+      const qty = Number(item?.qty || 0);
+      const stock = packageItemStock(item);
+      if (!(qty > 0)) {
+        return {
+          tone: 'warn',
+          message: 'No se pudo calcular el limite de kits con los articulos actuales.'
+        };
+      }
+      limits.push(Math.floor(stock / qty));
+    }
+
+    const limit = limits.length ? Math.min.apply(null, limits) : 0;
+    return {
+      tone: limit > 0 ? 'info' : 'warn',
+      message: 'Limite de kits que se puede armar: ' + String(Math.max(0, limit))
+    };
+  }
+
   function lookupPackagePreview() {
     const code = ($('#prod-package-code').val() || '').toString().trim();
     if (!code) {
@@ -571,23 +665,29 @@
 
   function renderPackageItems() {
     const $tbody = $('#prod-package-body').empty();
+    const $summary = $('#prod-package-summary');
     if ($tbody.length === 0) {
       return;
     }
 
     if (!state.packageItems.length) {
-      $tbody.append('<tr><td colspan="2" class="prod-package-empty">No hay articulos agregados al paquete.</td></tr>');
+      $tbody.append('<tr><td colspan="3" class="prod-package-empty">No hay articulos agregados al paquete.</td></tr>');
       $('#prod-package-remove-btn').prop('disabled', true);
+      if ($summary.length) {
+        $summary.removeClass('is-info is-warn').text('No hay articulos agregados al paquete.');
+      }
       return;
     }
 
     state.packageItems.forEach(function (item, index) {
       const selected = index === state.selectedPackageIndex;
       const label = (item.barcode ? (item.barcode + ' - ') : '') + (item.name || 'Producto');
+      const stock = packageItemStock(item);
       const $tr = $(`
         <tr class="${selected ? 'row-selected' : ''}">
           <td>${escapeHtml(label)}</td>
           <td class="catalog-center">${escapeHtml(String(item.qty || 1))}</td>
+          <td class="catalog-center">${escapeHtml(String(stock))}</td>
         </tr>
       `);
       $tr.on('click', function () {
@@ -599,6 +699,10 @@
     });
 
     $('#prod-package-remove-btn').prop('disabled', state.selectedPackageIndex < 0);
+    if ($summary.length) {
+      const summary = packageKitLimitSummary();
+      $summary.removeClass('is-info is-warn').addClass(summary.tone === 'warn' ? 'is-warn' : 'is-info').text(summary.message);
+    }
   }
 
   function clearPackageInputs(focusCode) {
@@ -634,19 +738,22 @@
 
       if (existingIndex >= 0) {
         state.packageItems[existingIndex].qty += qty;
+        state.packageItems[existingIndex].stock = Number(product.stock || 0);
         state.selectedPackageIndex = existingIndex;
       } else {
         state.packageItems.push({
           productId: product.id || '',
           barcode: product.barcode || '',
           name: product.name || '',
-          qty: qty
+          qty: qty,
+          stock: Number(product.stock || 0)
         });
         state.selectedPackageIndex = state.packageItems.length - 1;
       }
 
       renderPackageItems();
       syncPackagePanelVisibility();
+      saveNewProductDraft();
       clearPackageInputs(true);
     };
 
@@ -677,6 +784,7 @@
     state.selectedPackageIndex = Math.min(state.selectedPackageIndex, state.packageItems.length - 1);
     renderPackageItems();
     syncPackagePanelVisibility();
+    saveNewProductDraft();
   }
 
   function updateDeleteSummary() {
@@ -1322,7 +1430,7 @@
 
     if (state.mode === 'new') {
       state.selectedId = null;
-      fillForm(defaultFormValues());
+      fillForm(readNewProductDraft() || defaultFormValues());
       showSaveFeedback('Modo nuevo activo. Completa los datos y presiona Guardar Producto.', 'info');
     } else if (state.mode === 'modify') {
       const sel = selectedProduct();
@@ -1408,18 +1516,6 @@
       return;
     }
 
-    const duplicate = state.products.find(function (product) {
-      const sameBarcode = (product?.barcode || '').toString().trim() !== ''
-        && (product?.barcode || '').toString().trim() === payload.barcode;
-      if (!sameBarcode) return false;
-      if (state.mode === 'new') return true;
-      return (product?.id || '') !== (payload.id || '');
-    });
-    if (duplicate) {
-      showSaveFeedback('Ya existe otro producto con el mismo codigo de barras.', 'error');
-      return;
-    }
-
     const isNew = state.mode === 'new';
     const method = 'POST';
     payload.action = isNew ? 'create_product' : 'update_product';
@@ -1449,6 +1545,7 @@
 
       if (state.mode === 'new') {
         showSaveFeedback('Producto registrado correctamente.', 'success');
+        clearNewProductDraft();
         fillForm(defaultFormValues());
       } else {
         showSaveFeedback('Producto actualizado correctamente.', 'success');
@@ -1555,6 +1652,7 @@
       loadDepartments().done(function () {
         $('#prod-department').val(selectedName);
         $('#prod-department').data('selected', selectedName);
+        saveNewProductDraft();
       });
     }).fail(function (xhr) {
       const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo guardar el departamento.';
@@ -1665,15 +1763,25 @@
         return;
       }
       $(this).data('selected', value || 'Sin Departamento');
+      saveNewProductDraft();
     });
     $('input[name="prod-unit-type"]').on('change', function () {
       state.selectedPackageIndex = -1;
       syncInventoryControls();
       syncPackagePanelVisibility();
       renderPackageItems();
+      saveNewProductDraft();
     });
-    $('#prod-inventory-enabled').on('change', syncInventoryControls);
-    $('#prod-cost, #prod-margin').on('input', recalcSalePriceFromMargin);
+    $('#prod-inventory-enabled').on('change', function () {
+      syncInventoryControls();
+      saveNewProductDraft();
+    });
+    $('#prod-cost, #prod-margin').on('input', function () {
+      recalcSalePriceFromMargin();
+      saveNewProductDraft();
+    });
+    $('#prod-price, #prod-special-price, #prod-wholesale, #prod-stock, #prod-min-stock, #prod-max-stock, #prod-barcode, #prod-name').on('input', saveNewProductDraft);
+    $('#prod-iva').on('change', saveNewProductDraft);
     let previewTimer = null;
     $('#prod-package-code').on('input', function () {
       if (previewTimer) {
@@ -1697,6 +1805,7 @@
     });
     $('#prod-cancel-btn').on('click', function () {
       if (state.mode === 'new') {
+        clearNewProductDraft();
         fillForm(defaultFormValues());
         focusBarcodeInputProd(true);
         return;

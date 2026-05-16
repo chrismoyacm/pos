@@ -30,18 +30,21 @@
         <label class="field">Transferencia
           <input type="number" step="0.01" min="0" name="pagoConTransferencia" placeholder="0.00">
         </label>
-        <label class="field">Crédito
+        <label class="field">Credito
           <input type="number" step="0.01" min="0" name="pagoConCredito" placeholder="0.00">
         </label>
       </div>
+      <div class="pay-credit-info" id="pay-mixed-remaining" hidden>
+        Falta por completar: <strong id="pay-mixed-remaining-value">$0.00</strong>
+      </div>
       <div id="pay-mixed-transfer-ref" hidden>
         <label class="field">Referencia de transferencia
-          <input type="text" name="mixedTransferRef" placeholder="Número de referencia">
+          <input type="text" name="mixedTransferRef" placeholder="Numero de referencia">
         </label>
       </div>
       <div id="pay-credit-picker" hidden>
         <label class="field">Buscar cliente
-          <input type="text" name="creditCustomerQ" placeholder="Nombre, teléfono o ID">
+          <input type="text" name="creditCustomerQ" placeholder="Nombre, telefono o ID">
         </label>
         <div class="pay-credit-table-wrap">
           <table class="grid grid-compact" style="margin:0">
@@ -49,7 +52,7 @@
               <tr>
                 <th style="width:110px">ID</th>
                 <th>Cliente</th>
-                <th style="width:120px">Teléfono</th>
+                <th style="width:120px">Telefono</th>
               </tr>
             </thead>
             <tbody id="pay-credit-customers-body"></tbody>
@@ -58,14 +61,14 @@
       </div>
       <div id="pay-transfer-fields" hidden>
         <label class="field">Referencia
-          <input type="text" name="transferRef" placeholder="Número de referencia">
+          <input type="text" name="transferRef" placeholder="Numero de referencia">
         </label>
-        <label class="field">Número de teléfono
+        <label class="field">Numero de telefono
           <input type="text" name="transferPhone" placeholder="Opcional">
         </label>
       </div>
       <div class="pay-credit-info" id="pay-credit-info" hidden>
-        Venta a crédito: asigne un cliente y la venta se registra como saldo pendiente.
+        Venta a credito: asigne un cliente y la venta se registra como saldo pendiente.
       </div>
       <div class="pay-credit-info" id="pay-customer-summary" hidden></div>
       <div class="pay-note-preview" id="pay-note-preview">Nota: -</div>
@@ -97,6 +100,34 @@
     <footer>
       <button type="button" class="btn-secondary">Cancelar</button>
       <button type="button" class="btn-primary">Agregar</button>
+    </footer>
+  </div>
+</div>
+
+<div id="modal-bulk" class="modal" aria-hidden="true">
+  <div class="modal-card modal-card--bulk" role="dialog" aria-modal="true">
+    <header>Cantidad del producto</header>
+    <section>
+      <div class="bulk-product-name" id="bulk-product-name">Producto a granel</div>
+      <div class="bulk-grid">
+        <label class="field-col">
+          <span>Cantidad</span>
+          <input type="number" step="0.001" min="0.001" name="qty" placeholder="1.000">
+        </label>
+        <label class="field-col">
+          <span>Total</span>
+          <input type="text" name="total" readonly value="$0.00">
+        </label>
+      </div>
+      <div class="bulk-summary">
+        <div id="bulk-unit-price-label">Precio unitario = $0.00 por 1000 gramos</div>
+        <div id="bulk-stock-label">Existencia: 0.000</div>
+      </div>
+      <div class="muted">Ejemplos: 5 = 5000 gramos, 0.500 = 500 gramos, 1.500 = 1500 gramos.</div>
+    </section>
+    <footer>
+      <button type="button" class="btn-secondary" id="bulk-cancel-btn">Cancelar</button>
+      <button type="button" class="btn-primary" id="bulk-accept-btn">Aceptar</button>
     </footer>
   </div>
 </div>
@@ -192,6 +223,7 @@
                 <th style="width:70px">Folio</th>
                 <th style="width:120px">Hora</th>
                 <th>Cliente</th>
+                <th style="width:110px">Estado</th>
                 <th style="width:110px">Total</th>
               </tr>
             </thead>
@@ -220,6 +252,9 @@
     </section>
     <footer>
       <button type="button" class="btn-secondary" id="sales-day-close">Cerrar</button>
+      <button type="button" class="btn-secondary" id="sales-day-assign-btn" hidden>Asignar cliente</button>
+      <button type="button" class="btn-primary" id="sales-day-charge-btn" hidden>Cobrar pendiente</button>
+      <button type="button" class="btn-danger" id="sales-day-cancel-pending-btn" hidden>Cancelar pendiente</button>
       <button type="button" class="btn-danger" id="sales-day-return-btn" disabled>Devolver artículo seleccionado</button>
     </footer>
   </div>
