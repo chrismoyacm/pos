@@ -38,6 +38,7 @@
 
   const CART_STORAGE_KEY = 'pos.ventas.cart.v1';
   const LAST_TICKET_STORAGE_KEY = 'pos.ventas.last_ticket.v1';
+  const INVOICE_PREFILL_STORAGE_KEY = 'pos.factura.pending_sale.v1';
 
   function setLastTicketId(ticketId) {
     const safeTicketId = (ticketId || '').toString().trim();
@@ -68,6 +69,15 @@
     }
     window.location.href =
       'index.php?mod=facturas&section=emision&view=factura&ticketId=' + encodeURIComponent(safeTicketId);
+  }
+
+  function savePendingInvoiceSale(payload) {
+    try {
+      window.sessionStorage.setItem(INVOICE_PREFILL_STORAGE_KEY, JSON.stringify(payload || {}));
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
 
   function showNotice(message, type) {
@@ -234,6 +244,10 @@
     return ((itemOrProduct?.unitType || '').toString().trim().toLowerCase() === 'bulk');
   }
 
+  function isPackageItem(itemOrProduct) {
+    return ((itemOrProduct?.unitType || '').toString().trim().toLowerCase() === 'package');
+  }
+
   function formatQtyValue(qty, itemOrProduct) {
     if (qty === '' || qty === null || qty === undefined) {
       return '';
@@ -267,6 +281,10 @@
     if (method === 'mixed') return 'Mixto';
     if (method === 'credit') return 'Credito';
     if (method === 'transfer') return 'Transferencia';
+    if (method === 'invoice') return 'Factura';
+    if (method === 'card') return 'Tarjeta';
+    if (method === 'voucher') return 'Vale';
+    if (method === 'check') return 'Cheque';
     return 'Efectivo';
   }
 
@@ -611,7 +629,11 @@
     if (index >= 0) {
       const nextQty = Number(state.items[index].qty || 0) + normalizedQty;
       if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
-        window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + formatQtyValue(availableStock, product));
+        if (isPackageItem(product)) {
+          window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
+        } else {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + formatQtyValue(availableStock, product));
+        }
         focusCodigoInput(true);
         return false;
       }
@@ -625,12 +647,20 @@
       state.selectedIndex = index;
     } else {
       if (!String(product.id || '').startsWith('tmp-') && availableStock <= 0) {
-        window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '.');
+        if (isPackageItem(product)) {
+          window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + ' porque no hay componentes suficientes.');
+        } else {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '.');
+        }
         focusCodigoInput(true);
         return false;
       }
       if (!String(product.id || '').startsWith('tmp-') && normalizedQty > availableStock) {
-        window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + formatQtyValue(availableStock, product));
+        if (isPackageItem(product)) {
+          window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
+        } else {
+          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + formatQtyValue(availableStock, product));
+        }
         focusCodigoInput(true);
         return false;
       }
@@ -760,7 +790,11 @@
       if (index >= 0) {
         const nextQty = Number(state.items[index].qty || 0) + qtyToAdd;
         if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
-          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          if (isPackageItem(product)) {
+            window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
+          } else {
+            window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          }
           focusCodigoInput(true);
           return;
         }
@@ -773,12 +807,20 @@
         state.selectedIndex = index;
       } else {
         if (!String(product.id || '').startsWith('tmp-') && availableStock <= 0) {
-          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '.');
+          if (isPackageItem(product)) {
+            window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + ' porque no hay componentes suficientes.');
+          } else {
+            window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '.');
+          }
           focusCodigoInput(true);
           return;
         }
         if (!String(product.id || '').startsWith('tmp-') && qtyToAdd > availableStock) {
-          window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          if (isPackageItem(product)) {
+            window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
+          } else {
+            window.alert('Stock insuficiente para ' + (product.name || 'el producto') + '. Existencia: ' + availableStock);
+          }
           focusCodigoInput(true);
           return;
         }
@@ -975,6 +1017,8 @@
       $('#pay-credit-info').text('Pago mixto: efectivo + transferencia + credito (si usa credito, cliente seleccionado).');
     }
     $('#modal-pago [name=pagoCon]').prop('disabled', disableAmount);
+    $('#btn-pay-confirm').text('F2 - Cobrar sin imprimir');
+    $('#btn-pay-confirm-print').text('F1 - Cobrar e imprimir').prop('hidden', false).show();
 
     if (showCredit) {
       $('#modal-pago [name=pagoCon]').val('0.00');
@@ -1305,6 +1349,106 @@
     $pager.append($next);
   }
 
+  function findStockConflict() {
+    return state.items.find(function (item) {
+      if (String(item.id || '').startsWith('tmp-')) return false;
+      return Number(item.qty || 0) > Number(item.stock || 0);
+    }) || null;
+  }
+
+  function buildInvoicePrefillPayload() {
+    const salePayload = Object.assign(buildSalePayload(), {
+      action: state.currentPendingTicketId ? 'complete_pending' : 'create',
+      ticketId: state.currentPendingTicketId || '',
+      clientRequestId: state.saleRequestId || nextSaleRequestId()
+    });
+
+    return {
+      source: 'ventas',
+      createdAt: new Date().toISOString(),
+      salePayload: salePayload
+    };
+  }
+
+  function redirectSaleToFactura() {
+    const pendingPayload = buildInvoicePrefillPayload();
+    state.saleRequestId = pendingPayload.salePayload.clientRequestId;
+    if (!savePendingInvoiceSale(pendingPayload)) {
+      window.alert('No se pudo preparar la factura en este navegador.');
+      return false;
+    }
+    closeModal('#modal-pago');
+    resetSaleState();
+    window.location.href = 'index.php?mod=facturas&section=emision&view=factura&origin=ventas';
+    return true;
+  }
+
+  function validateCurrentSaleForCheckout() {
+    if (state.items.length === 0) {
+      window.alert('No hay productos.');
+      return false;
+    }
+
+    if (isCreditPayment() && !hasAssignedCreditCustomer()) {
+      window.alert('Asigne un cliente antes de registrar saldo pendiente.');
+      return false;
+    }
+
+    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.transfer <= 0 && state.mixedPayments.credit <= 0) {
+      window.alert('Ingrese montos para pago mixto.');
+      return false;
+    }
+
+    if (isMixedPayment()) {
+      const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.transfer || 0) + Number(state.mixedPayments.credit || 0);
+      if (covered < state.total) {
+        window.alert('En pago mixto, Efectivo + Transferencia + Credito debe cubrir el total.');
+        return false;
+      }
+      if (state.mixedPayments.cash < 0) {
+        window.alert('Monto de efectivo invalido.');
+        return false;
+      }
+      if (state.mixedPayments.transfer < 0) {
+        window.alert('Monto de transferencia invalido.');
+        return false;
+      }
+      if (state.mixedPayments.transfer > 0 && (state.transferMeta.reference || '').toString().trim() === '') {
+        window.alert('Ingrese referencia de transferencia en pago mixto.');
+        return false;
+      }
+      if (state.mixedPayments.credit > 0 && !hasAssignedCreditCustomer()) {
+        window.alert('Seleccione cliente cuando haya parte a credito en pago mixto.');
+        return false;
+      }
+    }
+
+    if (isAutoPaidMethod()) {
+      const ref = (state.transferMeta.reference || '').toString().trim();
+      if (ref === '') {
+        window.alert('Ingrese referencia para transferencia.');
+        return false;
+      }
+    }
+
+    if (!isCreditPayment() && !isMixedPayment() && !isAutoPaidMethod() && !(state.paidWith >= state.total)) {
+      window.alert('Pago insuficiente');
+      return false;
+    }
+
+    const stockConflict = findStockConflict();
+    if (stockConflict) {
+      window.alert(
+        'Stock insuficiente para ' + (stockConflict.name || 'el producto') +
+        '. Cantidad solicitada: ' + Number(stockConflict.qty || 0) +
+        ', existencia: ' + Number(stockConflict.stock || 0)
+      );
+      return false;
+    }
+
+    return true;
+  }
+
   function confirmSale(options) {
     const opts = options || {};
     const shouldPrint = Boolean(opts.printTicket);
@@ -1313,68 +1457,7 @@
       return;
     }
 
-    if (state.items.length === 0) {
-      window.alert('No hay productos.');
-      return;
-    }
-
-    if (isCreditPayment() && !hasAssignedCreditCustomer()) {
-      window.alert('Asigne un cliente antes de registrar saldo pendiente.');
-      return;
-    }
-
-    if (isMixedPayment() && state.mixedPayments.cash <= 0 && state.mixedPayments.transfer <= 0 && state.mixedPayments.credit <= 0) {
-      window.alert('Ingrese montos para pago mixto.');
-      return;
-    }
-
-    if (isMixedPayment()) {
-      const covered = Number(state.mixedPayments.cash || 0) + Number(state.mixedPayments.transfer || 0) + Number(state.mixedPayments.credit || 0);
-      if (covered < state.total) {
-      window.alert('En pago mixto, Efectivo + Transferencia + Credito debe cubrir el total.');
-        return;
-      }
-      if (state.mixedPayments.cash < 0) {
-      window.alert('Monto de efectivo invalido.');
-        return;
-      }
-      if (state.mixedPayments.transfer < 0) {
-      window.alert('Monto de transferencia invalido.');
-        return;
-      }
-      if (state.mixedPayments.transfer > 0 && (state.transferMeta.reference || '').toString().trim() === '') {
-        window.alert('Ingrese referencia de transferencia en pago mixto.');
-        return;
-      }
-      if (state.mixedPayments.credit > 0 && !hasAssignedCreditCustomer()) {
-      window.alert('Seleccione cliente cuando haya parte a credito en pago mixto.');
-        return;
-      }
-    }
-
-    if (isAutoPaidMethod()) {
-      const ref = (state.transferMeta.reference || '').toString().trim();
-      if (ref === '') {
-        window.alert('Ingrese referencia para transferencia.');
-        return;
-      }
-    }
-
-    if (!isCreditPayment() && !isMixedPayment() && !isAutoPaidMethod() && !(state.paidWith >= state.total)) {
-      window.alert('Pago insuficiente');
-      return;
-    }
-
-    const stockConflict = state.items.find(function (item) {
-      if (String(item.id || '').startsWith('tmp-')) return false;
-      return Number(item.qty || 0) > Number(item.stock || 0);
-    });
-    if (stockConflict) {
-      window.alert(
-        'Stock insuficiente para ' + (stockConflict.name || 'el producto') +
-        '. Cantidad solicitada: ' + Number(stockConflict.qty || 0) +
-        ', existencia: ' + Number(stockConflict.stock || 0)
-      );
+    if (!validateCurrentSaleForCheckout()) {
       return;
     }
 
@@ -1455,7 +1538,15 @@
   }
 
   function loadBuscarResults(q) {
-    $.getJSON('../api/products.php', { q: q }).done(function (res) {
+    const rawQuery = (q || '').toString().trim();
+    const useContains = rawQuery.startsWith('*');
+    const effectiveQuery = useContains ? rawQuery.slice(1).trim() : rawQuery;
+    const params = {
+      q: effectiveQuery,
+      searchMode: useContains ? 'contains' : 'prefix'
+    };
+
+    $.getJSON('../api/products.php', params).done(function (res) {
       const $tbody = $('#modal-buscar [data-results]').empty();
       const products = (res.ok && Array.isArray(res.data)) ? res.data : [];
       products.slice(0, 50).forEach(function (product) {
@@ -1625,6 +1716,16 @@
     }).always(function () {
       setSaleSubmitting(false);
     });
+  }
+
+  function confirmSaleAndInvoice() {
+    if (state.saleSubmitting) {
+      return;
+    }
+    if (!validateCurrentSaleForCheckout()) {
+      return;
+    }
+    redirectSaleToFactura();
   }
 
   function restorePendingSaleForNextStep(nextStep) {
@@ -1933,6 +2034,7 @@
           '<td>#' + escapeHtml(String(sale.ticketId || '')) + '</td>' +
           '<td>' + escapeHtml(formatTimeFromIso(sale.createdAt)) + '</td>' +
           '<td>' + escapeHtml(String(sale.customerName || 'Publico en general')) + '</td>' +
+          '<td class="catalog-center">' + escapeHtml(paymentMethodLabel(String(sale.paymentMethod || 'cash'))) + '</td>' +
           '<td class="catalog-center">' + escapeHtml(saleStatusLabel(sale)) + '</td>' +
           '<td class="catalog-money">' + formatMoney(Number(sale.total || 0)) + '</td>' +
         '</tr>'
@@ -1947,7 +2049,7 @@
     });
 
     if (rows.length === 0) {
-      $tbody.append('<tr><td colspan="5" class="muted">No hay ventas para el criterio indicado.</td></tr>');
+      $tbody.append('<tr><td colspan="6" class="muted">No hay ventas para el criterio indicado.</td></tr>');
     }
 
     renderSalesPager();
@@ -1959,6 +2061,7 @@
     if (!sale) {
       $('#sales-day-meta').text('Seleccione un ticket.');
       $('#sales-day-return-btn').prop('disabled', true);
+      $('#sales-day-reprint-btn').prop('disabled', true);
       updatePendingSalesActions();
       return;
     }
@@ -2000,7 +2103,24 @@
 
     const canReturn = salesHistoryState.mode === 'return' && salesHistoryState.selectedItemIndex >= 0;
     $('#sales-day-return-btn').prop('disabled', !canReturn);
+    $('#sales-day-reprint-btn').prop('disabled', false);
     updatePendingSalesActions();
+  }
+
+  function reprintSelectedSaleTicket() {
+    const sale = findSaleByTicketId(salesHistoryState.selectedTicketId);
+    if (!sale) {
+      window.alert('Seleccione una venta.');
+      return;
+    }
+    if (!Array.isArray(sale.items) || sale.items.length === 0) {
+      window.alert('La venta seleccionada no tiene articulos para imprimir.');
+      return;
+    }
+    const printed = printTicket(sale);
+    if (printed) {
+      showNotice('Reimpresion abierta para el ticket #' + String(sale.ticketId || '') + '.', 'success');
+    }
   }
 
   function loadSalesByDay() {
@@ -2156,6 +2276,7 @@
       loadPayCreditCustomers($(this).val().toString());
     });
     $('#btn-pay-confirm').on('click', function () { confirmSale({ printTicket: false }); });
+    $('#btn-pay-confirm-invoice').on('click', confirmSaleAndInvoice);
     $('#btn-pay-confirm-print').on('click', function () { confirmSale({ printTicket: true }); });
     $('#modal-buscar .btn-secondary').on('click', function () { closeModal('#modal-buscar'); });
     $('#modal-buscar [name=q]').on('input', function () { loadBuscarResults($(this).val().toString()); });
@@ -2190,6 +2311,7 @@
       }
     });
     $('#sales-day-close').on('click', function () { closeModal('#modal-ventas-dia'); });
+    $('#sales-day-reprint-btn').on('click', reprintSelectedSaleTicket);
     $('#sales-day-refresh').on('click', loadSalesByDay);
     $('#sales-day-date').on('change', function () {
       salesHistoryState.page = 1;

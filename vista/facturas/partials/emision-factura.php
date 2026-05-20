@@ -8,7 +8,7 @@ $issueDate = date('d-m-Y');
   </div>
 
   <div class="facturacion-body">
-    <section class="factura-card">
+    <section class="factura-card factura-card--meta-hidden" aria-hidden="true">
       <div class="factura-grid factura-grid--top">
         <label class="factura-field">
           <span>Establecimiento</span>
@@ -58,12 +58,15 @@ $issueDate = date('d-m-Y');
 
         <label class="factura-field">
           <span>Tipo identificacion</span>
-          <select id="factura-buyer-id-type">
-            <option value="RUC">RUC</option>
-            <option value="Cedula">Cedula</option>
-            <option value="Pasaporte">Pasaporte</option>
-            <option value="Consumidor final">Consumidor final</option>
-          </select>
+          <div class="factura-inline-field">
+            <select id="factura-buyer-id-type">
+              <option value="RUC">RUC</option>
+              <option value="Cedula">Cedula</option>
+              <option value="Pasaporte">Pasaporte</option>
+              <option value="Consumidor final">Consumidor final</option>
+            </select>
+            <button class="btn-secondary" type="button" id="factura-save-buyer-id-btn" hidden>Guardar identificacion de cliente</button>
+          </div>
         </label>
 
         <label class="factura-field factura-field--wide">
@@ -191,12 +194,13 @@ $issueDate = date('d-m-Y');
             </table>
           </div>
 
-          <div class="factura-payment-actions">
+          <div class="factura-payment-actions" id="factura-payment-actions">
             <button class="btn-secondary" type="button" data-payment-method="cash">Efectivo</button>
             <button class="btn-secondary" type="button" data-payment-method="debit_card">Tarjeta de debito</button>
             <button class="btn-secondary" type="button" data-payment-method="credit_card">Tarjeta de credito</button>
             <button class="btn-primary" type="button" id="factura-add-payment-btn">Anadir forma de pago</button>
           </div>
+          <div class="muted" id="factura-payment-origin-note" hidden>La forma de pago se toma desde la venta realizada en caja.</div>
         </section>
 
         <section class="factura-card">

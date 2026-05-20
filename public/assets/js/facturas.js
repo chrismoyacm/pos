@@ -38,6 +38,75 @@
     return (value || '').toString().replace(/\D+/g, '');
   }
 
+  function isValidProvinceCode(code) {
+    var n = Number(code || 0);
+    return n >= 1 && n <= 24;
+  }
+
+  function modulo10Check(digits10) {
+    var sum = 0;
+    for (var i = 0; i < 9; i += 1) {
+      var n = Number(digits10.charAt(i));
+      if (i % 2 === 0) {
+        n *= 2;
+        if (n > 9) n -= 9;
+      }
+      sum += n;
+    }
+    var verifier = (10 - (sum % 10)) % 10;
+    return verifier === Number(digits10.charAt(9));
+  }
+
+  function modulo11Verifier(base, coeffs, verifierDigit) {
+    var sum = 0;
+    for (var i = 0; i < coeffs.length; i += 1) {
+      sum += Number(base.charAt(i)) * coeffs[i];
+    }
+    var mod = 11 - (sum % 11);
+    var expected = mod === 11 ? 0 : (mod === 10 ? 0 : mod);
+    return expected === Number(verifierDigit);
+  }
+
+  function validateCedulaEcuador(digits) {
+    if (digits.length !== 10) return false;
+    if (!isValidProvinceCode(digits.slice(0, 2))) return false;
+    var third = Number(digits.charAt(2));
+    if (third < 0 || third > 5) return false;
+    return modulo10Check(digits);
+  }
+
+  function validateRucEcuador(digits) {
+    if (digits.length !== 13) return false;
+    if (digits === '9999999999999') return true;
+    if (!isValidProvinceCode(digits.slice(0, 2))) return false;
+
+    var third = Number(digits.charAt(2));
+    var estab = digits.slice(10, 13);
+    if (estab === '000') return false;
+
+    if (third >= 0 && third <= 5) {
+      return validateCedulaEcuador(digits.slice(0, 10));
+    }
+    if (third === 6) {
+      if (!modulo11Verifier(digits.slice(0, 8), [3, 2, 7, 6, 5, 4, 3, 2], digits.charAt(8))) return false;
+      return digits.slice(9, 13) !== '0000';
+    }
+    if (third === 9) {
+      if (!modulo11Verifier(digits.slice(0, 9), [4, 3, 2, 7, 6, 5, 4, 3, 2], digits.charAt(9))) return false;
+      return estab !== '000';
+    }
+    return false;
+  }
+
+  function inferBuyerIdentificationType(value) {
+    var digits = normalizeDigits(value);
+    if (!digits) return '';
+    if (digits === '9999999999999') return 'Consumidor final';
+    if (digits.length === 13 && validateRucEcuador(digits)) return 'RUC';
+    if (digits.length === 10 && validateCedulaEcuador(digits)) return 'Cedula';
+    return '';
+  }
+
   function calcLineTotals(item) {
     var qty = Number(item && item.cantidad ? item.cantidad : 0);
     var unitInput = Number(item && item.precioUnitario ? item.precioUnitario : 0);
@@ -66,6 +135,10 @@
     return new URLSearchParams(window.location.search).get(key) || '';
   }
 
+  var PENDING_POS_SALE_STORAGE_KEY = 'pos.factura.pending_sale.v1';
+  var CART_STORAGE_KEY = 'pos.ventas.cart.v1';
+  var LAST_TICKET_STORAGE_KEY = 'pos.ventas.last_ticket.v1';
+
   var state = {
     emitter: null,
     signature: null,
@@ -77,7 +150,10 @@
     payments: [],
     additionalFields: [],
     paymentMethodDraft: 'cash',
-    originSaleId: ''
+    originSaleId: '',
+    buyerCustomerId: '',
+    pendingPosSale: null,
+    invoiceSubmitting: false
   };
 
   function apiGet(action, extra) {
@@ -100,6 +176,63 @@
       contentType: 'application/json',
       data: JSON.stringify(payload)
     });
+  }
+
+  function readPendingPosSale() {
+    try {
+      var raw = (window.sessionStorage.getItem(PENDING_POS_SALE_STORAGE_KEY) || '').toString();
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function clearPendingPosSale() {
+    try {
+      window.sessionStorage.removeItem(PENDING_POS_SALE_STORAGE_KEY);
+    } catch (err) {}
+  }
+
+  function markVentaCartAsCompleted(ticketId) {
+    try {
+      window.sessionStorage.removeItem(CART_STORAGE_KEY);
+      if (ticketId) {
+        window.sessionStorage.setItem(LAST_TICKET_STORAGE_KEY, (ticketId || '').toString());
+      }
+    } catch (err) {}
+  }
+
+  function setInvoiceSubmitting(isSubmitting) {
+    var busy = Boolean(isSubmitting);
+    state.invoiceSubmitting = busy;
+    $('#factura-issue-btn').prop('disabled', busy);
+  }
+
+  function currentBuyerIdentificationType() {
+    return ($('#factura-buyer-id-type').val() || '').toString().trim();
+  }
+
+  function currentBuyerIdentification() {
+    return ($('#factura-buyer-identification').val() || '').toString().trim();
+  }
+
+  function currentBuyerName() {
+    return ($('#factura-buyer-name').val() || '').toString().trim();
+  }
+
+  function hasBuyerCustomerContext() {
+    var id = (state.buyerCustomerId || '').toString().trim();
+    return id !== '' && id !== 'c-001';
+  }
+
+  function updateSaveBuyerIdButton() {
+    var shouldShow = hasBuyerCustomerContext()
+      && currentBuyerIdentificationType() !== 'Consumidor final'
+      && currentBuyerName() !== ''
+      && currentBuyerIdentification() !== '';
+    $('#factura-save-buyer-id-btn').prop('hidden', !shouldShow).toggle(shouldShow);
   }
 
   function currentSection() {
@@ -462,6 +595,142 @@
     };
   }
 
+  function appendInvoiceReferenceToNote(baseNote, documentData) {
+    var note = (baseNote || '').toString().trim();
+    var doc = documentData || {};
+    var secuencial = (doc.secuencial || '').toString().trim();
+    var accessKey = (doc.accessKey || '').toString().trim();
+    var parts = [];
+    if (secuencial) parts.push('Factura ' + secuencial);
+    if (accessKey) parts.push('Clave ' + accessKey);
+    if (!parts.length) return note;
+    var suffix = parts.join(' | ');
+    return note ? (note + ' | ' + suffix) : suffix;
+  }
+
+  function buildFacturaPaymentsFromSalePayload(salePayload, totalOverride) {
+    var source = salePayload && typeof salePayload === 'object' ? salePayload : {};
+    var total = round2(Number(totalOverride !== undefined ? totalOverride : source.total) || 0);
+    var method = (source.paymentMethod || 'cash').toString().trim().toLowerCase();
+    var mixed = source.mixedPayments && typeof source.mixedPayments === 'object' ? source.mixedPayments : {};
+    var payments = [];
+
+    function pushPayment(paymentMethod, label, value, term) {
+      var amount = round2(Number(value || 0));
+      if (!(amount > 0)) return;
+      payments.push({
+        method: paymentMethod,
+        label: label,
+        value: amount,
+        term: Number(term || 0),
+        timeUnit: 'dias'
+      });
+    }
+
+    if (method === 'mixed') {
+      pushPayment('cash', 'Efectivo', mixed.cash || 0, 0);
+      pushPayment('transfer', 'Transferencia', mixed.transfer || 0, 0);
+      pushPayment('credit', 'Credito', mixed.credit || 0, 30);
+    } else if (method === 'transfer') {
+      pushPayment('transfer', 'Transferencia', total, 0);
+    } else if (method === 'credit') {
+      pushPayment('credit', 'Credito', total, 30);
+    } else {
+      pushPayment('cash', 'Efectivo', total, 0);
+    }
+
+    if (!payments.length && total > 0) {
+      pushPayment('cash', 'Efectivo', total, 0);
+    }
+
+    var sum = payments.reduce(function (acc, row) { return acc + Number(row.value || 0); }, 0);
+    var diff = round2(total - sum);
+    if (payments.length && Math.abs(diff) >= 0.01) {
+      payments[payments.length - 1].value = round2(Number(payments[payments.length - 1].value || 0) + diff);
+    }
+
+    return payments;
+  }
+
+  function buildSalePayloadFromPendingInvoice(documentData) {
+    var wrapper = state.pendingPosSale && typeof state.pendingPosSale === 'object' ? state.pendingPosSale : null;
+    var sourcePayload = wrapper && wrapper.salePayload && typeof wrapper.salePayload === 'object'
+      ? wrapper.salePayload
+      : null;
+    if (!sourcePayload) return null;
+
+    var totals = recalcFacturaTotals();
+    var buyerName = ($('#factura-buyer-name').val() || sourcePayload.customerName || 'Consumidor final').toString().trim();
+    var buyerIdentification = ($('#factura-buyer-identification').val() || '').toString().trim();
+    var buyerType = ($('#factura-buyer-id-type').val() || '').toString().trim();
+    var mappedItems = (state.details || []).map(function (item) {
+      var qty = parseFloat(item.cantidad || 0) || 0;
+      var discount = parseFloat(item.descuento || 0) || 0;
+      var unitPrice = parseFloat(item.precioUnitario || 0) || 0;
+      var netUnitPrice = qty > 0 ? ((unitPrice * qty) - discount) / qty : unitPrice;
+      var normalizedIva = normalizeIva(item.iva);
+      return {
+        id: (item.productId || item.codigoPrincipal || item.codigoAuxiliar || '').toString(),
+        barcode: (item.codigoPrincipal || item.codigoAuxiliar || item.productId || '').toString(),
+        name: (item.descripcion || '').toString(),
+        iva: normalizedIva === '0%' ? 'No' : normalizedIva,
+        price: round2(netUnitPrice),
+        qty: qty
+      };
+    }).filter(function (item) { return item.qty > 0; });
+
+    var salePayload = $.extend(true, {}, sourcePayload);
+    salePayload.items = mappedItems;
+    salePayload.subtotal = round2(totals.subtotalSinImpuestos || 0);
+    salePayload.total = round2(totals.importeTotal || 0);
+    var paymentMethod = (sourcePayload.paymentMethod || 'cash').toString().trim().toLowerCase();
+    salePayload.paymentMethod = paymentMethod || 'cash';
+    salePayload.transferMeta = sourcePayload.transferMeta && typeof sourcePayload.transferMeta === 'object'
+      ? $.extend({}, sourcePayload.transferMeta)
+      : { reference: '', phone: '' };
+    if (paymentMethod === 'credit') {
+      salePayload.paidWith = 0;
+      salePayload.change = 0;
+      salePayload.amountPending = round2(salePayload.total);
+      salePayload.mixedPayments = { cash: 0, transfer: 0, credit: round2(salePayload.total) };
+    } else if (paymentMethod === 'mixed') {
+      salePayload.mixedPayments = buildFacturaPaymentsFromSalePayload(sourcePayload, salePayload.total).reduce(function (acc, row) {
+        if (row.method === 'cash') acc.cash = round2(Number(row.value || 0));
+        if (row.method === 'transfer') acc.transfer = round2(Number(row.value || 0));
+        if (row.method === 'credit') acc.credit = round2(Number(row.value || 0));
+        return acc;
+      }, { cash: 0, transfer: 0, credit: 0 });
+      salePayload.paidWith = round2(Number(salePayload.mixedPayments.cash || 0) + Number(salePayload.mixedPayments.transfer || 0));
+      salePayload.amountPending = round2(Number(salePayload.mixedPayments.credit || 0));
+      salePayload.change = 0;
+    } else {
+      salePayload.paidWith = round2(salePayload.total);
+      salePayload.change = 0;
+      salePayload.amountPending = 0;
+      salePayload.mixedPayments = null;
+    }
+    salePayload.customerName = buyerName || sourcePayload.customerName || 'Consumidor final';
+    salePayload.customerId = (buyerType === 'Consumidor final' || buyerIdentification === '9999999999999')
+      ? 'c-001'
+      : (sourcePayload.customerId || buyerIdentification || 'c-001');
+    salePayload.paymentNote = appendInvoiceReferenceToNote(salePayload.paymentNote, documentData);
+    return salePayload;
+  }
+
+  function registerPendingPosSale(documentData) {
+    var salePayload = buildSalePayloadFromPendingInvoice(documentData);
+    if (!salePayload) {
+      return $.Deferred().resolve({ ok: true, skipped: true }).promise();
+    }
+
+    return $.ajax({
+      url: '../api/sales.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify(salePayload)
+    });
+  }
+
   function applyTicketPrefill(ticketId) {
     var safeTicketId = (ticketId || '').toString().trim();
     if (!safeTicketId) return;
@@ -475,6 +744,7 @@
       var data = res.data || {};
       var buyer = data.buyer || {};
       state.originSaleId = (data.ticketId || safeTicketId).toString();
+      state.buyerCustomerId = (((data.sale || {}).customerId) || '').toString();
 
       $('#factura-buyer-identification').val((buyer.identification || '').toString());
       $('#factura-buyer-id-type').val((buyer.identificationType || 'Consumidor final').toString());
@@ -513,6 +783,7 @@
 
       renderFacturaDetails();
       renderFacturaPayments();
+      updateSaveBuyerIdButton();
       setStatus('#factura-issue-status', 'Venta #' + safeTicketId + ' cargada en la factura.');
     }).fail(function (xhr) {
       var message = 'No se pudo cargar la venta para facturar.';
@@ -603,6 +874,7 @@
 
   function renderFacturaPayments() {
     var $tbody = $('#factura-payments-body').empty();
+    var lockedBySale = Boolean(state.pendingPosSale);
     state.payments.forEach(function (item, index) {
       var $tr = $(
         '<tr>' +
@@ -610,13 +882,15 @@
           '<td class="catalog-money">' + money(item.value || 0) + '</td>' +
           '<td class="catalog-center">' + escapeHtml(String(item.term || 0)) + '</td>' +
           '<td class="catalog-center">' + escapeHtml(item.timeUnit || 'dias') + '</td>' +
-          '<td><button class="btn-secondary" type="button">Quitar</button></td>' +
+          '<td>' + (lockedBySale ? '<span class="muted">Desde venta</span>' : '<button class="btn-secondary" type="button">Quitar</button>') + '</td>' +
         '</tr>'
       );
-      $tr.find('button').on('click', function () {
-        state.payments.splice(index, 1);
-        renderFacturaPayments();
-      });
+      if (!lockedBySale) {
+        $tr.find('button').on('click', function () {
+          state.payments.splice(index, 1);
+          renderFacturaPayments();
+        });
+      }
       $tbody.append($tr);
     });
     if (!$tbody.children().length) {
@@ -694,6 +968,9 @@
 
   function bindInvoicePage() {
     var ticketIdFromUrl = readUrlParam('ticketId');
+    var originFromUrl = readUrlParam('origin');
+    $('#factura-payment-actions').prop('hidden', false).show();
+    $('#factura-payment-origin-note').prop('hidden', true).hide();
 
     apiGet('invoice_defaults').done(function (res) {
       if (!res.ok) return;
@@ -716,6 +993,8 @@
 
       if (ticketIdFromUrl) {
         applyTicketPrefill(ticketIdFromUrl);
+      } else if (originFromUrl === 'ventas') {
+        applyPendingPosSalePrefill();
       }
     });
 
@@ -769,10 +1048,174 @@
       $('#factura-buyer-address').val(customer.address1 || customer.address || '');
       $('#factura-buyer-phone').val(customer.phone || '');
       $('#factura-buyer-email').val(customer.email || '');
+      state.buyerCustomerId = (customer && customer.id !== undefined ? customer.id : '').toString();
+      updateSaveBuyerIdButton();
+    }
+
+    function findCustomerById(rawCustomerId) {
+      var customerId = (rawCustomerId || '').toString().trim();
+      if (!customerId) return null;
+      var customers = Array.isArray(state.customers) ? state.customers : [];
+      return customers.find(function (customer) {
+        return (customer && customer.id !== undefined ? customer.id : '').toString() === customerId;
+      }) || null;
+    }
+
+    function currentPointAddress() {
+      var pointId = ($('#factura-point-id').val() || $('#factura-point-establishment').val() || '').toString();
+      var points = Array.isArray(state.points) ? state.points : [];
+      var point = points.find(function (row) {
+        return (row && row.id !== undefined ? row.id : '').toString() === pointId;
+      }) || null;
+      return (point && point.dirEstablecimiento ? point.dirEstablecimiento : '').toString();
+    }
+
+    function applyConsumidorFinalDefaults() {
+      $('#factura-buyer-id-type').val('Consumidor final');
+      $('#factura-buyer-identification').val('9999999999999');
+      $('#factura-buyer-name').val('Consumidor final');
+      $('#factura-buyer-address').val(currentPointAddress());
+      $('#factura-buyer-phone').val('');
+      $('#factura-buyer-email').val('');
+      updateSaveBuyerIdButton();
+    }
+
+    function applyPendingPosSalePrefill() {
+      var wrapper = readPendingPosSale();
+      var salePayload = wrapper && wrapper.salePayload && typeof wrapper.salePayload === 'object'
+        ? wrapper.salePayload
+        : null;
+      if (!salePayload) {
+        setStatus('#factura-issue-status', 'No se encontro una venta pendiente para facturar desde caja.', true);
+        return;
+      }
+
+      state.pendingPosSale = wrapper;
+      state.originSaleId = (salePayload.ticketId || '').toString();
+      state.buyerCustomerId = (salePayload.customerId || '').toString();
+
+      var customerId = (salePayload.customerId || '').toString().trim();
+      var customerName = (salePayload.customerName || '').toString().trim();
+      var customer = findCustomerById(customerId);
+      var identification = customer
+        ? ((customer.taxId || customer.identification || customer.document || '').toString())
+        : (/^c-\d+$/i.test(customerId) ? '' : customerId);
+
+      if (!customerId || customerId === 'c-001' || !customerName || customerName.toLowerCase() === 'publico en general') {
+        applyConsumidorFinalDefaults();
+      } else {
+        $('#factura-buyer-identification').val(identification);
+        $('#factura-buyer-id-type').val(inferBuyerIdentificationType(identification) || '');
+        $('#factura-buyer-name').val(customer ? (customer.name || customer.razonSocial || customerName) : customerName);
+        $('#factura-buyer-address').val(customer ? (customer.address1 || customer.address || '') : '');
+        $('#factura-buyer-phone').val(customer ? (customer.phone || '') : '');
+        $('#factura-buyer-email').val(customer ? (customer.email || '') : '');
+      }
+
+      state.details = (salePayload.items || []).map(function (item) {
+        var code = (item.barcode || item.id || '').toString();
+        return {
+          productId: (item.id || '').toString(),
+          codigoPrincipal: code,
+          codigoAuxiliar: code,
+          cantidad: parseFloat(item.qty || 0) || 0,
+          descripcion: (item.name || '').toString(),
+          precioUnitario: parseFloat(item.price || 0) || 0,
+          iva: normalizeIva(item.iva),
+          descuento: 0,
+          valorICE: 0
+        };
+      }).filter(function (item) { return item.cantidad > 0; });
+
+      state.payments = buildFacturaPaymentsFromSalePayload(salePayload, parseFloat(salePayload.total || 0) || 0);
+      state.paymentMethodDraft = (state.payments[0] && state.payments[0].method ? state.payments[0].method : 'cash').toString();
+      $('#factura-payment-actions').prop('hidden', true).hide();
+      $('#factura-payment-origin-note').prop('hidden', false).show();
+
+      renderFacturaDetails();
+      renderFacturaPayments();
+      updateSaveBuyerIdButton();
+      setStatus('#factura-issue-status', 'Venta de caja cargada en la factura. Revise los datos y emita el comprobante.');
+    }
+
+    function syncBuyerIdentificationType() {
+      var rawIdentification = ($('#factura-buyer-identification').val() || '').toString();
+      var inferredType = inferBuyerIdentificationType(rawIdentification);
+      if (inferredType) {
+        $('#factura-buyer-id-type').val(inferredType);
+      }
+      if (inferredType === 'Consumidor final' || ($('#factura-buyer-id-type').val() || '').toString() === 'Consumidor final') {
+        applyConsumidorFinalDefaults();
+      }
+      updateSaveBuyerIdButton();
+    }
+
+    function saveBuyerIdentificationForCustomer() {
+      var customerId = (state.buyerCustomerId || '').toString().trim();
+      if (!customerId || customerId === 'c-001') {
+        setStatus('#factura-issue-status', 'No hay un cliente real asociado para guardar la identificacion.', true);
+        updateSaveBuyerIdButton();
+        return;
+      }
+
+      var identification = currentBuyerIdentification();
+      var identificationType = currentBuyerIdentificationType();
+      var customer = findCustomerById(customerId);
+      if (!customer) {
+        setStatus('#factura-issue-status', 'No se encontro el cliente en el catalogo local.', true);
+        return;
+      }
+      if (!identification) {
+        setStatus('#factura-issue-status', 'Ingrese la identificacion antes de guardarla.', true);
+        return;
+      }
+      if (identificationType === 'Consumidor final') {
+        setStatus('#factura-issue-status', 'Consumidor final no se guarda como identificacion de cliente.', true);
+        return;
+      }
+
+      var payload = $.extend({}, customer, {
+        action: 'update',
+        id: customer.id,
+        name: currentBuyerName() || customer.name || '',
+        taxId: identification,
+        identification: identification
+      });
+
+      $.ajax({
+        url: '../api/customers.php',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(payload)
+      }).done(function (res) {
+        if (!res.ok) {
+          setStatus('#factura-issue-status', res.error || 'No se pudo guardar la identificacion del cliente.', true);
+          return;
+        }
+        var updated = res.data || payload;
+        state.customers = (state.customers || []).map(function (row) {
+          if ((row && row.id !== undefined ? row.id : '').toString() !== customerId) {
+            return row;
+          }
+          return $.extend({}, row, updated, {
+            taxId: updated.taxId || updated.identification || identification,
+            identification: updated.identification || updated.taxId || identification
+          });
+        });
+        setStatus('#factura-issue-status', 'Identificacion guardada para el cliente. La proxima vez se cargara automaticamente.');
+        updateSaveBuyerIdButton();
+      }).fail(function (xhr) {
+        setStatus('#factura-issue-status', responseErrorMessage(xhr, 'No se pudo guardar la identificacion del cliente.'), true);
+      });
     }
 
     function searchAndFillBuyer() {
       var q = ($('#factura-buyer-identification').val() || '').toString().trim();
+      syncBuyerIdentificationType();
+      if (($('#factura-buyer-id-type').val() || '').toString() === 'Consumidor final') {
+        setStatus('#factura-issue-status', 'Datos de consumidor final cargados automaticamente.');
+        return;
+      }
       var match = findCustomerByIdentification(q);
       if (!match) {
         setStatus('#factura-issue-status', 'No se encontro cliente en el catalogo local. Puede seguir llenando los datos manualmente.', true);
@@ -783,10 +1226,25 @@
     }
 
     $('#factura-buyer-search-btn').on('click', searchAndFillBuyer);
+    $('#factura-save-buyer-id-btn').on('click', saveBuyerIdentificationForCustomer);
+    $('#factura-point-id, #factura-point-establishment').on('change', function () {
+      if (($('#factura-buyer-id-type').val() || '').toString() === 'Consumidor final') {
+        applyConsumidorFinalDefaults();
+      }
+    });
+    $('#factura-buyer-id-type').on('change', function () {
+      if (($(this).val() || '').toString() === 'Consumidor final') {
+        applyConsumidorFinalDefaults();
+      } else {
+        updateSaveBuyerIdButton();
+      }
+    });
+    $('#factura-buyer-identification').on('input', syncBuyerIdentificationType);
     $('#factura-buyer-identification').on('change blur', function () {
       if (!($(this).val() || '').toString().trim()) return;
       searchAndFillBuyer();
     });
+    $('#factura-buyer-name').on('input', updateSaveBuyerIdButton);
 
     var searchTimer = null;
     $('#factura-product-search').on('input', function () {
@@ -837,15 +1295,43 @@
     });
 
     $('#factura-issue-btn').on('click', function () {
+      if (state.invoiceSubmitting) return;
+      setInvoiceSubmitting(true);
       apiPost($.extend({ action: 'issue_invoice' }, buildFacturaPayload())).done(function (res) {
         if (!res.ok) {
           setStatus('#factura-issue-status', res.error || 'No se pudo emitir la factura.', true);
+          setInvoiceSubmitting(false);
           return;
         }
-        var files = res.data.files || {};
-        setStatus('#factura-issue-status', 'Factura procesada. Estado: ' + (res.data.status || '') + ' | XML: ' + (files.authorizedXml || files.generatedXml || ''));
+
+        registerPendingPosSale(res.data || {}).done(function (saleRes) {
+          if (saleRes && saleRes.ok === false) {
+            setStatus('#factura-issue-status', 'Factura emitida, pero no se pudo registrar la venta en caja: ' + (saleRes.error || 'error desconocido'), true);
+            setInvoiceSubmitting(false);
+            return;
+          }
+
+          var files = (res.data || {}).files || {};
+          var saleTicketId = (saleRes && saleRes.data ? saleRes.data.ticketId : '').toString();
+          if (saleTicketId) {
+            clearPendingPosSale();
+            markVentaCartAsCompleted(saleTicketId);
+            state.pendingPosSale = null;
+          }
+          setStatus(
+            '#factura-issue-status',
+            'Factura procesada. Estado: ' + ((res.data || {}).status || '') +
+            (saleTicketId ? (' | Venta registrada: #' + saleTicketId) : '') +
+            ' | XML: ' + (files.authorizedXml || files.generatedXml || '')
+          );
+          setInvoiceSubmitting(false);
+        }).fail(function (xhr) {
+          setStatus('#factura-issue-status', 'Factura emitida, pero no se pudo registrar la venta en caja: ' + responseErrorMessage(xhr, 'Error desconocido.'), true);
+          setInvoiceSubmitting(false);
+        });
       }).fail(function (xhr) {
         setStatus('#factura-issue-status', responseErrorMessage(xhr, 'No se pudo emitir la factura.'), true);
+        setInvoiceSubmitting(false);
       });
     });
 

@@ -149,6 +149,7 @@ function salesMixedPaymentCode(string $method): string
         'cash' => 'E',
         'transfer' => 'T',
         'credit', 'card' => 'C',
+        'invoice' => 'F',
         'voucher' => 'V',
         'check' => 'K',
         default => 'E',
@@ -1125,7 +1126,7 @@ $pendingTicketId = trim((string)($body['ticketId'] ?? ''));
 $pendingSaleIndex = -1;
 $pendingCreatedAt = '';
 
-if (!in_array($paymentMethod, ['cash', 'card', 'mixed', 'credit', 'voucher', 'transfer', 'check'], true)) {
+if (!in_array($paymentMethod, ['cash', 'card', 'mixed', 'credit', 'voucher', 'transfer', 'check', 'invoice'], true)) {
     $paymentMethod = 'cash';
 }
 
@@ -1201,8 +1202,14 @@ if ($clientRequestId !== '') {
 
 $products = readJsonFile($productsPath);
 $productIdToIndex = [];
+$productBarcodeToIndex = [];
 foreach ($products as $idx => $p) {
-    $productIdToIndex[(string)($p['id'] ?? '')] = $idx;
+    $productId = (string)($p['id'] ?? '');
+    $productIdToIndex[$productId] = $idx;
+    $barcode = trim((string)($p['barcode'] ?? ''));
+    if ($barcode !== '') {
+        $productBarcodeToIndex[$barcode] = $idx;
+    }
 }
 
 $ticketId = $action === 'complete_pending' ? $pendingTicketId : (salesCanUseTicketsDb() ? salesNextTicketIdFromDb() : (string)(count($sales) + 1));
@@ -1223,7 +1230,61 @@ foreach ($items as $it) {
     $pIdx = $productIdToIndex[$id];
     $inventoryEnabled = (bool)($products[$pIdx]['inventoryEnabled'] ?? true);
     $unitType = strtolower(trim((string)($products[$pIdx]['unitType'] ?? 'unit')));
-    if (!$inventoryEnabled || $unitType === 'package') {
+    if ($unitType === 'package') {
+        $packageItems = is_array($products[$pIdx]['packageItems'] ?? null) ? $products[$pIdx]['packageItems'] : [];
+        if ($packageItems === []) {
+            errorResponse('No se puede armar el kit ' . (string)($products[$pIdx]['name'] ?? $id) . ' porque no tiene componentes configurados.', 409);
+        }
+
+        foreach ($packageItems as $component) {
+            if (!is_array($component)) {
+                continue;
+            }
+            $componentQty = salesToFloat($component['qty'] ?? 0) * $qty;
+            if ($componentQty <= 0) {
+                continue;
+            }
+
+            $componentId = trim((string)($component['productId'] ?? ''));
+            $componentBarcode = trim((string)($component['barcode'] ?? ''));
+            $componentIndex = null;
+            if ($componentId !== '' && array_key_exists($componentId, $productIdToIndex)) {
+                $componentIndex = $productIdToIndex[$componentId];
+            } elseif ($componentBarcode !== '' && array_key_exists($componentBarcode, $productBarcodeToIndex)) {
+                $componentIndex = $productBarcodeToIndex[$componentBarcode];
+                $componentId = (string)($products[$componentIndex]['id'] ?? $componentId);
+            }
+
+            if (!is_int($componentIndex)) {
+                errorResponse('No se puede armar el kit ' . (string)($products[$pIdx]['name'] ?? $id) . ' porque falta uno de sus componentes.', 409);
+            }
+
+            $componentCurrent = round((float)($products[$componentIndex]['stock'] ?? 0), 3);
+            $componentNext = round($componentCurrent - $componentQty, 3);
+            if ($componentNext < 0) {
+                errorResponse(
+                    'No se puede armar el kit ' . (string)($products[$pIdx]['name'] ?? $id) .
+                    '. Stock insuficiente en ' . (string)($products[$componentIndex]['name'] ?? ($component['name'] ?? 'componente')),
+                    409,
+                    ['current' => $componentCurrent, 'qty' => $componentQty]
+                );
+            }
+
+            $products[$componentIndex]['stock'] = $componentNext;
+            $movementEntries[] = [
+                'productId' => $componentId,
+                'productName' => (string)($products[$componentIndex]['name'] ?? ($component['name'] ?? '')),
+                'before' => $componentCurrent,
+                'after' => $componentNext,
+                'delta' => 0 - $componentQty,
+                'ventaPorKit' => true,
+                'kitName' => (string)($products[$pIdx]['name'] ?? ($it['name'] ?? 'kit')),
+            ];
+        }
+        continue;
+    }
+
+    if (!$inventoryEnabled) {
         continue;
     }
     $current = round((float)($products[$pIdx]['stock'] ?? 0), 3);
@@ -1238,6 +1299,8 @@ foreach ($items as $it) {
         'before' => $current,
         'after' => $next,
         'delta' => 0 - $qty,
+        'ventaPorKit' => false,
+        'kitName' => '',
     ];
 }
 
@@ -1296,6 +1359,10 @@ if (salesCanUseTicketsDb()) {
             ]);
             if (legacyTableExists('inventario_historial')) {
                 $histId = $ticketId . '-S' . ($index + 1);
+                $isKitMovement = !empty($entry['ventaPorKit']);
+                $movementDescription = $isKitMovement
+                    ? ('Venta ticket #' . $ticketId . ' (kit: ' . (string)($entry['kitName'] ?? '') . ')')
+                    : ('Venta ticket #' . $ticketId);
                 $pdo->prepare(
                     'INSERT INTO INVENTARIO_HISTORIAL
                      (ID, PRODUCTO_ID, CUANDO_FUE, CANTIDAD_ANTERIOR, CANTIDAD, DESCRIPCION, COSTO_UNITARIO, COSTO_DESPUES, AJUSTE_ID, RECIBO_INVENTARIO_ID, VENTA_ID, TRANSFERENCIA_ID, CAJA_ID, VENTA_POR_KIT, USUARIO_ID, ALMACEN_ID)
@@ -1307,7 +1374,7 @@ if (salesCanUseTicketsDb()) {
                     ':cuando_fue' => legacyToSqlDateTime(date('c')),
                     ':cantidad_anterior' => $currentStock,
                     ':cantidad' => round((float)$entry['delta'], 3),
-                    ':descripcion' => 'Venta ticket #' . $ticketId,
+                    ':descripcion' => $movementDescription,
                     ':costo_unitario' => round((float)($productRow['PCOSTO'] ?? 0), 4),
                     ':costo_despues' => round((float)($productRow['PCOSTO'] ?? 0), 4),
                     ':ajuste_id' => '',
@@ -1315,7 +1382,7 @@ if (salesCanUseTicketsDb()) {
                     ':venta_id' => $ticketId,
                     ':transferencia_id' => '',
                     ':caja_id' => '1',
-                    ':venta_por_kit' => '0',
+                    ':venta_por_kit' => $isKitMovement ? '1' : '0',
                     ':usuario_id' => '',
                     ':almacen_id' => '1',
                 ]);
@@ -1354,8 +1421,11 @@ if (!empty($movementEntries)) {
             'delta' => round((float)$entry['delta'], 3),
             'before' => round((float)$entry['before'], 3),
             'after' => round((float)$entry['after'], 3),
-            'note' => 'Venta ticket #' . $ticketId,
+            'note' => !empty($entry['ventaPorKit'])
+                ? ('Venta ticket #' . $ticketId . ' (kit: ' . (string)($entry['kitName'] ?? '') . ')')
+                : ('Venta ticket #' . $ticketId),
             'source' => 'sales',
+            'ventaPorKit' => !empty($entry['ventaPorKit']),
             'createdAt' => date('c'),
         ];
     }

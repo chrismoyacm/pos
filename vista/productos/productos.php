@@ -167,6 +167,7 @@ declare(strict_types=1);
                   </label>
                 </div>
               </div>
+              <div class="prod-kit-inventory-note" id="prod-kit-inventory-note" hidden>Descontar inventario de sus componentes</div>
 
               <div class="prod-delete-box" id="prod-delete-box" hidden>
                 <div class="prod-delete-title">Eliminar producto</div>

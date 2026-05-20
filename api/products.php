@@ -364,6 +364,10 @@ function normalizeProduct(array $body, ?array $existing = null): array
         errorResponse('Precios inválidos', 400);
     }
 
+    if ($unitType === 'package') {
+        $inventoryEnabled = false;
+    }
+
     $product = [
         'id' => (string)($existing['id'] ?? ''),
         'barcode' => $barcode,
@@ -432,7 +436,9 @@ if ($method === 'GET') {
         ok($promotions);
     }
 
-    $q = strtolower(trim((string)($_GET['q'] ?? '')));
+    $qRaw = trim((string)($_GET['q'] ?? ''));
+    $q = strtolower($qRaw);
+    $searchMode = strtolower(trim((string)($_GET['searchMode'] ?? 'contains')));
     $products = readJsonFile($productsPath);
 
     if ($q === '') {
@@ -444,16 +450,32 @@ if ($method === 'GET') {
         ok($products);
     }
 
-    $filtered = array_values(array_filter($products, function ($p) use ($q) {
+    $filtered = array_values(array_filter($products, function ($p) use ($q, $searchMode) {
         $barcode = strtolower((string)($p['barcode'] ?? ''));
         $name = strtolower((string)($p['name'] ?? ''));
         $id = strtolower((string)($p['id'] ?? ''));
-        $department = strtolower((string)($p['department'] ?? ''));
+        $prefixMatch = static function (string $haystack) use ($q): bool {
+            return $q !== '' && str_starts_with($haystack, $q);
+        };
+        $containsMatch = static function (string $haystack) use ($q): bool {
+            return $q !== '' && str_contains($haystack, $q);
+        };
+
+        if ($barcode === $q || $id === $q) {
+            return true;
+        }
+
+        if ($searchMode === 'prefix') {
+            return $prefixMatch($barcode)
+                || $prefixMatch($name)
+                || $prefixMatch($id);
+        }
+
         return $barcode === $q
             || $id === $q
-            || str_contains($barcode, $q)
-            || str_contains($name, $q)
-            || str_contains($department, $q);
+            || $containsMatch($barcode)
+            || $containsMatch($name)
+            || $containsMatch($id);
     }));
 
     usort($filtered, function ($a, $b) use ($q) {

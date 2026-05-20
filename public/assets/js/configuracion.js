@@ -299,6 +299,7 @@
             administrar_cajas: 'config_manage_boxes',
             logo_programa: 'config_logo',
             ticket: 'config_ticket',
+            factura: 'otros_access_facturas',
             impuestos: 'config_taxes',
             corte: 'config_corte',
             unidades_medida: 'config_units',

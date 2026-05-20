@@ -5,17 +5,6 @@ $section = (string)($_GET['section'] ?? 'emision');
 $view = (string)($_GET['view'] ?? 'factura');
 
 $groups = [
-    'configuracion' => [
-        'label' => 'Configuracion',
-        'items' => [
-            'Seleccionar' => 'Seleccionar',
-            'emisor' => 'Datos Emisor',
-            'firma' => 'Perfil y firma',
-            'servicios' => 'Productos y servicios',
-            'carga' => 'Carga masiva',
-            'puntos' => 'Puntos de emision',
-        ],
-    ],
     'emision' => [
         'label' => 'Emision',
         'items' => [
@@ -26,16 +15,6 @@ $groups = [
             'guia-remision' => 'Guia de remision',
             'retencion' => 'Comprobante de retencion',
             'liquidacion' => 'Liquidacion de compra de bienes y prestacion de servicios',
-        ],
-    ],
-    'comprobantes' => [
-        'label' => 'Comprobantes',
-        'items' => [
-            'Seleccionar' => 'Seleccionar',
-            'administracion' => 'Administracion',
-            'no-autorizados' => 'No autorizados',
-            'pendientes-anular' => 'Pendientes de anular',
-            'anulados' => 'Historial de anulados',
         ],
     ],
 ];

@@ -1205,6 +1205,50 @@ function legacyReadProducts(): array
         $out[] = $product;
     }
 
+    $productIndex = [];
+    foreach ($out as $idx => $product) {
+        $productId = trim((string)($product['id'] ?? ''));
+        if ($productId !== '') {
+            $productIndex[$productId] = $idx;
+        }
+    }
+
+    foreach ($out as $idx => $product) {
+        if (($product['unitType'] ?? '') !== 'package') {
+            continue;
+        }
+
+        $packageItems = is_array($product['packageItems'] ?? null) ? $product['packageItems'] : [];
+        $limit = null;
+        foreach ($packageItems as $itemIdx => $packageItem) {
+            if (!is_array($packageItem)) {
+                continue;
+            }
+
+            $componentId = trim((string)($packageItem['productId'] ?? ''));
+            $componentQty = max(0, safeFloat($packageItem['qty'] ?? 0));
+            $componentStock = 0.0;
+
+            if ($componentId !== '' && array_key_exists($componentId, $productIndex)) {
+                $componentStock = safeFloat($out[$productIndex[$componentId]]['stock'] ?? 0);
+            }
+
+            $packageItems[$itemIdx]['stock'] = $componentStock;
+            if ($componentQty <= 0) {
+                $limit = 0.0;
+                continue;
+            }
+
+            $componentLimit = floor($componentStock / $componentQty);
+            $limit = $limit === null ? $componentLimit : min($limit, $componentLimit);
+        }
+
+        $product['packageItems'] = $packageItems;
+        $product['stock'] = (int)max(0, $limit ?? 0);
+        $product['inventoryEnabled'] = false;
+        $out[$idx] = $product;
+    }
+
     return $out;
 }
 

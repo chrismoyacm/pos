@@ -981,7 +981,7 @@ function facturacionMapPaymentCode(string $method): string
         'card', 'credit_card', 'tarjeta de crédito', 'tarjeta credito' => '19',
         'debit_card', 'tarjeta de débito', 'tarjeta debito' => '16',
         'credit', 'credito', 'a credito' => '20',
-        'transfer', 'transferencia' => '15',
+        'transfer', 'transferencia' => '20',
         'check', 'cheque' => '20',
         default => '01',
     };

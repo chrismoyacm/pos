@@ -78,6 +78,7 @@
       <button type="button" class="btn-secondary" id="btn-pay-note">F4 - Ingresar notas</button>
       <button type="button" class="btn-secondary" id="btn-pay-cancel">ESC - Cancelar</button>
       <button type="button" class="btn-primary" id="btn-pay-confirm">F2 - Cobrar sin imprimir</button>
+      <button type="button" class="btn-primary" id="btn-pay-confirm-invoice">Cobrar y facturar</button>
       <button type="button" class="btn-primary" id="btn-pay-confirm-print">F1 - Cobrar e imprimir</button>
     </footer>
   </div>
@@ -223,6 +224,7 @@
                 <th style="width:70px">Folio</th>
                 <th style="width:120px">Hora</th>
                 <th>Cliente</th>
+                <th style="width:130px">Tipo venta</th>
                 <th style="width:110px">Estado</th>
                 <th style="width:110px">Total</th>
               </tr>
@@ -252,6 +254,7 @@
     </section>
     <footer>
       <button type="button" class="btn-secondary" id="sales-day-close">Cerrar</button>
+      <button type="button" class="btn-secondary" id="sales-day-reprint-btn" disabled>Reimprimir ticket</button>
       <button type="button" class="btn-secondary" id="sales-day-assign-btn" hidden>Asignar cliente</button>
       <button type="button" class="btn-primary" id="sales-day-charge-btn" hidden>Cobrar pendiente</button>
       <button type="button" class="btn-danger" id="sales-day-cancel-pending-btn" hidden>Cancelar pendiente</button>

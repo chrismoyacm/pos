@@ -323,9 +323,10 @@ if ($method === 'GET') {
         $mixed = is_array($sale['mixedPayments'] ?? null) ? $sale['mixedPayments'] : [];
         $paymentMap = [
             'cash' => 'cash',
-            'credit' => 'credit_card',
+            'credit' => 'credit',
             'card' => 'credit_card',
             'transfer' => 'transfer',
+            'invoice' => 'other',
             'voucher' => 'other',
             'check' => 'other',
         ];
@@ -341,17 +342,25 @@ if ($method === 'GET') {
                 $payments[] = ['method' => 'transfer', 'label' => 'Transferencia', 'value' => $transferPart, 'term' => 0, 'timeUnit' => 'dias'];
             }
             if ($creditPart > 0) {
-                $payments[] = ['method' => 'credit_card', 'label' => 'Credito', 'value' => $creditPart, 'term' => 0, 'timeUnit' => 'dias'];
+                $payments[] = ['method' => 'credit', 'label' => 'Credito', 'value' => $creditPart, 'term' => 30, 'timeUnit' => 'dias'];
             }
         } else {
             $mappedMethod = $paymentMap[$paymentMethod] ?? 'cash';
             $label = match ($mappedMethod) {
                 'cash' => 'Efectivo',
                 'transfer' => 'Transferencia',
+                'credit' => 'Credito',
                 'credit_card' => 'Tarjeta de credito',
+                'other' => $paymentMethod === 'invoice' ? 'Factura' : 'Otro',
                 default => 'Otro',
             };
-            $payments[] = ['method' => $mappedMethod, 'label' => $label, 'value' => $total, 'term' => 0, 'timeUnit' => 'dias'];
+            $payments[] = [
+                'method' => $mappedMethod,
+                'label' => $label,
+                'value' => $total,
+                'term' => $mappedMethod === 'credit' ? 30 : 0,
+                'timeUnit' => 'dias'
+            ];
         }
 
         ok([

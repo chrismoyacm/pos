@@ -17,6 +17,7 @@
                 <h3>Personalización</h3>
                 <button type="button" class="config-nav" data-view="logo_programa">Logotipo del programa</button>
                 <button type="button" class="config-nav" data-view="ticket">Ticket</button>
+                <button type="button" class="config-nav" data-view="factura">Factura</button>
                 <button type="button" class="config-nav" data-view="impuestos">Impuestos</button>
                 <button type="button" class="config-nav" data-view="corte">Corte</button>
                 <button type="button" class="config-nav" data-view="unidades_medida">Unidades de medida</button>
@@ -458,6 +459,50 @@
 
                 <div class="config-actions">
                     <button class="btn-primary" type="button" id="cfg-save-reader">Guardar lector</button>
+                </div>
+            </section>
+
+            <section class="config-panel" data-panel="factura">
+                <h3>Factura</h3>
+                <p class="muted">Accesos a configuracion y administracion de facturacion electronica.</p>
+
+                <div class="config-shortcuts-grid">
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=configuracion&view=emisor">
+                        <strong>Datos emisor</strong>
+                        <span>RUC, razon social y datos fiscales del emisor.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=configuracion&view=firma">
+                        <strong>Perfil y firma</strong>
+                        <span>Certificado, clave y validacion de firma electronica.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=configuracion&view=servicios">
+                        <strong>Productos y servicios</strong>
+                        <span>Codigos, servicios e informacion fiscal asociada.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=configuracion&view=carga">
+                        <strong>Carga masiva</strong>
+                        <span>Importaciones o sincronizacion de datos de facturacion.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=configuracion&view=puntos">
+                        <strong>Puntos de emision</strong>
+                        <span>Establecimientos, secuenciales y direccion fiscal.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=comprobantes&view=administracion">
+                        <strong>Administracion</strong>
+                        <span>Revision general de comprobantes generados.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=comprobantes&view=no-autorizados">
+                        <strong>No autorizados</strong>
+                        <span>Documentos pendientes o rechazados por el SRI.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=comprobantes&view=pendientes-anular">
+                        <strong>Pendientes de anular</strong>
+                        <span>Comprobantes en proceso de anulacion.</span>
+                    </a>
+                    <a class="config-shortcut-card" href="index.php?mod=facturas&section=comprobantes&view=anulados">
+                        <strong>Historial de anulados</strong>
+                        <span>Consulta de comprobantes ya anulados.</span>
+                    </a>
                 </div>
             </section>
 

@@ -468,11 +468,25 @@
     $('#prod-price').val(Number(salePrice).toFixed(2));
   }
 
+  function recalcMarginFromSalePrice() {
+    const cost = parseFloat($('#prod-cost').val().toString()) || 0;
+    const salePrice = parseFloat($('#prod-price').val().toString()) || 0;
+    if (!(cost > 0)) {
+      $('#prod-margin').val('0.00');
+      return;
+    }
+    const margin = ((salePrice - cost) / cost) * 100;
+    $('#prod-margin').val(Number(Math.max(0, margin)).toFixed(2));
+  }
+
   function syncInventoryControls() {
     const $enabled = $('#prod-inventory-enabled');
     const $stockInputs = $('#prod-stock, #prod-min-stock, #prod-max-stock');
+    const isKit = isPackageProduct();
     $enabled.prop('disabled', false);
     $stockInputs.prop('disabled', false);
+    $('.prod-inventory-box').prop('hidden', isKit);
+    $('#prod-kit-inventory-note').prop('hidden', !isKit);
   }
 
   function readForm() {
@@ -1538,7 +1552,6 @@
       }
 
       const savedProduct = res.data || null;
-      state.selectedId = savedProduct?.id || null;
       if (savedProduct) {
         upsertProductInState(savedProduct);
       }
@@ -1546,12 +1559,13 @@
       if (state.mode === 'new') {
         showSaveFeedback('Producto registrado correctamente.', 'success');
         clearNewProductDraft();
+        state.selectedId = null;
         fillForm(defaultFormValues());
       } else {
         showSaveFeedback('Producto actualizado correctamente.', 'success');
-        if (savedProduct) {
-          fillForm(productToForm(savedProduct));
-        }
+        state.selectedId = null;
+        $('#prod-search').val('');
+        fillForm(defaultFormValues());
       }
 
       renderProductList();
@@ -1780,7 +1794,11 @@
       recalcSalePriceFromMargin();
       saveNewProductDraft();
     });
-    $('#prod-price, #prod-special-price, #prod-wholesale, #prod-stock, #prod-min-stock, #prod-max-stock, #prod-barcode, #prod-name').on('input', saveNewProductDraft);
+    $('#prod-price').on('input', function () {
+      recalcMarginFromSalePrice();
+      saveNewProductDraft();
+    });
+    $('#prod-special-price, #prod-wholesale, #prod-stock, #prod-min-stock, #prod-max-stock, #prod-barcode, #prod-name').on('input', saveNewProductDraft);
     $('#prod-iva').on('change', saveNewProductDraft);
     let previewTimer = null;
     $('#prod-package-code').on('input', function () {
