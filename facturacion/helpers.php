@@ -20,6 +20,56 @@ function facturacionStoragePath(string $relative): string
     return facturacionStorageDir() . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $relative);
 }
 
+function facturacionDocumentFileKinds(): array
+{
+    return [
+        'generatedXml' => ['ext' => 'xml', 'mime' => 'application/xml'],
+        'signedXml' => ['ext' => 'xml', 'mime' => 'application/xml'],
+        'authorizedXml' => ['ext' => 'xml', 'mime' => 'application/xml'],
+        'pdf' => ['ext' => 'pdf', 'mime' => 'application/pdf'],
+    ];
+}
+
+function facturacionBuildDbFileRef(string $documentId, string $kind, string $fileName): string
+{
+    return 'db://facturacion/' . rawurlencode($documentId) . '/' . rawurlencode($kind) . '/' . rawurlencode($fileName);
+}
+
+function facturacionIsDbFileRef(string $value): bool
+{
+    return str_starts_with(trim($value), 'db://facturacion/');
+}
+
+function facturacionDocumentFileName(array $document, string $kind): string
+{
+    $spec = facturacionDocumentFileKinds()[$kind] ?? ['ext' => 'bin'];
+    $base = trim((string)($document['accessKey'] ?? ''));
+    if ($base === '') {
+        $base = trim((string)($document['id'] ?? 'documento'));
+    }
+    $base = preg_replace('/[^A-Za-z0-9._-]+/', '-', $base) ?: 'documento';
+    return $base . '.' . $spec['ext'];
+}
+
+function facturacionDecodeDbFileRef(string $value): array
+{
+    $trimmed = trim($value);
+    if (!facturacionIsDbFileRef($trimmed)) {
+        return [];
+    }
+
+    $parts = explode('/', substr($trimmed, strlen('db://facturacion/')));
+    if (count($parts) < 3) {
+        return [];
+    }
+
+    return [
+        'documentId' => rawurldecode((string)$parts[0]),
+        'kind' => rawurldecode((string)$parts[1]),
+        'fileName' => rawurldecode(implode('/', array_slice($parts, 2))),
+    ];
+}
+
 function facturacionReadJson(string $relative, array $default = []): array
 {
     $path = facturacionStoragePath($relative);
@@ -527,6 +577,204 @@ function facturacionEnsureDbSchema(): void
                 ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS FACT_ELEC_DOCUMENTOS_ARCHIVOS (
+            ID BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            DOCUMENT_ID VARCHAR(32) NOT NULL,
+            FILE_KIND VARCHAR(32) NOT NULL,
+            FILE_NAME VARCHAR(255) NOT NULL,
+            MIME_TYPE VARCHAR(120) NOT NULL,
+            FILE_SIZE BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            CONTENT LONGBLOB NOT NULL,
+            CREATED_AT DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UPDATED_AT DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (ID),
+            UNIQUE KEY UQ_FACT_ELEC_FILE_DOC_KIND (DOCUMENT_ID, FILE_KIND),
+            KEY IDX_FACT_ELEC_FILE_DOC (DOCUMENT_ID),
+            CONSTRAINT FK_FACT_ELEC_FILE_DOC
+                FOREIGN KEY (DOCUMENT_ID) REFERENCES FACT_ELEC_DOCUMENTOS(ID)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+}
+
+function facturacionStoreDocumentFileDb(string $documentId, string $kind, string $fileName, string $mimeType, string $content): string
+{
+    facturacionEnsureDbSchema();
+    $stmt = db()->prepare(
+        "INSERT INTO FACT_ELEC_DOCUMENTOS_ARCHIVOS (
+            DOCUMENT_ID, FILE_KIND, FILE_NAME, MIME_TYPE, FILE_SIZE, CONTENT
+        ) VALUES (
+            :document_id, :file_kind, :file_name, :mime_type, :file_size, :content
+        )
+        ON DUPLICATE KEY UPDATE
+            FILE_NAME = VALUES(FILE_NAME),
+            MIME_TYPE = VALUES(MIME_TYPE),
+            FILE_SIZE = VALUES(FILE_SIZE),
+            CONTENT = VALUES(CONTENT)"
+    );
+    $stmt->bindValue(':document_id', $documentId);
+    $stmt->bindValue(':file_kind', $kind);
+    $stmt->bindValue(':file_name', $fileName);
+    $stmt->bindValue(':mime_type', $mimeType);
+    $stmt->bindValue(':file_size', strlen($content), PDO::PARAM_INT);
+    $stmt->bindValue(':content', $content, PDO::PARAM_LOB);
+    $stmt->execute();
+
+    return facturacionBuildDbFileRef($documentId, $kind, $fileName);
+}
+
+function facturacionLoadDocumentFileDb(string $documentId, string $kind): ?array
+{
+    facturacionEnsureDbSchema();
+    $stmt = db()->prepare(
+        "SELECT FILE_NAME, MIME_TYPE, FILE_SIZE, CONTENT
+         FROM FACT_ELEC_DOCUMENTOS_ARCHIVOS
+         WHERE DOCUMENT_ID = :document_id AND FILE_KIND = :file_kind
+         LIMIT 1"
+    );
+    $stmt->execute([
+        ':document_id' => $documentId,
+        ':file_kind' => $kind,
+    ]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row) || $row === []) {
+        return null;
+    }
+
+    $content = $row['CONTENT'] ?? '';
+    if (is_resource($content)) {
+        $content = stream_get_contents($content);
+    }
+
+    return [
+        'fileName' => (string)($row['FILE_NAME'] ?? ''),
+        'mimeType' => (string)($row['MIME_TYPE'] ?? 'application/octet-stream'),
+        'size' => (int)($row['FILE_SIZE'] ?? 0),
+        'content' => is_string($content) ? $content : '',
+        'ref' => facturacionBuildDbFileRef($documentId, $kind, (string)($row['FILE_NAME'] ?? 'archivo')),
+    ];
+}
+
+function facturacionStoreDocumentFile(array $document, string $kind, string $content): array
+{
+    $spec = facturacionDocumentFileKinds()[$kind] ?? null;
+    if ($spec === null) {
+        throw new InvalidArgumentException('Tipo de archivo de facturacion no soportado: ' . $kind);
+    }
+
+    $documentId = trim((string)($document['id'] ?? ''));
+    if ($documentId === '') {
+        throw new InvalidArgumentException('No se puede guardar archivo de facturacion sin ID de documento.');
+    }
+
+    $fileName = facturacionDocumentFileName($document, $kind);
+    if (facturacionCanUseDb()) {
+        $document['files'][$kind] = facturacionStoreDocumentFileDb($documentId, $kind, $fileName, (string)$spec['mime'], $content);
+        return $document;
+    }
+
+    $relativeDir = $kind === 'pdf' ? 'pdf' : ('xml' . DIRECTORY_SEPARATOR . ($kind === 'authorizedXml' ? 'autorizados' : ($kind === 'signedXml' ? 'firmados' : 'generados')));
+    $targetDir = facturacionStoragePath($relativeDir);
+    if (!is_dir($targetDir)) {
+        mkdir($targetDir, 0777, true);
+    }
+    $targetPath = $targetDir . DIRECTORY_SEPARATOR . $fileName;
+    $written = @file_put_contents($targetPath, $content);
+    if ($written === false || !file_exists($targetPath) || filesize($targetPath) === 0) {
+        throw new RuntimeException('No se pudo guardar el archivo de facturacion ' . $kind . '.');
+    }
+    $document['files'][$kind] = $targetPath;
+    return $document;
+}
+
+function facturacionReadDocumentFile(array $document, string $kind): ?array
+{
+    $files = is_array($document['files'] ?? null) ? $document['files'] : [];
+    $value = trim((string)($files[$kind] ?? ''));
+    $documentId = trim((string)($document['id'] ?? ''));
+
+    if (facturacionCanUseDb()) {
+        if ($value !== '' && facturacionIsDbFileRef($value)) {
+            $decoded = facturacionDecodeDbFileRef($value);
+            if (($decoded['documentId'] ?? '') !== '' && ($decoded['kind'] ?? '') === $kind) {
+                $dbFile = facturacionLoadDocumentFileDb((string)$decoded['documentId'], $kind);
+                if ($dbFile !== null) {
+                    return $dbFile;
+                }
+            }
+        }
+        if ($documentId !== '') {
+            $dbFile = facturacionLoadDocumentFileDb($documentId, $kind);
+            if ($dbFile !== null) {
+                return $dbFile;
+            }
+        }
+    }
+
+    if ($value !== '' && file_exists($value)) {
+        $content = file_get_contents($value);
+        if ($content === false) {
+            return null;
+        }
+        $spec = facturacionDocumentFileKinds()[$kind] ?? ['mime' => 'application/octet-stream'];
+        return [
+            'fileName' => basename($value),
+            'mimeType' => (string)$spec['mime'],
+            'size' => strlen($content),
+            'content' => $content,
+            'ref' => $value,
+        ];
+    }
+
+    return null;
+}
+
+function facturacionHasDocumentFile(array $document, string $kind): bool
+{
+    return facturacionReadDocumentFile($document, $kind) !== null;
+}
+
+function facturacionMaterializeDocumentFile(array $document, string $kind): string
+{
+    $files = is_array($document['files'] ?? null) ? $document['files'] : [];
+    $value = trim((string)($files[$kind] ?? ''));
+    if ($value !== '' && !facturacionIsDbFileRef($value) && file_exists($value)) {
+        return $value;
+    }
+
+    $payload = facturacionReadDocumentFile($document, $kind);
+    if ($payload === null) {
+        return '';
+    }
+
+    $extension = pathinfo((string)($payload['fileName'] ?? ''), PATHINFO_EXTENSION);
+    $tempDir = facturacionStoragePath('runtime-temp');
+    if (!is_dir($tempDir)) {
+        mkdir($tempDir, 0777, true);
+    }
+
+    $tempBase = tempnam($tempDir, 'fact-');
+    if ($tempBase === false) {
+        throw new RuntimeException('No se pudo materializar temporalmente el archivo de facturacion.');
+    }
+    $tempPath = $tempBase;
+    if ($extension !== '') {
+        $renamed = $tempBase . '.' . $extension;
+        @unlink($renamed);
+        if (@rename($tempBase, $renamed)) {
+            $tempPath = $renamed;
+        }
+    }
+
+    $written = @file_put_contents($tempPath, (string)($payload['content'] ?? ''));
+    if ($written === false || !file_exists($tempPath) || filesize($tempPath) === 0) {
+        @unlink($tempPath);
+        throw new RuntimeException('No se pudo escribir el archivo temporal de facturacion.');
+    }
+
+    return $tempPath;
 }
 
 function facturacionEncodeJson(mixed $value): string
@@ -599,6 +847,7 @@ function facturacionDocumentFromDbRow(array $row): array
         'guideNumber' => (string)($row['GUIDE_NUMBER'] ?? ''),
         'isNegotiable' => (bool)($row['IS_NEGOTIABLE'] ?? false),
         'originSaleId' => (string)($row['ORIGIN_SALE_ID'] ?? ''),
+        'adminTag' => '',
         'buyer' => [
             'identification' => (string)($row['BUYER_IDENTIFICATION'] ?? ''),
             'identificationType' => (string)($row['BUYER_IDENTIFICATION_TYPE'] ?? ''),
@@ -624,6 +873,30 @@ function facturacionPersistDocumentDb(array $document): array
     $pdo->beginTransaction();
 
     try {
+        $documentId = (string)($document['id'] ?? '');
+        if ($documentId === '') {
+            throw new InvalidArgumentException('No se puede persistir un documento de facturacion sin ID.');
+        }
+
+        $files = is_array($document['files'] ?? null) ? $document['files'] : [];
+        foreach (facturacionDocumentFileKinds() as $kind => $spec) {
+            $ref = trim((string)($files[$kind] ?? ''));
+            if ($ref === '' || facturacionIsDbFileRef($ref) || !file_exists($ref)) {
+                continue;
+            }
+            $content = file_get_contents($ref);
+            if (!is_string($content) || $content === '') {
+                continue;
+            }
+            $document['files'][$kind] = facturacionStoreDocumentFileDb(
+                $documentId,
+                $kind,
+                facturacionDocumentFileName($document, $kind),
+                (string)$spec['mime'],
+                $content
+            );
+        }
+
         $createdAt = facturacionIsoToDbDateTime((string)($document['createdAt'] ?? date('c')));
         $document['updatedAt'] = date('c');
         $updatedAt = facturacionIsoToDbDateTime((string)$document['updatedAt']);
@@ -705,7 +978,6 @@ function facturacionPersistDocumentDb(array $document): array
             ':document_json' => facturacionEncodeJson($document),
         ]);
 
-        $documentId = (string)($document['id'] ?? '');
         $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_DETALLE WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
         $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_PAGOS WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
         $pdo->prepare("DELETE FROM FACT_ELEC_DOCUMENTOS_ADICIONALES WHERE DOCUMENT_ID = :id")->execute([':id' => $documentId]);
@@ -996,7 +1268,7 @@ function facturacionTaxDefinition(string $iva): array
     if ($normalized === '12%') {
         return ['codigo' => '2', 'codigoPorcentaje' => '2', 'tarifa' => 12.0];
     }
-    return ['codigo' => '2', 'codigoPorcentaje' => '0', 'tarifa' => 0.0];
+    return ['codigo' => '2', 'codigoPorcentaje' => '6', 'tarifa' => 0.0];
 }
 
 function facturacionRound(float $value): float
@@ -1270,6 +1542,7 @@ function facturacionBuildInvoiceDocument(array $payload): array
         'guideNumber' => trim((string)($payload['guideNumber'] ?? '')),
         'isNegotiable' => !empty($payload['isNegotiable']),
         'originSaleId' => trim((string)($payload['saleId'] ?? '')),
+        'adminTag' => trim((string)($payload['adminTag'] ?? '')),
         'files' => [
             'generatedXml' => null,
             'signedXml' => null,
@@ -1414,12 +1687,58 @@ function facturacionCreateSoapClient(string $wsdl): SoapClient
         try {
             return new SoapClient($wsdl, $fallbackOptions);
         } catch (Throwable $fallbackError) {
+            $localWsdl = facturacionCacheSoapWsdlLocally($wsdl, $fallbackOptions['stream_context']);
+            if ($localWsdl !== '') {
+                try {
+                    return new SoapClient($localWsdl, $fallbackOptions);
+                } catch (Throwable $localError) {
+                    throw new RuntimeException(
+                        'No se pudo cargar el WSDL del SRI. Verifique acceso HTTPS/TLS desde el servidor web. Detalle: '
+                        . $localError->getMessage()
+                    );
+                }
+            }
             throw new RuntimeException(
                 'No se pudo cargar el WSDL del SRI. Verifique acceso HTTPS/TLS desde el servidor web. Detalle: '
                 . $fallbackError->getMessage()
             );
         }
     }
+}
+
+function facturacionCacheSoapWsdlLocally(string $wsdl, $streamContext = null): string
+{
+    $url = trim($wsdl);
+    if ($url === '' || !preg_match('#^https?://#i', $url)) {
+        return '';
+    }
+
+    $context = is_resource($streamContext) ? $streamContext : stream_context_create([
+        'http' => [
+            'user_agent' => 'POS Facturacion SOAP',
+            'timeout' => 30,
+        ],
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false,
+            'allow_self_signed' => true,
+            'crypto_method' => STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT,
+        ],
+    ]);
+
+    $raw = @file_get_contents($url, false, $context);
+    if (!is_string($raw) || trim($raw) === '') {
+        return '';
+    }
+
+    $cacheDir = facturacionStoragePath('wsdl-cache');
+    if (!is_dir($cacheDir)) {
+        mkdir($cacheDir, 0777, true);
+    }
+
+    $path = $cacheDir . DIRECTORY_SEPARATOR . md5($url) . '.wsdl';
+    file_put_contents($path, $raw);
+    return $path;
 }
 
 function facturacionLegacyOpenSslConfigPath(): string
@@ -1716,7 +2035,7 @@ function facturacionValidateSignedXmlStructure(string $xmlPath): array
 
     $xpath = new DOMXPath($dom);
     $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
-    $xpath->registerNamespace('etsi', 'http://uri.etsi.org/01903/v1.3.2#');
+    $xpath->registerNamespace('xades', 'http://uri.etsi.org/01903/v1.3.2#');
 
     $requiredXPath = [
         '/factura/infoTributaria' => 'Falta infoTributaria.',
@@ -1726,10 +2045,11 @@ function facturacionValidateSignedXmlStructure(string $xmlPath): array
         '/factura/ds:Signature/ds:SignedInfo' => 'Falta SignedInfo.',
         '/factura/ds:Signature/ds:SignatureValue' => 'Falta SignatureValue.',
         '/factura/ds:Signature/ds:KeyInfo/ds:X509Data/ds:X509Certificate' => 'Falta X509Certificate en KeyInfo.',
-        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties' => 'Falta QualifyingProperties.',
-        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties' => 'Falta SignedProperties.',
-        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties/etsi:SignedSignatureProperties/etsi:SigningTime' => 'Falta SigningTime.',
-        '/factura/ds:Signature/ds:Object/etsi:QualifyingProperties/etsi:SignedProperties/etsi:SignedSignatureProperties/etsi:SigningCertificate' => 'Falta SigningCertificate.',
+        '/factura/ds:Signature/ds:Object/xades:QualifyingProperties' => 'Falta QualifyingProperties.',
+        '/factura/ds:Signature/ds:Object/xades:QualifyingProperties/xades:SignedProperties' => 'Falta SignedProperties.',
+        '/factura/ds:Signature/ds:Object/xades:QualifyingProperties/xades:SignedProperties/xades:SignedSignatureProperties/xades:SigningTime' => 'Falta SigningTime.',
+        '/factura/ds:Signature/ds:Object/xades:QualifyingProperties/xades:SignedProperties/xades:SignedSignatureProperties/xades:SigningCertificate' => 'Falta SigningCertificate.',
+        '/factura/ds:Signature/ds:Object/xades:QualifyingProperties/xades:SignedProperties/xades:SignedDataObjectProperties/xades:DataObjectFormat/xades:Encoding' => 'Falta Encoding en DataObjectFormat.',
     ];
     foreach ($requiredXPath as $query => $message) {
         $node = $xpath->query($query);

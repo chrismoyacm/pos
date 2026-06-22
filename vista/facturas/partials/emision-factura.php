@@ -65,7 +65,7 @@ $issueDate = date('d-m-Y');
               <option value="Pasaporte">Pasaporte</option>
               <option value="Consumidor final">Consumidor final</option>
             </select>
-            <button class="btn-secondary" type="button" id="factura-save-buyer-id-btn" hidden>Guardar identificacion de cliente</button>
+            <button class="btn-secondary" type="button" id="factura-save-buyer-id-btn" hidden>Guardar adquirente</button>
           </div>
         </label>
 
@@ -103,10 +103,8 @@ $issueDate = date('d-m-Y');
           <span>Codigo / Descripcion</span>
           <input type="text" id="factura-product-search" placeholder="Escriba una letra o palabra, despues seleccione el producto">
         </label>
-        <button class="btn-secondary" type="button" id="factura-product-search-btn">Buscar en listado de productos</button>
+        <button class="btn-secondary" type="button" id="factura-product-search-btn">Buscar (F10)</button>
       </div>
-
-      <div class="facturacion-search-results" id="factura-product-results"></div>
 
       <div class="factura-table-wrap">
         <table class="grid grid-compact factura-table">
@@ -181,8 +179,8 @@ $issueDate = date('d-m-Y');
                 <tr>
                   <th>Forma de Pago</th>
                   <th style="width:90px">Valor</th>
-                  <th style="width:80px">Plazo</th>
-                  <th style="width:90px">Tiempo</th>
+                  <th style="width:120px">Fecha pago</th>
+                  <th style="width:110px">Periodo</th>
                   <th style="width:90px">Acciones</th>
                 </tr>
               </thead>
@@ -195,10 +193,7 @@ $issueDate = date('d-m-Y');
           </div>
 
           <div class="factura-payment-actions" id="factura-payment-actions">
-            <button class="btn-secondary" type="button" data-payment-method="cash">Efectivo</button>
-            <button class="btn-secondary" type="button" data-payment-method="debit_card">Tarjeta de debito</button>
-            <button class="btn-secondary" type="button" data-payment-method="credit_card">Tarjeta de credito</button>
-            <button class="btn-primary" type="button" id="factura-add-payment-btn">Anadir forma de pago</button>
+            <button class="btn-primary" type="button" id="factura-open-payment-btn">Pago (F12)</button>
           </div>
           <div class="muted" id="factura-payment-origin-note" hidden>La forma de pago se toma desde la venta realizada en caja.</div>
         </section>
@@ -240,3 +235,138 @@ $issueDate = date('d-m-Y');
     </div>
   </div>
 </section>
+
+<div class="modal" id="factura-product-search-modal">
+  <div class="modal-card modal-card--search" role="dialog" aria-modal="true" aria-labelledby="factura-product-search-title">
+    <header>
+      <span id="factura-product-search-title">Buscar producto (F10)</span>
+    </header>
+    <section>
+      <label class="field-col">
+        <span>Buscar producto</span>
+        <input type="text" id="factura-product-search-modal-input" autocomplete="off" placeholder="Codigo, nombre o ID">
+      </label>
+      <div class="muted">Click en un resultado para agregarlo al detalle.</div>
+      <div class="search-results-table-wrap">
+        <table class="grid search-results-table">
+          <thead>
+            <tr>
+              <th style="width:140px">Codigo</th>
+              <th>Producto</th>
+              <th style="width:90px">IVA</th>
+              <th style="width:120px">Precio</th>
+            </tr>
+          </thead>
+          <tbody id="factura-product-search-modal-results"></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>
+      <button class="btn-secondary" type="button" id="factura-product-search-close-btn">Cerrar</button>
+    </footer>
+  </div>
+</div>
+
+<div class="modal" id="factura-payment-modal">
+  <div class="modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="factura-payment-modal-title">
+    <header>
+      <span id="factura-payment-modal-title">Pago (F12)</span>
+    </header>
+    <section>
+      <label class="factura-field">
+        <span>Total factura</span>
+        <input type="text" id="factura-payment-total" readonly>
+      </label>
+
+      <div class="pay-method-picker">
+        <button class="pay-method-option" type="button" data-factura-pay-method="cash">Efectivo</button>
+        <button class="pay-method-option" type="button" data-factura-pay-method="credit">Credito</button>
+        <button class="pay-method-option" type="button" data-factura-pay-method="mixed">Mixto</button>
+        <button class="pay-method-option" type="button" data-factura-pay-method="transfer">Transferencia</button>
+      </div>
+
+      <div class="factura-pay-pane" id="factura-pay-pane-cash">
+        <label class="factura-field">
+          <span>Valor</span>
+          <input type="number" id="factura-pay-cash-value" min="0" step="0.01">
+        </label>
+      </div>
+
+      <div class="factura-pay-pane" id="factura-pay-pane-transfer" hidden>
+        <label class="factura-field">
+          <span>Valor</span>
+          <input type="number" id="factura-pay-transfer-value" min="0" step="0.01">
+        </label>
+      </div>
+
+      <div class="factura-pay-pane" id="factura-pay-pane-credit" hidden>
+        <label class="factura-field">
+          <span>Valor</span>
+          <input type="number" id="factura-pay-credit-value" min="0" step="0.01">
+        </label>
+        <label class="factura-field">
+          <span>Fecha de pago</span>
+          <input type="date" id="factura-pay-credit-due-date">
+        </label>
+        <label class="factura-field">
+          <span>Interes %</span>
+          <input type="number" id="factura-pay-credit-interest" min="0" step="0.01" value="0.00">
+        </label>
+        <label class="factura-field">
+          <span>Periodo</span>
+          <select id="factura-pay-credit-period">
+            <option value="daily">Diario</option>
+            <option value="weekly">Semanal</option>
+            <option value="biweekly">Quincenal</option>
+            <option value="monthly" selected>Mensual</option>
+            <option value="bimonthly">Bimestral</option>
+            <option value="quarterly">Trimestral</option>
+            <option value="semiannual">Semestral</option>
+            <option value="annual">Anual</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="factura-pay-pane" id="factura-pay-pane-mixed" hidden>
+        <label class="factura-field">
+          <span>Efectivo</span>
+          <input type="number" id="factura-pay-mixed-cash" min="0" step="0.01">
+        </label>
+        <label class="factura-field">
+          <span>Transferencia</span>
+          <input type="number" id="factura-pay-mixed-transfer" min="0" step="0.01">
+        </label>
+        <label class="factura-field">
+          <span>Credito</span>
+          <input type="number" id="factura-pay-mixed-credit" min="0" step="0.01">
+        </label>
+        <label class="factura-field">
+          <span>Fecha de pago</span>
+          <input type="date" id="factura-pay-mixed-due-date">
+        </label>
+        <label class="factura-field">
+          <span>Interes %</span>
+          <input type="number" id="factura-pay-mixed-interest" min="0" step="0.01" value="0.00">
+        </label>
+        <label class="factura-field">
+          <span>Periodo</span>
+          <select id="factura-pay-mixed-period">
+            <option value="daily">Diario</option>
+            <option value="weekly">Semanal</option>
+            <option value="biweekly">Quincenal</option>
+            <option value="monthly" selected>Mensual</option>
+            <option value="bimonthly">Bimestral</option>
+            <option value="quarterly">Trimestral</option>
+            <option value="semiannual">Semestral</option>
+            <option value="annual">Anual</option>
+          </select>
+        </label>
+        <div class="muted" id="factura-pay-mixed-remaining">Falta por completar: 0.00</div>
+      </div>
+    </section>
+    <footer>
+      <button class="btn-secondary" type="button" id="factura-payment-cancel-btn">Cancelar</button>
+      <button class="btn-primary" type="button" id="factura-payment-apply-btn">Aceptar</button>
+    </footer>
+  </div>
+</div>

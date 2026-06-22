@@ -276,6 +276,10 @@ function legacyReadSalesFromTickets(): array
             'discountPct' => safeFloat($footerMeta['discountPct'] ?? 0),
             'discountAmount' => safeFloat($footerMeta['discountAmount'] ?? 0),
             'transferMeta' => is_array($footerMeta['transferMeta'] ?? null) ? $footerMeta['transferMeta'] : ['reference' => '', 'phone' => ''],
+            'creditDueDate' => trim((string)($footerMeta['creditDueDate'] ?? '')),
+            'creditInterestPct' => safeFloat($footerMeta['creditInterestPct'] ?? 0),
+            'creditPeriod' => trim((string)($footerMeta['creditPeriod'] ?? '')),
+            'creditPeriodDays' => (int)($footerMeta['creditPeriodDays'] ?? 0),
             'returns' => $returns,
         ];
     }
@@ -393,6 +397,188 @@ function legacyTableColumnMaxLengths(string $table): array
 
     $cache[$table] = $max;
     return $max;
+}
+
+function legacyTableHasColumn(string $table, string $column): bool
+{
+    return in_array($column, legacyTableColumns($table), true);
+}
+
+function legacyNormalizePaymentDueDateValue(mixed $value): ?string
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+
+    $date = DateTimeImmutable::createFromFormat('Y-m-d', $raw);
+    if (!($date instanceof DateTimeImmutable) || $date->format('Y-m-d') !== $raw) {
+        return null;
+    }
+
+    return $raw;
+}
+
+function legacyNormalizePaymentDueDayValue(mixed $value): ?int
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if (!is_numeric($value)) {
+        return null;
+    }
+
+    $day = (int)$value;
+    if ($day < 1 || $day > 31) {
+        return null;
+    }
+
+    return $day;
+}
+
+/** @return array{paymentDueDate:?string,paymentDueDay:?int} */
+function legacyNormalizeCustomerPaymentSchedule(array $customer): array
+{
+    $paymentDueDate = legacyNormalizePaymentDueDateValue($customer['paymentDueDate'] ?? null);
+    $paymentDueDay = $paymentDueDate !== null
+        ? (int)substr($paymentDueDate, 8, 2)
+        : legacyNormalizePaymentDueDayValue($customer['paymentDueDay'] ?? null);
+
+    return [
+        'paymentDueDate' => $paymentDueDate,
+        'paymentDueDay' => $paymentDueDay,
+    ];
+}
+
+function legacyMigrateCustomerCreditScheduleFromOverlay(): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    if (
+        !dbEnabled()
+        || !legacyTableExists('CLIENTESV2_CREDITO')
+        || !legacyTableHasColumn('CLIENTESV2_CREDITO', 'FECHA_PAGO')
+        || !legacyTableHasColumn('CLIENTESV2_CREDITO', 'DIA_PAGO')
+    ) {
+        return;
+    }
+
+    $overlayRows = legacyReadDocumentStore(legacyEntityOverlayKey('customers.json'));
+    if (!is_array($overlayRows) || $overlayRows === []) {
+        return;
+    }
+
+    $pdo = db();
+    $exists = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2_CREDITO WHERE CLIENTESV2_ID = :id');
+    $current = $pdo->prepare('SELECT COALESCE(NULLIF(FECHA_PAGO, ""), "") AS FECHA_PAGO, DIA_PAGO FROM CLIENTESV2_CREDITO WHERE CLIENTESV2_ID = :id');
+    $update = $pdo->prepare(
+        'UPDATE CLIENTESV2_CREDITO
+         SET FECHA_PAGO = :fecha_pago, DIA_PAGO = :dia_pago
+         WHERE CLIENTESV2_ID = :id'
+    );
+    $insert = $pdo->prepare(
+        'INSERT INTO CLIENTESV2_CREDITO
+         (CLIENTESV2_ID, TIENE_CREDITO, LIMITE_CREDITO, ULTIMO_ABONO, SALDO_ACTUAL, ELIMINADO_EN, FECHA_PAGO, DIA_PAGO)
+         VALUES (:id, 0, 0, "", "0", "", :fecha_pago, :dia_pago)'
+    );
+
+    foreach ($overlayRows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $jsonId = trim((string)($row['id'] ?? ''));
+        $customerId = parseIntId($jsonId, 'c-');
+        if ($customerId === null || $customerId <= 0) {
+            continue;
+        }
+
+        $schedule = legacyNormalizeCustomerPaymentSchedule($row);
+        if ($schedule['paymentDueDate'] === null && $schedule['paymentDueDay'] === null) {
+            continue;
+        }
+
+        $exists->execute([':id' => $customerId]);
+        $hasCreditRow = (int)$exists->fetchColumn() > 0;
+
+        if ($hasCreditRow) {
+            $current->execute([':id' => $customerId]);
+            $currentRow = $current->fetch(PDO::FETCH_ASSOC) ?: [];
+            $currentDate = legacyNormalizePaymentDueDateValue($currentRow['FECHA_PAGO'] ?? null);
+            $currentDay = legacyNormalizePaymentDueDayValue($currentRow['DIA_PAGO'] ?? null);
+            if ($currentDate !== null && $currentDay !== null) {
+                continue;
+            }
+
+            $update->execute([
+                ':id' => $customerId,
+                ':fecha_pago' => legacyFitTableValue('CLIENTESV2_CREDITO', 'FECHA_PAGO', $schedule['paymentDueDate'] ?? ''),
+                ':dia_pago' => $schedule['paymentDueDay'],
+            ]);
+            continue;
+        }
+
+        $insert->execute([
+            ':id' => $customerId,
+            ':fecha_pago' => legacyFitTableValue('CLIENTESV2_CREDITO', 'FECHA_PAGO', $schedule['paymentDueDate'] ?? ''),
+            ':dia_pago' => $schedule['paymentDueDay'],
+        ]);
+    }
+}
+
+function legacyUpdateCustomerCreditSchedule(string $customerJsonId, ?string $paymentDueDate, ?int $paymentDueDay): bool
+{
+    $customerId = parseIntId($customerJsonId, 'c-');
+    if ($customerId === null || $customerId <= 0) {
+        return false;
+    }
+    if (
+        !dbEnabled()
+        || !legacyTableExists('CLIENTESV2_CREDITO')
+        || !legacyTableHasColumn('CLIENTESV2_CREDITO', 'FECHA_PAGO')
+        || !legacyTableHasColumn('CLIENTESV2_CREDITO', 'DIA_PAGO')
+    ) {
+        return false;
+    }
+
+    $paymentDueDate = legacyNormalizePaymentDueDateValue($paymentDueDate);
+    $paymentDueDay = $paymentDueDate !== null
+        ? (int)substr($paymentDueDate, 8, 2)
+        : legacyNormalizePaymentDueDayValue($paymentDueDay);
+
+    $pdo = db();
+    $exists = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2_CREDITO WHERE CLIENTESV2_ID = :id');
+    $exists->execute([':id' => $customerId]);
+    $hasCreditRow = (int)$exists->fetchColumn() > 0;
+
+    if ($hasCreditRow) {
+        $stmt = $pdo->prepare(
+            'UPDATE CLIENTESV2_CREDITO
+             SET FECHA_PAGO = :fecha_pago, DIA_PAGO = :dia_pago
+             WHERE CLIENTESV2_ID = :id'
+        );
+        return $stmt->execute([
+            ':id' => $customerId,
+            ':fecha_pago' => legacyFitTableValue('CLIENTESV2_CREDITO', 'FECHA_PAGO', $paymentDueDate ?? ''),
+            ':dia_pago' => $paymentDueDay,
+        ]);
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO CLIENTESV2_CREDITO
+         (CLIENTESV2_ID, TIENE_CREDITO, LIMITE_CREDITO, ULTIMO_ABONO, SALDO_ACTUAL, ELIMINADO_EN, FECHA_PAGO, DIA_PAGO)
+         VALUES (:id, 0, 0, "", "0", "", :fecha_pago, :dia_pago)'
+    );
+    return $stmt->execute([
+        ':id' => $customerId,
+        ':fecha_pago' => legacyFitTableValue('CLIENTESV2_CREDITO', 'FECHA_PAGO', $paymentDueDate ?? ''),
+        ':dia_pago' => $paymentDueDay,
+    ]);
 }
 
 function legacyFitTableValue(string $table, string $column, mixed $value): string
@@ -514,7 +700,16 @@ function legacyBuildVentaTicketRow(array $sale, int $index): array
         'TURNO_ID' => '',
         'TIPO_DE_CAMBIO' => '1',
         'TOTAL_CREDITO' => $amountPending,
-        'NOTAS_AL_PIE' => '',
+        'NOTAS_AL_PIE' => json_encode([
+            'discountPct' => round((float)($sale['discountPct'] ?? 0), 2),
+            'discountAmount' => round((float)($sale['discountAmount'] ?? 0), 2),
+            'transferMeta' => is_array($sale['transferMeta'] ?? null) ? $sale['transferMeta'] : ['reference' => '', 'phone' => ''],
+            'mixedPayments' => is_array($sale['mixedPayments'] ?? null) ? $sale['mixedPayments'] : null,
+            'creditDueDate' => trim((string)($sale['creditDueDate'] ?? '')),
+            'creditInterestPct' => round((float)($sale['creditInterestPct'] ?? 0), 2),
+            'creditPeriod' => trim((string)($sale['creditPeriod'] ?? '')),
+            'creditPeriodDays' => (int)($sale['creditPeriodDays'] ?? 0),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '',
         'REFRESCAR_TICKET' => '0',
         'TOTAL_FACTURABLE' => round((float)($sale['total'] ?? 0), 2),
         'CLIENTESV2_ID' => $customerId,
@@ -1136,7 +1331,7 @@ function legacyReadProducts(): array
     $pdo = db();
     $overlayById = legacyReadProductsOverlayIndex();
     $sql = 'SELECT p.ID, p.CODIGO, p.DESCRIPCION, p.PCOSTO, p.PORCENTAJE_GANANCIA, p.PVENTA, p.PFINAL, p.MAYOREO,
-                   p.DINVENTARIO, p.DINVMINIMO, p.DINVMAXIMO, p.TVENTA, p.ES_KIT, p.DEPT, p.USA_INVENTARIO, p.IMPUESTOS,
+                   p.DINVENTARIO, p.DINVMINIMO, p.DINVMAXIMO, p.TVENTA, p.ES_KIT, p.DEPT, p.PROVID, p.USA_INVENTARIO, p.IMPUESTOS,
                    p.ELIMINADO_EN, d.NOMBRE AS DEPARTAMENTO
             FROM PRODUCTOS p
             LEFT JOIN DEPARTAMENTOS d ON d.ID = p.DEPT
@@ -1183,8 +1378,10 @@ function legacyReadProducts(): array
             'maxStock' => safeInt($row['DINVMAXIMO'] ?? 0),
             'inventoryEnabled' => $inventoryEnabled,
             'department' => $department,
+            'departmentId' => safeInt($row['DEPT'] ?? 0),
             'unitType' => $unitType,
-            'provider' => '',
+            'provider' => trim((string)($row['PROVID'] ?? '')),
+            'providerCode' => trim((string)($row['PROVID'] ?? '')),
             'iva' => $iva,
             'packageItems' => [],
             'wholesale' => safeFloat($row['MAYOREO'] ?? 0) > 0
@@ -1274,7 +1471,7 @@ function legacyWriteProducts(array $products): bool
         $updateById = $pdo->prepare(
             'UPDATE PRODUCTOS
              SET CODIGO = :codigo, DESCRIPCION = :descripcion, TVENTA = :tventa, PCOSTO = :pcosto,
-                 PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
+                 PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, PROVID = :provid, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
                  DINVENTARIO = :inventario, DINVMINIMO = :invmin, DINVMAXIMO = :invmax,
                  PORCENTAJE_GANANCIA = :margen, ES_KIT = :es_kit, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
                  ELIMINADO_EN = ""
@@ -1282,10 +1479,10 @@ function legacyWriteProducts(array $products): bool
         );
 
         $insert = $pdo->prepare(
-            'INSERT INTO PRODUCTOS (ID, CODIGO, DESCRIPCION, TVENTA, PCOSTO, PVENTA, DEPT, MAYOREO,
+            'INSERT INTO PRODUCTOS (ID, CODIGO, DESCRIPCION, TVENTA, PCOSTO, PVENTA, DEPT, PROVID, MAYOREO,
                                     DINVENTARIO, DINVMINIMO, DINVMAXIMO, PORCENTAJE_GANANCIA, MEDIDA_ID,
                                     PFINAL, PMAYOREOFINAL, ES_KIT, USA_INVENTARIO, IMPUESTOS, ELIMINADO_EN)
-             VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :mayoreo,
+             VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :provid, :mayoreo,
                      :inventario, :invmin, :invmax, :margen, 1,
                      :pfinal, :pmayoreo, :es_kit, :usa_inventario, :impuestos, "")'
         );
@@ -1310,8 +1507,13 @@ function legacyWriteProducts(array $products): bool
             $id = max(1, min(32767, $id));
             $seenIds[] = $id;
 
-            $departmentName = strtolower(trim((string)($product['department'] ?? 'sin departamento')));
-            $deptId = $deptMap[$departmentName] ?? ($deptMap['- sin departamento -'] ?? 25);
+            $departmentId = safeInt($product['departmentId'] ?? 0);
+            if ($departmentId > 0) {
+                $deptId = $departmentId;
+            } else {
+                $departmentName = strtolower(trim((string)($product['department'] ?? 'sin departamento')));
+                $deptId = $deptMap[$departmentName] ?? ($deptMap['- sin departamento -'] ?? 25);
+            }
             $deptId = max(0, min(127, $deptId));
 
             $price = $clampDecimal(safeFloat($product['price'] ?? 0), 99.999, 3);
@@ -1334,6 +1536,7 @@ function legacyWriteProducts(array $products): bool
                 ':pventa' => $pventa,
                 ':pfinal' => $price,
                 ':dept' => $deptId,
+                ':provid' => legacyFitTableValue('PRODUCTOS', 'PROVID', trim((string)($product['providerCode'] ?? ($product['provider'] ?? '')))),
                 ':mayoreo' => $mayoreo,
                 ':pmayoreo' => $mayoreo,
                 ':inventario' => legacyFitTableValue('PRODUCTOS', 'DINVENTARIO', $stock),
@@ -1400,8 +1603,13 @@ function legacyUpsertProduct(array $product): bool
     }
     $id = max(1, min(32767, $id));
 
-    $departmentName = strtolower(trim((string)($product['department'] ?? 'sin departamento')));
-    $deptId = $deptMap[$departmentName] ?? ($deptMap['- sin departamento -'] ?? 25);
+    $departmentId = safeInt($product['departmentId'] ?? 0);
+    if ($departmentId > 0) {
+        $deptId = $departmentId;
+    } else {
+        $departmentName = strtolower(trim((string)($product['department'] ?? 'sin departamento')));
+        $deptId = $deptMap[$departmentName] ?? ($deptMap['- sin departamento -'] ?? 25);
+    }
     $deptId = max(0, min(127, $deptId));
 
     $price = $clampDecimal(safeFloat($product['price'] ?? 0), 99.999, 3);
@@ -1424,6 +1632,7 @@ function legacyUpsertProduct(array $product): bool
         ':pventa' => $pventa,
         ':pfinal' => $price,
         ':dept' => $deptId,
+        ':provid' => legacyFitTableValue('PRODUCTOS', 'PROVID', trim((string)($product['providerCode'] ?? ($product['provider'] ?? '')))),
         ':mayoreo' => $mayoreo,
         ':pmayoreo' => $mayoreo,
         ':inventario' => legacyFitTableValue('PRODUCTOS', 'DINVENTARIO', $stock),
@@ -1443,7 +1652,7 @@ function legacyUpsertProduct(array $product): bool
             $updateById = $pdo->prepare(
                 'UPDATE PRODUCTOS
                  SET CODIGO = :codigo, DESCRIPCION = :descripcion, TVENTA = :tventa, PCOSTO = :pcosto,
-                     PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
+                     PVENTA = :pventa, PFINAL = :pfinal, DEPT = :dept, PROVID = :provid, MAYOREO = :mayoreo, PMAYOREOFINAL = :pmayoreo,
                      DINVENTARIO = :inventario, DINVMINIMO = :invmin, DINVMAXIMO = :invmax,
                      PORCENTAJE_GANANCIA = :margen, ES_KIT = :es_kit, USA_INVENTARIO = :usa_inventario, IMPUESTOS = :impuestos,
                      ELIMINADO_EN = ""
@@ -1453,10 +1662,10 @@ function legacyUpsertProduct(array $product): bool
         }
 
         $insert = $pdo->prepare(
-            'INSERT INTO PRODUCTOS (ID, CODIGO, DESCRIPCION, TVENTA, PCOSTO, PVENTA, DEPT, MAYOREO,
+            'INSERT INTO PRODUCTOS (ID, CODIGO, DESCRIPCION, TVENTA, PCOSTO, PVENTA, DEPT, PROVID, MAYOREO,
                                     DINVENTARIO, DINVMINIMO, DINVMAXIMO, PORCENTAJE_GANANCIA, MEDIDA_ID,
                                     PFINAL, PMAYOREOFINAL, ES_KIT, USA_INVENTARIO, IMPUESTOS, ELIMINADO_EN)
-             VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :mayoreo,
+             VALUES (:id, :codigo, :descripcion, :tventa, :pcosto, :pventa, :dept, :provid, :mayoreo,
                      :inventario, :invmin, :invmax, :margen, 1,
                      :pfinal, :pmayoreo, :es_kit, :usa_inventario, :impuestos, "")'
         );
@@ -1664,6 +1873,42 @@ function legacyTableExists(string $table): bool
     return isset($tables[strtolower($table)]);
 }
 
+function ensureLegacyCreditPaymentAllocationsTable(): bool
+{
+    static $ready = false;
+    if ($ready) {
+        return true;
+    }
+
+    if (!legacyTableExists('MOVIMIENTOS')) {
+        return false;
+    }
+
+    $sql = <<<SQL
+CREATE TABLE IF NOT EXISTS CREDIT_PAYMENT_ALLOCATIONS (
+    ID VARCHAR(64) NOT NULL PRIMARY KEY,
+    PAYMENT_ID VARCHAR(32) NOT NULL,
+    PAYMENT_FOLIO VARCHAR(32) NOT NULL,
+    CUSTOMER_ID VARCHAR(32) NOT NULL,
+    SALE_KEY VARCHAR(80) NOT NULL,
+    TICKET_ID VARCHAR(32) NOT NULL DEFAULT '',
+    SALE_FOLIO VARCHAR(32) NOT NULL,
+    MONTO DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    CUANDO_FUE DATETIME NOT NULL,
+    CREATED_AT DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UPDATED_AT DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX IDX_CPA_PAYMENT_ID (PAYMENT_ID),
+    INDEX IDX_CPA_CUSTOMER_ID (CUSTOMER_ID),
+    INDEX IDX_CPA_SALE_KEY (SALE_KEY),
+    INDEX IDX_CPA_TICKET_ID (TICKET_ID)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL;
+
+    db()->exec($sql);
+    $ready = true;
+    return true;
+}
+
 /** @return array<int, array<string,mixed>> */
 function legacyReadCashMovements(): array
 {
@@ -1765,6 +2010,30 @@ function legacyReadCreditPayments(): array
         return legacyReadDocumentStore('credit_payments.json');
     }
 
+    $allocationsByPaymentId = [];
+    if (ensureLegacyCreditPaymentAllocationsTable()) {
+        $allocationRows = db()->query(
+            "SELECT ID, PAYMENT_ID, PAYMENT_FOLIO, CUSTOMER_ID, SALE_KEY, TICKET_ID, SALE_FOLIO, MONTO, CUANDO_FUE
+             FROM CREDIT_PAYMENT_ALLOCATIONS
+             ORDER BY CUANDO_FUE ASC, ID ASC"
+        )->fetchAll();
+        foreach ($allocationRows as $allocationRow) {
+            $paymentId = trim((string)($allocationRow['PAYMENT_ID'] ?? ''));
+            if ($paymentId === '') {
+                continue;
+            }
+            $allocationsByPaymentId[$paymentId] = $allocationsByPaymentId[$paymentId] ?? [];
+            $allocationsByPaymentId[$paymentId][] = [
+                'id' => trim((string)($allocationRow['ID'] ?? '')),
+                'saleKey' => trim((string)($allocationRow['SALE_KEY'] ?? '')),
+                'ticketId' => trim((string)($allocationRow['TICKET_ID'] ?? '')),
+                'folio' => trim((string)($allocationRow['SALE_FOLIO'] ?? '')),
+                'amount' => safeFloat($allocationRow['MONTO'] ?? 0),
+                'createdAt' => legacyToIsoDateTime((string)($allocationRow['CUANDO_FUE'] ?? '')),
+            ];
+        }
+    }
+
     $rows = db()->query(
         "SELECT ID, ABONO_ID AS FOLIO, CLIENTE_ID, MONTO, COMENTARIOS, CAJERO_ID, CUANDO_FUE, TIPO
          FROM MOVIMIENTOS
@@ -1797,6 +2066,7 @@ function legacyReadCreditPayments(): array
             'description' => trim((string)($row['COMENTARIOS'] ?? '')),
             'cashier' => trim((string)($row['CAJERO_ID'] ?? '')),
             'createdAt' => legacyToIsoDateTime((string)($row['CUANDO_FUE'] ?? '')),
+            'allocations' => $allocationsByPaymentId[$id] ?? [],
         ];
     }
 
@@ -1810,16 +2080,26 @@ function legacyWriteCreditPayments(array $payments): bool
         return legacyWriteDocumentStore('credit_payments.json', $payments);
     }
 
+    $hasAllocTable = ensureLegacyCreditPaymentAllocationsTable();
     $pdo = db();
     $pdo->beginTransaction();
     try {
         $pdo->exec("DELETE FROM MOVIMIENTOS WHERE TIPO LIKE 'credit_payment%'");
+        if ($hasAllocTable) {
+            $pdo->exec('DELETE FROM CREDIT_PAYMENT_ALLOCATIONS');
+        }
         $insert = $pdo->prepare(
             'INSERT INTO MOVIMIENTOS
              (ID, OPERACION_ID, MONTO, CUANDO_FUE, COMENTARIOS, TIPO, CLIENTE_ID, CAJA_ID, CAJERO_ID, ABONO_ID, CLIENTESV2_CREDITO_ID)
              VALUES
              (:id, :operacion_id, :monto, :cuando_fue, :comentarios, :tipo, :cliente_id, :caja_id, :cajero_id, :abono_id, :credito_id)'
         );
+        $insertAllocation = $hasAllocTable ? $pdo->prepare(
+            'INSERT INTO CREDIT_PAYMENT_ALLOCATIONS
+             (ID, PAYMENT_ID, PAYMENT_FOLIO, CUSTOMER_ID, SALE_KEY, TICKET_ID, SALE_FOLIO, MONTO, CUANDO_FUE)
+             VALUES
+             (:id, :payment_id, :payment_folio, :customer_id, :sale_key, :ticket_id, :sale_folio, :monto, :cuando_fue)'
+        ) : null;
 
         foreach ($payments as $payment) {
             if (!is_array($payment)) {
@@ -1849,6 +2129,34 @@ function legacyWriteCreditPayments(array $payments): bool
                 ':abono_id' => legacyFitTableValue('MOVIMIENTOS', 'ABONO_ID', trim((string)($payment['folio'] ?? ''))),
                 ':credito_id' => legacyFitTableValue('MOVIMIENTOS', 'CLIENTESV2_CREDITO_ID', trim((string)($payment['creditId'] ?? ''))),
             ]);
+
+            if ($insertAllocation instanceof PDOStatement && is_array($payment['allocations'] ?? null)) {
+                $position = 0;
+                foreach ($payment['allocations'] as $allocation) {
+                    if (!is_array($allocation)) {
+                        continue;
+                    }
+                    $saleKey = trim((string)($allocation['saleKey'] ?? ''));
+                    $saleFolio = trim((string)($allocation['folio'] ?? ''));
+                    $amount = safeFloat($allocation['amount'] ?? 0);
+                    if ($saleKey === '' || $saleFolio === '' || $amount <= 0) {
+                        continue;
+                    }
+                    $position++;
+                    $allocationId = $id . '-A' . str_pad((string)$position, 3, '0', STR_PAD_LEFT);
+                    $insertAllocation->execute([
+                        ':id' => $allocationId,
+                        ':payment_id' => $id,
+                        ':payment_folio' => trim((string)($payment['folio'] ?? '')),
+                        ':customer_id' => trim((string)($payment['customerId'] ?? '')),
+                        ':sale_key' => $saleKey,
+                        ':ticket_id' => trim((string)($allocation['ticketId'] ?? '')),
+                        ':sale_folio' => $saleFolio,
+                        ':monto' => $amount,
+                        ':cuando_fue' => $createdAt,
+                    ]);
+                }
+            }
         }
 
         $pdo->commit();
@@ -2112,18 +2420,55 @@ function legacyWriteInventoryMovements(array $movements): bool
 /** @return array<int, array<string,mixed>> */
 function legacyReadCustomers(): array
 {
+    legacyMigrateCustomerCreditScheduleFromOverlay();
+
     $pdo = db();
-    $sql = 'SELECT c.ID, c.NOMBRES, c.APELLIDOS, c.IDENTIFICACION, c.EMAIL, c.TELEFONO, c.DOMICILIO1, c.DOMICILIO2,
-                   c.PARROQUIA, c.CANTON, c.PROVINCIA, c.CODIGO_POSTAL, c.NOTAS,
-                   IFNULL(cr.TIENE_CREDITO, 0) AS TIENE_CREDITO,
-                   IFNULL(cr.LIMITE_CREDITO, 0) AS LIMITE_CREDITO,
-                   IFNULL(cr.SALDO_ACTUAL, 0) AS SALDO_ACTUAL,
-                   IFNULL(cr.ULTIMO_ABONO, "") AS ULTIMO_ABONO
+    $selectFields = [
+        'c.ID',
+        'c.NOMBRES',
+        'c.APELLIDOS',
+        'c.IDENTIFICACION',
+        'c.EMAIL',
+        'c.TELEFONO',
+        'c.DOMICILIO1',
+        'c.DOMICILIO2',
+        'c.PARROQUIA',
+        'c.CANTON',
+        'c.PROVINCIA',
+        'c.CODIGO_POSTAL',
+        'c.NOTAS',
+        'IFNULL(cr.TIENE_CREDITO, 0) AS TIENE_CREDITO',
+        'IFNULL(cr.LIMITE_CREDITO, 0) AS LIMITE_CREDITO',
+        'IFNULL(cr.SALDO_ACTUAL, 0) AS SALDO_ACTUAL',
+        'IFNULL(cr.ULTIMO_ABONO, "") AS ULTIMO_ABONO',
+    ];
+    if (legacyTableHasColumn('CLIENTESV2_CREDITO', 'FECHA_PAGO')) {
+        $selectFields[] = 'IFNULL(cr.FECHA_PAGO, "") AS FECHA_PAGO';
+    }
+    if (legacyTableHasColumn('CLIENTESV2_CREDITO', 'DIA_PAGO')) {
+        $selectFields[] = 'cr.DIA_PAGO AS DIA_PAGO';
+    }
+    $sql = 'SELECT ' . implode(",\n                   ", $selectFields) . '
             FROM CLIENTESV2 c
             LEFT JOIN CLIENTESV2_CREDITO cr ON cr.CLIENTESV2_ID = c.ID
+            WHERE (c.ACTIVO IS NULL OR TRIM(CAST(c.ACTIVO AS CHAR)) = "" OR TRIM(CAST(c.ACTIVO AS CHAR)) <> "0")
             ORDER BY CAST(c.ID AS UNSIGNED) ASC';
     $rows = $pdo->query($sql)->fetchAll();
     $out = [];
+    $overlayRows = legacyReadDocumentStore(legacyEntityOverlayKey('customers.json'));
+    $overlayById = [];
+    if (is_array($overlayRows)) {
+        foreach ($overlayRows as $overlayRow) {
+            if (!is_array($overlayRow)) {
+                continue;
+            }
+            $overlayId = trim((string)($overlayRow['id'] ?? ''));
+            if ($overlayId === '') {
+                continue;
+            }
+            $overlayById[$overlayId] = $overlayRow;
+        }
+    }
 
     foreach ($rows as $row) {
         $id = safeInt($row['ID'] ?? 0);
@@ -2140,8 +2485,15 @@ function legacyReadCustomers(): array
 
         $creditBalance = safeFloat($row['SALDO_ACTUAL'] ?? 0);
         $taxId = trim((string)($row['IDENTIFICACION'] ?? ''));
+        $jsonId = 'c-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT);
+        $overlay = $overlayById[$jsonId] ?? [];
+        $dbPaymentDueDate = legacyNormalizePaymentDueDateValue($row['FECHA_PAGO'] ?? null);
+        $dbPaymentDueDay = $dbPaymentDueDate !== null
+            ? (int)substr($dbPaymentDueDate, 8, 2)
+            : legacyNormalizePaymentDueDayValue($row['DIA_PAGO'] ?? null);
+        $overlaySchedule = legacyNormalizeCustomerPaymentSchedule($overlay);
         $out[] = [
-            'id' => 'c-' . str_pad((string)$id, 3, '0', STR_PAD_LEFT),
+            'id' => $jsonId,
             'name' => $name,
             'firstName' => $first,
             'lastName' => $last,
@@ -2160,8 +2512,8 @@ function legacyReadCustomers(): array
             'creditLimit' => safeFloat($row['LIMITE_CREDITO'] ?? 0),
             'creditBalance' => $creditBalance,
             'lastCreditPaymentAt' => trim((string)($row['ULTIMO_ABONO'] ?? '')),
-            'paymentDueDate' => null,
-            'paymentDueDay' => null,
+            'paymentDueDate' => $dbPaymentDueDate ?? $overlaySchedule['paymentDueDate'],
+            'paymentDueDay' => $dbPaymentDueDay ?? $overlaySchedule['paymentDueDay'],
         ];
     }
 
@@ -2195,11 +2547,36 @@ function legacyWriteCustomers(array $customers): bool
                      0, 0, 0, 1, :de_sistema, :old_cliente_id, :old_facturacion_clientes_id)'
         );
 
+        $hasCreditDueDate = legacyTableHasColumn('CLIENTESV2_CREDITO', 'FECHA_PAGO');
+        $hasCreditDueDay = legacyTableHasColumn('CLIENTESV2_CREDITO', 'DIA_PAGO');
         $existsCredit = $pdo->prepare('SELECT COUNT(*) FROM CLIENTESV2_CREDITO WHERE CLIENTESV2_ID = :id');
-        $updateCredit = $pdo->prepare('UPDATE CLIENTESV2_CREDITO SET TIENE_CREDITO = :tiene_credito, ELIMINADO_EN = "" WHERE CLIENTESV2_ID = :id');
+        $creditUpdateSet = [
+            'TIENE_CREDITO = :tiene_credito',
+            'ELIMINADO_EN = ""',
+        ];
+        if ($hasCreditDueDate) {
+            $creditUpdateSet[] = 'FECHA_PAGO = :fecha_pago';
+        }
+        if ($hasCreditDueDay) {
+            $creditUpdateSet[] = 'DIA_PAGO = :dia_pago';
+        }
+        $updateCredit = $pdo->prepare(
+            'UPDATE CLIENTESV2_CREDITO SET ' . implode(', ', $creditUpdateSet) . ' WHERE CLIENTESV2_ID = :id'
+        );
+
+        $creditInsertColumns = ['CLIENTESV2_ID', 'TIENE_CREDITO', 'LIMITE_CREDITO', 'ULTIMO_ABONO', 'SALDO_ACTUAL', 'ELIMINADO_EN'];
+        $creditInsertValues = [':id', ':tiene_credito', '0', '""', '"0"', '""'];
+        if ($hasCreditDueDate) {
+            $creditInsertColumns[] = 'FECHA_PAGO';
+            $creditInsertValues[] = ':fecha_pago';
+        }
+        if ($hasCreditDueDay) {
+            $creditInsertColumns[] = 'DIA_PAGO';
+            $creditInsertValues[] = ':dia_pago';
+        }
         $insertCredit = $pdo->prepare(
-            'INSERT INTO CLIENTESV2_CREDITO (CLIENTESV2_ID, TIENE_CREDITO, LIMITE_CREDITO, ULTIMO_ABONO, SALDO_ACTUAL, ELIMINADO_EN)
-             VALUES (:id, :tiene_credito, 0, "", "0", "")'
+            'INSERT INTO CLIENTESV2_CREDITO (' . implode(', ', $creditInsertColumns) . ')
+             VALUES (' . implode(', ', $creditInsertValues) . ')'
         );
 
         foreach ($customers as $customer) {
@@ -2271,10 +2648,17 @@ function legacyWriteCustomers(array $customers): bool
                 ]));
             }
 
+            $schedule = legacyNormalizeCustomerPaymentSchedule($customer);
             $creditParams = [
                 ':id' => $id,
                 ':tiene_credito' => !empty($customer['creditAuthorized']) ? 1 : 0,
             ];
+            if ($hasCreditDueDate) {
+                $creditParams[':fecha_pago'] = legacyFitTableValue('CLIENTESV2_CREDITO', 'FECHA_PAGO', $schedule['paymentDueDate'] ?? '');
+            }
+            if ($hasCreditDueDay) {
+                $creditParams[':dia_pago'] = $schedule['paymentDueDay'];
+            }
             $existsCredit->execute([':id' => $id]);
             if ((int)$existsCredit->fetchColumn() > 0) {
                 $updateCredit->execute($creditParams);

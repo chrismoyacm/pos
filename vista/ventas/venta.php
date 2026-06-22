@@ -21,6 +21,7 @@ declare(strict_types=1);
           <th>Descripción del Producto</th>
           <th style="width:80px">IVA</th>
           <th style="width:120px">Precio Venta</th>
+          <th style="width:100px">Descuento</th>
           <th style="width:70px">Cant.</th>
           <th style="width:120px">Importe</th>
           <th style="width:120px">Existencia</th>

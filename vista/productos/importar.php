@@ -14,7 +14,7 @@ declare(strict_types=1);
     <button class="btn-tab" type="button" data-prod-nav="periods">Ventas por Periodo</button>
     <button class="btn-tab" type="button" data-prod-nav="promotions">Promociones</button>
     <button class="btn-tab active" type="button">Importar</button>
-    <button class="btn-tab" type="button" data-prod-nav="catalog">Catálogo</button>
+    <button class="btn-tab" type="button" data-prod-nav="catalog">Catalogo</button>
   </div>
 
   <div class="productos-body">
@@ -24,17 +24,39 @@ declare(strict_types=1);
 
     <div class="prod-import-card">
       <p class="muted">
-        Formato esperado: <strong>barcode,name,price,cost,department,stock,minStock,maxStock,unitType,wholesalePrice,wholesaleMinQty,provider,iva</strong>.
-        En <strong>iva</strong> usa <strong>No</strong>, <strong>12%</strong> o <strong>15%</strong>.
+        Campos obligatorios: <strong>CODIGO</strong> y <strong>DESCRIPCION</strong>.
+        Opcionales: TVENTA, DEPT, PROVID, MAYOREO, DINVENTARIO, DINVMINIMO, DINVMAXIMO, PORCENTAJE_GANANCIA, IMPUESTOS, PFINAL, PMAYOREOFINAL, ES_KIT y USA_INVENTARIO.
+        Se acepta CSV separado por coma o por punto y coma.
       </p>
+      <p class="muted">
+        Si el <strong>CODIGO</strong> ya existe, el producto se actualizara. Si no existe, se creara como nuevo.
+      </p>
+
+      <div class="prod-import-example" aria-label="Ejemplo de formato CSV">
+        <table class="prod-import-example-table">
+          <thead>
+            <tr>
+              <th>CODIGO</th>
+              <th>DESCRIPCION</th>
+              <th>DINVENTARIO</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>7501000012345</td>
+              <td>Arroz</td>
+              <td>20</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="prod-import-toolbar">
         <input type="file" id="prod-import-file" accept=".csv,text/csv">
         <label class="catalog-filter">
-          <span>Modo de importación</span>
+          <span>Modo de importacion</span>
           <select id="prod-import-mode">
-            <option value="merge">Mezclar (actualiza por código)</option>
-            <option value="replace">Reemplazar catálogo completo</option>
+            <option value="merge">Mezclar (actualiza por codigo)</option>
           </select>
         </label>
         <button class="btn-secondary" type="button" id="prod-import-preview-btn">Vista previa</button>
@@ -42,24 +64,32 @@ declare(strict_types=1);
       </div>
 
       <div class="prod-import-result" id="prod-import-result">Sin archivo cargado.</div>
+      <div class="prod-import-progress" id="prod-import-progress" hidden>
+        <div class="prod-import-progress-bar">
+          <div class="prod-import-progress-fill" id="prod-import-progress-fill"></div>
+        </div>
+        <div class="prod-import-progress-meta" id="prod-import-progress-meta">0%</div>
+      </div>
 
       <div class="catalog-table-wrap prod-import-table-wrap">
         <table class="grid grid-compact catalog-table">
           <thead>
             <tr>
-              <th style="width:110px">Código</th>
-              <th>Descripción del Producto</th>
-              <th style="width:100px">Precio</th>
-              <th style="width:100px">Costo</th>
-              <th style="width:150px">Departamento</th>
-              <th style="width:80px">Stock</th>
-              <th style="width:130px">Proveedor</th>
-              <th style="width:70px">IVA</th>
+              <th style="width:120px">CODIGO</th>
+              <th>DESCRIPCION</th>
+              <th style="width:100px">PVENTA</th>
+              <th style="width:100px">PCOSTO</th>
+              <th style="width:90px">DEPT</th>
+              <th style="width:90px">DINVENTARIO</th>
+              <th style="width:90px">PROVID</th>
+              <th style="width:110px">IMPUESTOS</th>
+              <th style="width:150px">Estado</th>
             </tr>
           </thead>
           <tbody id="prod-import-preview-body"></tbody>
         </table>
       </div>
+      <div class="prod-import-result" id="prod-import-failed" hidden></div>
     </div>
   </div>
 </section>

@@ -21,18 +21,18 @@ function facturacionBrevoSend(array $signature, array $document, string $toEmail
     }
 
     $attachments = [];
-    $authorizedXml = (string)($document['files']['authorizedXml'] ?? '');
-    if ($authorizedXml !== '' && file_exists($authorizedXml)) {
+    $authorizedXml = facturacionReadDocumentFile($document, 'authorizedXml');
+    if ($authorizedXml !== null) {
         $attachments[] = [
-            'name' => basename($authorizedXml),
-            'content' => base64_encode((string)file_get_contents($authorizedXml)),
+            'name' => (string)($authorizedXml['fileName'] ?? 'comprobante.xml'),
+            'content' => base64_encode((string)($authorizedXml['content'] ?? '')),
         ];
     }
-    $pdfPath = (string)($document['files']['pdf'] ?? '');
-    if ($pdfPath !== '' && file_exists($pdfPath)) {
+    $pdf = facturacionReadDocumentFile($document, 'pdf');
+    if ($pdf !== null) {
         $attachments[] = [
-            'name' => basename($pdfPath),
-            'content' => base64_encode((string)file_get_contents($pdfPath)),
+            'name' => (string)($pdf['fileName'] ?? 'comprobante.pdf'),
+            'content' => base64_encode((string)($pdf['content'] ?? '')),
         ];
     }
 
@@ -76,6 +76,12 @@ function facturacionBrevoSend(array $signature, array $document, string $toEmail
         CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         CURLOPT_TIMEOUT => 25,
     ]);
+
+    // En Windows la cadena CA del sistema suele ser mas confiable que un cacert.pem
+    // externo, especialmente en instalaciones de cliente con certificados raiz propios.
+    if (defined('CURLSSLOPT_NATIVE_CA')) {
+        curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+    }
 
     $rawResponse = curl_exec($ch);
     $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);

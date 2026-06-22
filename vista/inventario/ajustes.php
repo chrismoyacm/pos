@@ -23,16 +23,15 @@ declare(strict_types=1);
     <div class="inv-form-card">
       <div class="inv-form-grid inv-form-grid--adjust">
         <label class="catalog-filter inv-field-grow">
-          <span>Código del Producto</span>
-          <input type="text" id="inv-adjust-code" placeholder="Escanee o escriba código/ID" autocomplete="off">
-          <div class="inv-add-suggest" id="inv-adjust-suggest" hidden></div>
+          <span>Codigo del Producto</span>
+          <input type="text" id="inv-adjust-code" placeholder="Escanee o escriba solo el codigo" autocomplete="off">
         </label>
         <div class="catalog-filter">
           <span>&nbsp;</span>
-          <button class="btn-secondary" type="button" id="inv-adjust-load-btn">Buscar producto</button>
+          <button class="btn-secondary" type="button" id="inv-adjust-load-btn">Buscar (F10)</button>
         </div>
         <label class="catalog-filter inv-field-grow">
-          <span>Descripción</span>
+          <span>Descripcion</span>
           <input type="text" id="inv-adjust-name" readonly>
         </label>
         <label class="catalog-filter">
@@ -72,7 +71,7 @@ declare(strict_types=1);
         </label>
         <label class="catalog-filter inv-field-grow">
           <span>Motivo</span>
-          <input type="text" id="inv-adjust-note" placeholder="Ajuste por merma, conteo físico, etc." autocomplete="off">
+          <input type="text" id="inv-adjust-note" placeholder="Ajuste por merma, conteo fisico, etc." autocomplete="off">
         </label>
       </div>
       <div class="inv-form-actions">
@@ -81,3 +80,35 @@ declare(strict_types=1);
     </div>
   </div>
 </section>
+
+<div class="modal" id="inv-search-modal">
+  <div class="modal-card modal-card--search" role="dialog" aria-modal="true" aria-labelledby="inv-search-title">
+    <header>
+      <span id="inv-search-title">Buscar producto</span>
+    </header>
+    <section>
+      <label class="field-col">
+        <span>Buscar producto</span>
+        <input type="text" id="inv-search-query" autocomplete="off" placeholder="Codigo, nombre o ID">
+      </label>
+      <div class="muted">Click en un resultado para cargarlo en el formulario.</div>
+      <div class="search-results-table-wrap">
+        <table class="grid search-results-table">
+          <thead>
+            <tr>
+              <th style="width:140px">Codigo</th>
+              <th>Producto</th>
+              <th style="width:110px">Stock</th>
+              <th style="width:120px">Costo</th>
+              <th style="width:120px">Precio</th>
+            </tr>
+          </thead>
+          <tbody id="inv-search-results"></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>
+      <button type="button" class="btn-secondary" id="inv-search-close-btn">Cerrar</button>
+    </footer>
+  </div>
+</div>

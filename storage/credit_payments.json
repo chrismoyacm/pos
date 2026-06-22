@@ -2,11 +2,21 @@
     {
         "id": "cp-000001",
         "folio": "P-000001",
-        "customerId": "c-004",
-        "amount": 25,
+        "customerId": "c-383",
+        "amount": 2,
         "paymentMethod": "cash",
-        "description": "Abono a deuda",
+        "description": "Abono a V-000023",
         "cashier": "Cajero",
-        "createdAt": "2026-04-09T23:41:29+02:00"
+        "createdAt": "2026-05-21T20:04:35-04:00",
+        "allocations": [
+            {
+                "id": "cp-000001-A001",
+                "saleKey": "sale:23",
+                "ticketId": "",
+                "folio": "V-000023",
+                "amount": 1.25,
+                "createdAt": "2026-05-21T20:04:35-04:00"
+            }
+        ]
     }
 ]

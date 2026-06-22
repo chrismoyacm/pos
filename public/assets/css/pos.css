@@ -19,9 +19,9 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   background:#fff;border-bottom:1px solid #d8dee6;padding:8px 14px
 }
 .topbar .logo{
-  display:flex;align-items:center;gap:10px;font-size:20px;font-weight:600;color:var(--primary)
+  display:flex;align-items:center;gap:0;font-size:20px;font-weight:600;color:var(--primary)
 }
-.topbar .logo img{height:28px;width:auto;object-fit:contain}
+.topbar .logo img{height:38px;max-width:260px;width:auto;object-fit:contain;display:block}
 .topbar-user{
   display:flex;align-items:center;gap:12px
 }
@@ -155,6 +155,7 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   border-bottom:1px solid #eef2f7;padding:8px;font-size:13px
 }
 .grid tbody tr.row-selected td{background:#eef6ff}
+.grid tbody tr.row-overdue td{background:#fff1f2;color:#9f1239}
 .ventas-wrap .grid tbody tr.row-selected td{background:#1e40af;color:#fff}
 .grid tbody tr:hover td{background:#f8fbff}
 .venta-price-cell{cursor:pointer;position:relative;user-select:none}
@@ -163,6 +164,8 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .venta-price-original{font-size:11px;text-decoration:line-through;color:#6b7280}
 .venta-price-discounted{font-weight:700}
 .ventas-wrap .grid tbody tr.row-selected .venta-price-original{color:rgba(255,255,255,.78)}
+.venta-discount-cell{white-space:nowrap;text-align:right;font-weight:700}
+.venta-discount-cell .muted{font-weight:400}
 .venta-price-cell::after{
   content:'';
   font-size:10px;
@@ -202,11 +205,14 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .modal-card{background:#fff;min-width:360px;max-width:520px;border-radius:8px;border:1px solid #d8dee6;box-shadow:0 10px 30px rgba(0,0,0,.15)}
 .modal-card--wide{width:min(1100px,94vw);max-width:none}
 .modal-card--bulk{width:min(720px,94vw);max-width:none}
+.modal-card--compact{width:min(420px,92vw)}
 .modal-card header{padding:12px 16px;border-bottom:1px solid #e5e7eb;font-weight:700}
 .modal-card section{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
 .modal-card footer{padding:12px 16px;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}
 .modal-card input{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%}
+.modal-card select{border:1px solid #cbd5e1;border-radius:6px;padding:8px;width:100%;background:#fff}
 .modal-card input:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
+.modal-card select:focus{outline:2px solid rgba(59,110,165,.15);border-color:#94a3b8}
 .bulk-product-name{font-size:20px;font-weight:700;text-align:center;padding:8px 0}
 .bulk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .bulk-grid .field-col span{display:block;font-size:12px;color:#475569;font-weight:700;margin-bottom:6px}
@@ -358,6 +364,8 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer
 }
 .clientes-actions .btn[disabled]{opacity:.45;cursor:not-allowed}
+.clientes-import{padding:0 12px 12px}
+.clientes-import[hidden]{display:none!important}
 .btn-danger-soft{border-color:#ef4444;color:#b91c1c}
 .btn-primary-soft{border-color:var(--primary);color:var(--primary)}
 
@@ -445,9 +453,13 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .creditos-report-table{
   width:100%;
   margin-top:10px;
-  border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#fff
+  max-height:70vh;
+  border:1px solid #e5e7eb;border-radius:10px;overflow:auto;background:#fff
 }
+.creditos-report-table .grid thead th{position:sticky;top:0;z-index:1;background:#eef4fb}
 .creditos-report-table .grid thead th{font-size:12px}
+.creditos-report-table .grid thead th[data-cred-reporte-sort]{cursor:pointer;user-select:none}
+.creditos-report-table .grid thead th[data-cred-reporte-sort].is-sort-active{color:#0f4c81}
 .creditos-report-table .grid tbody td{font-size:12px}
 .cred-rep-name{font-weight:800}
 .cred-rep-addr{margin-top:2px;white-space:pre-line}
@@ -505,7 +517,39 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
   margin-bottom:8px;
 }
 .creditos-detalle-summary-total{font-weight:900;color:#0f766e;font-size:18px}
+.creditos-detalle-filters{display:flex;justify-content:flex-start;align-items:center;margin-bottom:10px}
+.ec-period-filter{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:700;
+  color:#475569;
+}
+.ec-period-filter select{
+  min-width:220px;
+  border:1px solid #cbd5e1;
+  border-radius:4px;
+  padding:7px 9px;
+  background:#fff;
+  color:#334155;
+  font-size:12px;
+}
 .creditos-detalle-table{border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}
+.creditos-detalle-table thead th[data-ec-sort]{cursor:pointer;user-select:none}
+.creditos-detalle-table thead th[data-ec-sort].is-sort-active{color:#0f4c81}
+.ec-th-filter{display:flex;flex-direction:column;gap:6px}
+.ec-th-filter select{
+  width:100%;
+  border:1px solid #cbd5e1;
+  border-radius:4px;
+  padding:5px 8px;
+  background:#fff;
+  font-size:11px;
+  font-weight:700;
+  color:#334155;
+}
+.creditos-detalle-table tbody tr.row-overdue .ec-mov-badge--venta{background:#be123c}
 .creditos-ticket{
   border:1px solid #e5e7eb;border-radius:10px;
   padding:12px;background:#fbfbfc;
@@ -873,6 +917,14 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .factura-payment-actions{
   display:flex;gap:10px;flex-wrap:wrap;padding:0 14px 14px
 }
+.factura-pay-pane{display:flex;flex-direction:column;gap:10px}
+.factura-pay-pane[hidden]{display:none!important}
+.factura-pay-pane .factura-field{display:flex;flex-direction:column;gap:6px}
+.pay-method-option.is-active{
+  background:#dbeafe;
+  border-color:#3b82f6;
+  color:#1d4ed8;
+}
 .factura-actions-inline{padding:0 14px 14px}
 .factura-footer{
   display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap
@@ -965,6 +1017,45 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .facturacion-search-item:last-child{border-bottom:none}
 .facturacion-search-item:hover{background:#f8fbff}
 .facturacion-search-meta{font-size:12px;color:#64748b}
+
+#modal-buscar .modal-card--search{
+  width:min(1120px,96vw);
+}
+#modal-buscar .modal-card--search section{
+  padding:10px 12px 12px;
+}
+#modal-buscar .modal-card--search header{
+  padding:10px 12px;
+}
+#modal-buscar .modal-card--search footer{
+  padding:10px 12px;
+}
+#modal-buscar .modal-card--search input[name=q]{
+  padding:8px 10px;
+  margin-bottom:6px;
+}
+#modal-buscar .modal-card--search .muted{
+  margin-bottom:6px;
+  font-size:12px;
+}
+.search-results-table-wrap{
+  max-height:390px;
+  overflow:auto;
+  border:1px solid #e5e7eb;
+  border-radius:6px;
+}
+.search-results-table thead th,
+.search-results-table tbody td{
+  font-size:12px;
+  padding:6px 8px;
+  line-height:1.2;
+}
+.search-results-table tbody tr{
+  cursor:pointer;
+}
+.search-results-table tbody tr:hover{
+  background:#f8fbff;
+}
 .config-shortcuts-grid{
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
@@ -1030,7 +1121,60 @@ html,body{margin:0;padding:0;height:100%;font-family:Segoe UI,Roboto,Helvetica,A
 .prod-import-result{
   margin-bottom:10px;padding:8px 10px;border-radius:4px;background:#f8fafc;border:1px solid #e2e8f0;font-size:13px;color:#334155
 }
+.prod-import-progress{
+  margin-bottom:12px
+}
+.prod-import-progress-bar{
+  height:12px;
+  border-radius:999px;
+  background:#e2e8f0;
+  overflow:hidden
+}
+.prod-import-progress-fill{
+  width:0;
+  height:100%;
+  background:linear-gradient(90deg,#0f766e,#14b8a6);
+  transition:width .25s ease
+}
+.prod-import-progress-meta{
+  margin-top:6px;
+  font-size:12px;
+  font-weight:700;
+  color:#0f172a
+}
+.prod-import-example{
+  margin-top:10px;
+  margin-bottom:12px;
+}
+.prod-import-example-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:6px;
+  table-layout:fixed
+}
+.prod-import-example-table th,
+.prod-import-example-table td{
+  padding:8px 10px;
+  border:1px solid #dbe2ea;
+  border-radius:6px;
+  background:#fff;
+  font-size:12px;
+  color:#334155
+}
+.prod-import-example-table th{
+  background:#f8fafc;
+  font-weight:700;
+  color:#0f172a;
+  text-align:left
+}
 .prod-import-table-wrap{max-height:580px}
+.prod-import-row-warning td{background:#fff7ed!important;color:#9a3412}
+.prod-import-status-ok{color:#166534;font-weight:800}
+.prod-import-status-warning{color:#b45309;font-weight:800}
+.prod-import-failed-wrap{margin-top:8px;max-height:260px}
+.prod-import-failed-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.prod-import-failed-actions{display:flex;gap:8px;flex-wrap:wrap}
+.prod-import-failed-input{width:100%;min-width:120px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 8px;font:inherit}
 
 @media (max-width: 1100px){
   .productos-main{grid-template-columns:1fr}

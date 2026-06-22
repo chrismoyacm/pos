@@ -17,7 +17,7 @@ declare(strict_types=1);
         <div class="creditos-report-head">
           <div>
             <div class="creditos-report-title">REPORTE DE SALDOS</div>
-            <div class="creditos-report-sub">Total de Créditos Pendientes</div>
+            <div class="creditos-report-sub">Total de Creditos Pendientes</div>
             <div class="creditos-report-total" id="cred-total-pendiente">$0.00</div>
           </div>
           <div class="creditos-report-actions">
@@ -29,21 +29,19 @@ declare(strict_types=1);
           <table class="grid">
             <thead>
               <tr>
-                <th style="width:90px">Número</th>
-                <th>Nombre / Dirección del Cliente</th>
-                <th style="width:140px">Teléfono</th>
-                <th style="width:140px">Límite de Crédito</th>
-                <th style="width:140px">Saldo Actual</th>
-                <th style="width:160px">Fecha Pago</th>
-                <th style="width:170px">Último Pago</th>
+                <th style="width:90px" data-cred-reporte-sort="number">Numero</th>
+                <th data-cred-reporte-sort="nameAddress">Nombre / Direccion del Cliente</th>
+                <th style="width:140px" data-cred-reporte-sort="phone">Telefono</th>
+                <th style="width:140px" data-cred-reporte-sort="creditLimit">Limite de Credito</th>
+                <th style="width:140px" data-cred-reporte-sort="balance">Saldo Actual</th>
+                <th style="width:160px" data-cred-reporte-sort="paymentDate">Fecha Pago</th>
+                <th style="width:170px" data-cred-reporte-sort="lastPayment">Ultimo Pago</th>
               </tr>
             </thead>
             <tbody id="cred-reporte-tbody"></tbody>
           </table>
         </div>
-        <div class="table-pager" id="cred-reporte-pager"></div>
       </div>
     </div>
   </div>
 </section>
-

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="1.0.0">
+  <infoTributaria>
+    <ambiente>2</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>ELVIS DANIEL SIGUENZA FLORES</razonSocial>
+    <nombreComercial>MAGABASTOS SIGUENZA</nombreComercial>
+    <ruc>1004408967001</ruc>
+    <claveAcceso>0606202601100440896700120010010000012049686189215</claveAcceso>
+    <codDoc>01</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000001204</secuencial>
+    <dirMatriz>SELVA ALEGRE - OTAVALO - IMBABURA</dirMatriz>
+  </infoTributaria>
+  <infoFactura>
+    <fechaEmision>06/06/2026</fechaEmision>
+    <dirEstablecimiento>SELVA ALEGRE - OTAVALO - IMBABURA</dirEstablecimiento>
+    <obligadoContabilidad>NO</obligadoContabilidad>
+    <tipoIdentificacionComprador>05</tipoIdentificacionComprador>
+    <razonSocialComprador>christyan moya</razonSocialComprador>
+    <identificacionComprador>1004478234</identificacionComprador>
+    <direccionComprador>ibarra</direccionComprador>
+    <totalSinImpuestos>1.00</totalSinImpuestos>
+    <totalDescuento>0.00</totalDescuento>
+    <totalConImpuestos>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>4</codigoPorcentaje>
+        <baseImponible>1.00</baseImponible>
+        <tarifa>15.00</tarifa>
+        <valor>0.15</valor>
+      </totalImpuesto>
+    </totalConImpuestos>
+    <propina>0.00</propina>
+    <importeTotal>1.15</importeTotal>
+    <moneda>DOLAR</moneda>
+    <pagos>
+      <pago>
+        <formaPago>01</formaPago>
+        <total>1.15</total>
+      </pago>
+    </pagos>
+    <valorRetIva>0.00</valorRetIva>
+    <valorRetRenta>0.00</valorRetRenta>
+  </infoFactura>
+  <detalles>
+    <detalle>
+      <codigoPrincipal>TEST-SRI-15</codigoPrincipal>
+      <codigoAuxiliar>TEST-SRI-15</codigoAuxiliar>
+      <descripcion>FACTURA DE PRUEBA PRODUCCION CHRISTYAN MOYA</descripcion>
+      <cantidad>1.000000</cantidad>
+      <precioUnitario>1.000000</precioUnitario>
+      <descuento>0.00</descuento>
+      <precioTotalSinImpuesto>1.00</precioTotalSinImpuesto>
+      <impuestos>
+        <impuesto>
+          <codigo>2</codigo>
+          <codigoPorcentaje>4</codigoPorcentaje>
+          <tarifa>15.00</tarifa>
+          <baseImponible>1.00</baseImponible>
+          <valor>0.15</valor>
+        </impuesto>
+      </impuestos>
+    </detalle>
+  </detalles>
+  <infoAdicional>
+    <campoAdicional nombre="Email">crissmoya.cm@gmail.com</campoAdicional>
+    <campoAdicional nombre="Direccion">ibarra</campoAdicional>
+    <campoAdicional nombre="Telefono">0982258275</campoAdicional>
+  </infoAdicional>
+</factura>

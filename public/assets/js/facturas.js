@@ -34,6 +34,78 @@
     return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
   }
 
+  function currentDateInputValue() {
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = String(now.getMonth() + 1).padStart(2, '0');
+    var d = String(now.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+
+  function parseFacturaIssueDateToDate() {
+    var raw = ($('#factura-issue-date').val() || '').toString().trim();
+    var match = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (match) {
+      return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+    }
+    var parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+    return new Date();
+  }
+
+  function formatDateToInputValue(date) {
+    var d = date instanceof Date ? date : new Date();
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function facturaPeriodDays(period) {
+    switch ((period || '').toString()) {
+      case 'daily': return 1;
+      case 'weekly': return 7;
+      case 'biweekly': return 15;
+      case 'bimonthly': return 60;
+      case 'quarterly': return 90;
+      case 'semiannual': return 180;
+      case 'annual': return 365;
+      case 'monthly':
+      default:
+        return 30;
+    }
+  }
+
+  function facturaPeriodLabel(period) {
+    switch ((period || '').toString()) {
+      case 'daily': return 'Diario';
+      case 'weekly': return 'Semanal';
+      case 'biweekly': return 'Quincenal';
+      case 'bimonthly': return 'Bimestral';
+      case 'quarterly': return 'Trimestral';
+      case 'semiannual': return 'Semestral';
+      case 'annual': return 'Anual';
+      case 'monthly':
+      default:
+        return 'Mensual';
+    }
+  }
+
+  function addDaysToDate(date, days) {
+    var base = date instanceof Date ? new Date(date.getTime()) : new Date();
+    base.setDate(base.getDate() + Math.max(0, Number(days || 0)));
+    return base;
+  }
+
+  function diffDaysBetweenDates(startDate, endDate) {
+    var start = startDate instanceof Date ? startDate : new Date();
+    var end = endDate instanceof Date ? endDate : new Date();
+    var ms = end.getTime() - start.getTime();
+    return Math.max(0, Math.round(ms / 86400000));
+  }
+
   function normalizeDigits(value) {
     return (value || '').toString().replace(/\D+/g, '');
   }
@@ -148,6 +220,7 @@
     services: [],
     details: [],
     payments: [],
+    facturaPaymentDraftMethod: 'cash',
     additionalFields: [],
     paymentMethodDraft: 'cash',
     originSaleId: '',
@@ -228,8 +301,7 @@
   }
 
   function updateSaveBuyerIdButton() {
-    var shouldShow = hasBuyerCustomerContext()
-      && currentBuyerIdentificationType() !== 'Consumidor final'
+    var shouldShow = currentBuyerIdentificationType() !== 'Consumidor final'
       && currentBuyerName() !== ''
       && currentBuyerIdentification() !== '';
     $('#factura-save-buyer-id-btn').prop('hidden', !shouldShow).toggle(shouldShow);
@@ -269,6 +341,33 @@
     var $node = $(id);
     $node.text(message || '');
     $node.css('color', isError ? '#b91c1c' : '#2563eb');
+  }
+
+  function showNotice(message, type) {
+    var text = (message || '').toString().trim();
+    if (!text) return;
+
+    var host = document.getElementById('app-notices');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'app-notices';
+      host.className = 'app-notices';
+      document.body.appendChild(host);
+    }
+
+    var item = document.createElement('div');
+    item.className = 'app-notice app-notice--' + ((type || 'info').toString());
+    item.textContent = text;
+    host.appendChild(item);
+
+    window.setTimeout(function () {
+      item.classList.add('is-leaving');
+      window.setTimeout(function () {
+        if (item.parentNode) {
+          item.parentNode.removeChild(item);
+        }
+      }, 220);
+    }, 2600);
   }
 
   var confirmTokens = {};
@@ -422,6 +521,41 @@
         } catch (e) {}
         setStatus('#facturacion-firma-status', msg, true);
         window.alert('Error de certificado:\n' + msg);
+      });
+    });
+
+    $('#facturacion-email-test').on('click', function () {
+      var form = document.getElementById('facturacion-firma-form');
+      var payload = new FormData(form);
+      var toEmail = (payload.get('testEmail') || '').toString().trim();
+      if (!toEmail) {
+        setStatus('#facturacion-firma-status', 'Ingrese el correo para la prueba.', true);
+        window.alert('Ingrese el correo para la prueba.');
+        return;
+      }
+      payload.append('action', 'test_email');
+      setStatus('#facturacion-firma-status', 'Enviando correo de prueba...');
+      $.ajax({
+        url: '../api/facturacion.php',
+        method: 'POST',
+        data: payload,
+        processData: false,
+        contentType: false,
+        dataType: 'json'
+      }).done(function (res) {
+        if (!res.ok) {
+          var errorMessage = res.error || 'No se pudo enviar el correo de prueba.';
+          setStatus('#facturacion-firma-status', errorMessage, true);
+          window.alert('Error de correo:\n' + errorMessage);
+          return;
+        }
+        var message = ((res.data || {}).message || 'Correo de prueba enviado correctamente.').toString();
+        setStatus('#facturacion-firma-status', message);
+        window.alert(message);
+      }).fail(function (xhr) {
+        var msg = responseErrorMessage(xhr, 'No se pudo enviar el correo de prueba.');
+        setStatus('#facturacion-firma-status', msg, true);
+        window.alert('Error de correo:\n' + msg);
       });
     });
   }
@@ -608,6 +742,183 @@
     return note ? (note + ' | ' + suffix) : suffix;
   }
 
+  function facturaThermalPaperWidthMm() {
+    var raw = (window.localStorage.getItem('pos.print.paperWidthMm') || '').toString().trim();
+    return raw === '80' ? 80 : 58;
+  }
+
+  function facturaEnvLabel(value) {
+    return (value || '').toString() === '2' ? 'PRODUCCION' : 'PRUEBAS';
+  }
+
+  function facturaTipoEmisionLabel(value) {
+    return (value || '').toString() === '1' ? 'NORMAL' : (value || 'NORMAL').toString().toUpperCase();
+  }
+
+  function facturaAuthStatusLabel(documentData) {
+    var sri = (documentData && documentData.sri && typeof documentData.sri === 'object') ? documentData.sri : {};
+    var status = (sri.authorizationStatus || documentData.status || '').toString().trim().toUpperCase();
+    if (status === 'AUT' || status === 'AUTHORIZED') return 'AUTORIZADO';
+    if (status === 'RECIBIDA') return 'RECIBIDA';
+    if (status === 'DEVUELTA') return 'DEVUELTA';
+    if (status === 'NAT') return 'NO AUTORIZADO';
+    return status || 'PENDIENTE';
+  }
+
+  function facturaReceivedAmount(documentData) {
+    var payments = Array.isArray(documentData.payments) ? documentData.payments : [];
+    return payments.reduce(function (sum, row) {
+      return sum + Number(row.total || row.value || 0);
+    }, 0);
+  }
+
+  function printFacturaTicket(documentData) {
+    var doc = documentData || {};
+    var emitter = doc.emitter || state.emitter || {};
+    var point = doc.point || {};
+    var buyer = doc.buyer || {};
+    var details = Array.isArray(doc.details) ? doc.details : [];
+    var totals = doc.totals || {};
+    var payments = Array.isArray(doc.payments) ? doc.payments : [];
+    var additional = Array.isArray(doc.additionalFields) ? doc.additionalFields : [];
+    var paperMm = facturaThermalPaperWidthMm();
+    var facturaNumero = [doc.estab || point.estab || '', doc.ptoEmi || point.ptoEmi || '', doc.secuencial || ''].join('-');
+    var authorizationDate = ((doc.sri || {}).authorizationDate || (doc.sri || {}).authorizedAt || '').toString();
+    var received = facturaReceivedAmount(doc);
+    var total = Number(totals.importeTotal || 0);
+    var change = Math.max(0, received - total);
+    var qtyTotal = details.reduce(function (sum, item) { return sum + Number(item.cantidad || 0); }, 0);
+
+    function line(label, value) {
+      var cleanValue = value === undefined || value === null ? '' : value.toString();
+      if (!cleanValue) return '';
+      return '<div>' + escapeHtml(label + cleanValue) + '</div>';
+    }
+
+    var rows = details.map(function (item) {
+      var qty = Number(item.cantidad || 0);
+      var unit = Number(item.precioUnitario || 0);
+      var discount = Number(item.descuento || 0);
+      var amount = Number(item.precioTotalSinImpuesto || 0) + Number(item.taxValue || 0);
+      if (!(amount > 0)) {
+        amount = Math.max(0, (qty * unit) - discount);
+      }
+      return (
+        '<tr>' +
+          '<td class="qty">' + escapeHtml(money(qty)) + '</td>' +
+          '<td class="desc">' + escapeHtml((item.descripcion || '').toString()) + '</td>' +
+          '<td class="unit">' + escapeHtml(money(unit)) + '</td>' +
+          '<td class="amt">' + escapeHtml(money(amount)) + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    var paymentRows = payments.map(function (payment) {
+      return '<div class="line"><span>' + escapeHtml((payment.label || payment.formaPago || 'Pago').toString().toUpperCase()) + '</span><strong>' + money(Number(payment.total || payment.value || 0)) + '</strong></div>';
+    }).join('');
+
+    var additionalRows = additional.map(function (field) {
+      return '<div>' + escapeHtml((field.name || '').toString().toUpperCase()) + ': ' + escapeHtml((field.value || '').toString()) + '</div>';
+    }).join('');
+
+    var html = [
+      '<!doctype html><html><head><meta charset="utf-8"><title>Ticket factura</title>',
+      '<style>',
+      '@page{size:' + paperMm + 'mm auto;margin:2mm}',
+      'html,body{margin:0;padding:0;background:#fff}',
+      'body{font-family:Consolas,"Courier New",monospace;color:#000}',
+      '.ticket{width:' + (paperMm - 4) + 'mm;padding:1mm 1mm 4mm;font-size:10px;line-height:1.18}',
+      '.center{text-align:center}.brand{font-size:16px;font-weight:700;letter-spacing:1px}.small{font-size:8px}.title{font-size:12px;font-weight:700}',
+      '.sep{border-top:1px dashed #000;margin:4px 0}.sep2{border-top:1px solid #000;margin:4px 0}',
+      '.key{word-break:break-all;text-align:center;font-size:9px}',
+      'table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:2px 1px;vertical-align:top}thead th{border-bottom:1px dashed #000}',
+      '.qty{width:15%;text-align:right}.desc{width:45%;word-break:break-word}.unit{width:20%;text-align:right}.amt{width:20%;text-align:right}',
+      '.line{display:flex;justify-content:space-between;gap:6px}.line strong{font-weight:700}.total{font-size:12px;font-weight:700}',
+      '.legal{font-size:8px;text-align:center;margin-top:7px}.thanks{text-align:center;margin-top:10px;font-size:9px}',
+      '</style></head><body><div class="ticket">',
+      '<div class="center title">FACTURA ELECTRONICA</div>',
+      '<div class="center brand">' + escapeHtml((emitter.nombreComercial || emitter.razonSocial || 'FACTURA').toString()) + '</div>',
+      '<div class="center small">' + escapeHtml((emitter.razonSocial || '').toString()) + '</div>',
+      line('RUC: ', emitter.ruc),
+      line('MATRIZ: ', emitter.dirMatriz),
+      line('TELEFONO: ', emitter.telefono),
+      '<div class="center">AMBIENTE: ' + escapeHtml(facturaEnvLabel(doc.environment || emitter.ambiente)) + '</div>',
+      '<div class="center">EMISION: ' + escapeHtml(facturaTipoEmisionLabel(emitter.tipoEmision)) + '</div>',
+      '<div class="center">OBLIGADO A LLEVAR CONTABILIDAD: ' + escapeHtml((emitter.obligadoContabilidad || 'NO').toString().toUpperCase()) + '</div>',
+      '<div class="center">*** CLAVE DE ACCESO ***</div>',
+      '<div class="key">' + escapeHtml((doc.accessKey || '').toString()) + '</div>',
+      '<div class="sep2"></div>',
+      '<div class="center title">FACTURA NRO. ' + escapeHtml(facturaNumero) + '</div>',
+      '<div class="sep2"></div>',
+      line('RUC/CI: ', buyer.identification),
+      line('Telf.: ', buyer.phone),
+      line('Nombre: ', buyer.razonSocial),
+      line('Direc.: ', buyer.address),
+      line('Correo: ', buyer.email),
+      line('Fecha: ', doc.issueDate || doc.issueDateKey),
+      line('Aut.: ', authorizationDate),
+      line('Estado: ', facturaAuthStatusLabel(doc)),
+      '<div class="sep"></div>',
+      '<table><thead><tr><th class="qty">Cant.</th><th class="desc">Producto</th><th class="unit">Precio U.</th><th class="amt">Total</th></tr></thead><tbody>',
+      rows,
+      '</tbody></table>',
+      '<div class="sep"></div>',
+      '<div class="line total"><span>' + money(qtyTotal) + '</span><span>SUB-TOTAL:</span><strong>' + money(Number(totals.subtotalSinImpuestos || 0)) + '</strong></div>',
+      '<div class="line"><span></span><span>DESCUENTO:</span><strong>' + money(Number(totals.totalDescuento || 0)) + '</strong></div>',
+      '<div class="line"><span></span><span>IVA 15%:</span><strong>' + money(Number(totals.iva15 || 0)) + '</strong></div>',
+      '<div class="line"><span></span><span>IVA 12%:</span><strong>' + money(Number(totals.iva12 || 0)) + '</strong></div>',
+      '<div class="line"><span></span><span>SUB-TOTAL:</span><strong>' + money(Number(totals.subtotalSinImpuestos || 0)) + '</strong></div>',
+      '<div class="line total"><span></span><span>TOTAL:</span><strong>' + money(total) + '</strong></div>',
+      '<div class="sep2"></div>',
+      '<div class="center title">F O R M A S  D E  P A G O</div>',
+      paymentRows || '<div class="line"><span>EFECTIVO</span><strong>' + money(total) + '</strong></div>',
+      '<div class="sep2"></div>',
+      '<div class="line"><span>MONTO RECIBIDO</span><strong>' + money(received || total) + '</strong></div>',
+      '<div class="line"><span>CAMBIO</span><strong>' + money(change) + '</strong></div>',
+      additionalRows ? '<div class="sep"></div><div class="center title">INFORMACION ADICIONAL</div>' + additionalRows : '',
+      '<div class="legal">DESCARGUE SU FACTURA ELECTRONICA EN:<br>https://srienlinea.sri.gob.ec/<br>DOCUMENTO SIN SUSTENTO TRIBUTARIO</div>',
+      '<div class="legal">1 REALIZADA LA COMPRA NO HAY DEVOLUCIONES<br>2 LOS CAMBIOS SE REALIZARAN SEGUN POLITICAS DEL LOCAL</div>',
+      '<div class="center title">*** ORIGINAL ***</div>',
+      '<div class="thanks">Muchas gracias por su compra</div>',
+      '</div></body></html>'
+    ].join('');
+
+    var iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '-10000px';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    var printDocument = iframe.contentWindow && iframe.contentWindow.document;
+    if (!printDocument) {
+      document.body.removeChild(iframe);
+      showNotice('Factura emitida, pero no se pudo abrir la impresion del ticket.', 'warning');
+      return false;
+    }
+
+    printDocument.open();
+    printDocument.write(html);
+    printDocument.close();
+
+    window.setTimeout(function () {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } finally {
+        window.setTimeout(function () {
+          if (iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+          }
+        }, 800);
+      }
+    }, 150);
+
+    return true;
+  }
+
   function buildFacturaPaymentsFromSalePayload(salePayload, totalOverride) {
     var source = salePayload && typeof salePayload === 'object' ? salePayload : {};
     var total = round2(Number(totalOverride !== undefined ? totalOverride : source.total) || 0);
@@ -618,12 +929,17 @@
     function pushPayment(paymentMethod, label, value, term) {
       var amount = round2(Number(value || 0));
       if (!(amount > 0)) return;
+      var issueDate = parseFacturaIssueDateToDate();
+      var safeTerm = Number(term || 0);
       payments.push({
         method: paymentMethod,
         label: label,
         value: amount,
-        term: Number(term || 0),
-        timeUnit: 'dias'
+        term: safeTerm,
+        timeUnit: 'dias',
+        dueDate: safeTerm > 0 ? formatDateToInputValue(addDaysToDate(issueDate, safeTerm)) : '',
+        interestPercent: 0,
+        period: safeTerm >= 30 ? 'monthly' : (safeTerm >= 15 ? 'biweekly' : (safeTerm >= 7 ? 'weekly' : 'daily'))
       });
     }
 
@@ -876,12 +1192,14 @@
     var $tbody = $('#factura-payments-body').empty();
     var lockedBySale = Boolean(state.pendingPosSale);
     state.payments.forEach(function (item, index) {
+      var dueDateLabel = (item.dueDate || '').toString() || (Number(item.term || 0) > 0 ? (String(item.term || 0) + ' dias') : '--');
+      var periodLabel = (item.period ? facturaPeriodLabel(item.period) : (item.timeUnit || 'dias'));
       var $tr = $(
         '<tr>' +
           '<td>' + escapeHtml(item.label || '') + '</td>' +
           '<td class="catalog-money">' + money(item.value || 0) + '</td>' +
-          '<td class="catalog-center">' + escapeHtml(String(item.term || 0)) + '</td>' +
-          '<td class="catalog-center">' + escapeHtml(item.timeUnit || 'dias') + '</td>' +
+          '<td class="catalog-center">' + escapeHtml(dueDateLabel) + '</td>' +
+          '<td class="catalog-center">' + escapeHtml(periodLabel) + '</td>' +
           '<td>' + (lockedBySale ? '<span class="muted">Desde venta</span>' : '<button class="btn-secondary" type="button">Quitar</button>') + '</td>' +
         '</tr>'
       );
@@ -896,6 +1214,189 @@
     if (!$tbody.children().length) {
       $tbody.append('<tr><td colspan="5" class="factura-empty">No existen formas de pago</td></tr>');
     }
+  }
+
+  function currentFacturaTotal() {
+    return round2(Number(recalcFacturaTotals().importeTotal || 0));
+  }
+
+  function setFacturaPaymentDraftMethod(method) {
+    state.facturaPaymentDraftMethod = (method || 'cash').toString();
+    $('[data-factura-pay-method]').each(function () {
+      var active = (($(this).data('factura-pay-method') || '').toString() === state.facturaPaymentDraftMethod);
+      $(this).toggleClass('is-active', active);
+    });
+    $('#factura-pay-pane-cash').prop('hidden', state.facturaPaymentDraftMethod !== 'cash');
+    $('#factura-pay-pane-credit').prop('hidden', state.facturaPaymentDraftMethod !== 'credit');
+    $('#factura-pay-pane-mixed').prop('hidden', state.facturaPaymentDraftMethod !== 'mixed');
+    $('#factura-pay-pane-transfer').prop('hidden', state.facturaPaymentDraftMethod !== 'transfer');
+    updateFacturaMixedRemaining();
+  }
+
+  function updateFacturaMixedRemaining() {
+    var total = currentFacturaTotal();
+    var cash = Number($('#factura-pay-mixed-cash').val() || 0);
+    var transfer = Number($('#factura-pay-mixed-transfer').val() || 0);
+    var credit = Number($('#factura-pay-mixed-credit').val() || 0);
+    var remaining = round2(total - cash - transfer - credit);
+    $('#factura-pay-mixed-remaining').text('Falta por completar: ' + money(Math.max(0, remaining)));
+  }
+
+  function syncFacturaCreditDueDateFromPeriod() {
+    var period = ($('#factura-pay-credit-period').val() || 'monthly').toString();
+    $('#factura-pay-credit-due-date').val(formatDateToInputValue(addDaysToDate(parseFacturaIssueDateToDate(), facturaPeriodDays(period))));
+  }
+
+  function syncFacturaMixedDueDateFromPeriod() {
+    var period = ($('#factura-pay-mixed-period').val() || 'monthly').toString();
+    $('#factura-pay-mixed-due-date').val(formatDateToInputValue(addDaysToDate(parseFacturaIssueDateToDate(), facturaPeriodDays(period))));
+  }
+
+  function hydrateFacturaPaymentModalFromState() {
+    var total = currentFacturaTotal();
+    var issueDate = parseFacturaIssueDateToDate();
+    var defaultDueDate = formatDateToInputValue(addDaysToDate(issueDate, 30));
+    $('#factura-payment-total').val(money(total));
+    $('#factura-pay-cash-value').val(money(total));
+    $('#factura-pay-transfer-value').val(money(total));
+    $('#factura-pay-credit-value').val(money(total));
+    $('#factura-pay-credit-due-date').val(defaultDueDate);
+    $('#factura-pay-credit-interest').val('0.00');
+    $('#factura-pay-credit-period').val('monthly');
+    $('#factura-pay-mixed-cash').val('0.00');
+    $('#factura-pay-mixed-transfer').val('0.00');
+    $('#factura-pay-mixed-credit').val('0.00');
+    $('#factura-pay-mixed-due-date').val(defaultDueDate);
+    $('#factura-pay-mixed-interest').val('0.00');
+    $('#factura-pay-mixed-period').val('monthly');
+
+    if (state.payments.length === 1) {
+      var single = state.payments[0] || {};
+      var singleMethod = (single.method || 'cash').toString();
+      if (singleMethod === 'transfer') {
+        $('#factura-pay-transfer-value').val(money(single.value || 0));
+      } else if (singleMethod === 'credit') {
+        $('#factura-pay-credit-value').val(money(single.value || 0));
+        $('#factura-pay-credit-due-date').val((single.dueDate || '').toString() || defaultDueDate);
+        $('#factura-pay-credit-interest').val(money(single.interestPercent || 0));
+        $('#factura-pay-credit-period').val((single.period || 'monthly').toString());
+      } else {
+        $('#factura-pay-cash-value').val(money(single.value || 0));
+      }
+      setFacturaPaymentDraftMethod(singleMethod);
+      return;
+    }
+
+    if (state.payments.length > 1) {
+      setFacturaPaymentDraftMethod('mixed');
+      state.payments.forEach(function (item) {
+        var method = (item.method || '').toString();
+        if (method === 'cash') $('#factura-pay-mixed-cash').val(money(item.value || 0));
+        if (method === 'transfer') $('#factura-pay-mixed-transfer').val(money(item.value || 0));
+        if (method === 'credit') {
+          $('#factura-pay-mixed-credit').val(money(item.value || 0));
+          $('#factura-pay-mixed-due-date').val((item.dueDate || '').toString() || defaultDueDate);
+          $('#factura-pay-mixed-interest').val(money(item.interestPercent || 0));
+          $('#factura-pay-mixed-period').val((item.period || 'monthly').toString());
+        }
+      });
+      updateFacturaMixedRemaining();
+      return;
+    }
+
+    setFacturaPaymentDraftMethod(state.facturaPaymentDraftMethod || 'cash');
+  }
+
+  function openFacturaPaymentModal() {
+    if (state.pendingPosSale) {
+      setStatus('#factura-issue-status', 'La forma de pago se toma desde la venta realizada en caja.');
+      return;
+    }
+    hydrateFacturaPaymentModalFromState();
+    $('#factura-payment-modal').addClass('active');
+  }
+
+  function closeFacturaPaymentModal() {
+    $('#factura-payment-modal').removeClass('active');
+  }
+
+  function applyFacturaPaymentModal() {
+    var total = currentFacturaTotal();
+    var payments = [];
+    var method = (state.facturaPaymentDraftMethod || 'cash').toString();
+
+    if (method === 'cash') {
+      var cash = round2(Number($('#factura-pay-cash-value').val() || 0));
+      if (cash <= 0) cash = total;
+      payments.push({ method: 'cash', label: 'Efectivo', value: cash, term: 0, timeUnit: 'dias' });
+    } else if (method === 'transfer') {
+      var transfer = round2(Number($('#factura-pay-transfer-value').val() || 0));
+      if (transfer <= 0) transfer = total;
+      payments.push({ method: 'transfer', label: 'Transferencia', value: transfer, term: 0, timeUnit: 'dias' });
+    } else if (method === 'credit') {
+      var credit = round2(Number($('#factura-pay-credit-value').val() || 0));
+      var creditDueDate = ($('#factura-pay-credit-due-date').val() || '').toString() || formatDateToInputValue(addDaysToDate(parseFacturaIssueDateToDate(), 30));
+      var creditInterest = round2(Number($('#factura-pay-credit-interest').val() || 0));
+      var creditPeriod = ($('#factura-pay-credit-period').val() || 'monthly').toString();
+      if (credit <= 0) credit = total;
+      payments.push({
+        method: 'credit',
+        label: 'Credito',
+        value: credit,
+        term: diffDaysBetweenDates(parseFacturaIssueDateToDate(), new Date(creditDueDate + 'T00:00:00')),
+        timeUnit: 'dias',
+        dueDate: creditDueDate,
+        interestPercent: creditInterest,
+        period: creditPeriod
+      });
+    } else if (method === 'mixed') {
+      var mixedCash = round2(Number($('#factura-pay-mixed-cash').val() || 0));
+      var mixedTransfer = round2(Number($('#factura-pay-mixed-transfer').val() || 0));
+      var mixedCredit = round2(Number($('#factura-pay-mixed-credit').val() || 0));
+      var mixedDueDate = ($('#factura-pay-mixed-due-date').val() || '').toString() || formatDateToInputValue(addDaysToDate(parseFacturaIssueDateToDate(), 30));
+      var mixedInterest = round2(Number($('#factura-pay-mixed-interest').val() || 0));
+      var mixedPeriod = ($('#factura-pay-mixed-period').val() || 'monthly').toString();
+      if (mixedCash > 0) {
+        payments.push({ method: 'cash', label: 'Efectivo', value: mixedCash, term: 0, timeUnit: 'dias' });
+      }
+      if (mixedTransfer > 0) {
+        payments.push({ method: 'transfer', label: 'Transferencia', value: mixedTransfer, term: 0, timeUnit: 'dias' });
+      }
+      if (mixedCredit > 0) {
+        payments.push({
+          method: 'credit',
+          label: 'Credito',
+          value: mixedCredit,
+          term: diffDaysBetweenDates(parseFacturaIssueDateToDate(), new Date(mixedDueDate + 'T00:00:00')),
+          timeUnit: 'dias',
+          dueDate: mixedDueDate,
+          interestPercent: mixedInterest,
+          period: mixedPeriod
+        });
+      }
+      if (!payments.length) {
+        setStatus('#factura-issue-status', 'Ingrese al menos un valor en el pago mixto.', true);
+        return;
+      }
+    }
+
+    if (!payments.length) {
+      setStatus('#factura-issue-status', 'No existen formas de pago para guardar.', true);
+      return;
+    }
+
+    var sum = round2(payments.reduce(function (acc, item) {
+      return acc + Number(item.value || 0);
+    }, 0));
+    var diff = round2(total - sum);
+    if (Math.abs(diff) >= 0.01) {
+      payments[payments.length - 1].value = round2(Number(payments[payments.length - 1].value || 0) + diff);
+    }
+
+    state.payments = payments;
+    renderFacturaPayments();
+    closeFacturaPaymentModal();
+    setStatus('#factura-issue-status', 'Formas de pago actualizadas.');
   }
 
   function renderFacturaAdditionalFields() {
@@ -919,51 +1420,115 @@
     }
   }
 
-  function renderProductSearchResults(rows) {
-    var $wrap = $('#factura-product-results').empty();
-    rows.slice(0, 12).forEach(function (product) {
-      var $item = $(
-        '<div class="facturacion-search-item">' +
-          '<div><strong>' + escapeHtml(product.name || '') + '</strong><div class="facturacion-search-meta">' + escapeHtml(product.barcode || product.id || '') + ' | IVA ' + escapeHtml(product.iva || 'No') + '</div></div>' +
-          '<div><strong>$' + money(product.price || 0) + '</strong></div>' +
-        '</div>'
-      );
-      $item.on('click', function () {
-        var qty = parseFloat(window.prompt('Cantidad', '1') || '0');
-        if (!(qty > 0)) return;
-        state.details.push({
-          productId: product.id,
-          codigoPrincipal: (product.service && product.service.codigoPrincipal) || product.barcode || product.id || '',
-          codigoAuxiliar: (product.service && product.service.codigoAuxiliar) || product.barcode || '',
-          cantidad: qty,
-          descripcion: product.name || '',
-          precioUnitario: parseFloat(product.price || 0),
-          iva: normalizeIva(product.iva),
-          descuento: 0,
-          valorICE: parseFloat((product.service && product.service.iceValue) || 0)
-        });
-        $('#factura-product-search').val('');
-        $wrap.empty();
-        renderFacturaDetails();
-      });
-      $wrap.append($item);
+  function addProductToFacturaDetail(product) {
+    var qty = parseFloat(window.prompt('Cantidad', '1') || '0');
+    if (!(qty > 0)) return;
+    state.details.push({
+      productId: product.id,
+      codigoPrincipal: (product.service && product.service.codigoPrincipal) || product.barcode || product.id || '',
+      codigoAuxiliar: (product.service && product.service.codigoAuxiliar) || product.barcode || '',
+      cantidad: qty,
+      descripcion: product.name || '',
+      precioUnitario: parseFloat(product.price || 0),
+      iva: normalizeIva(product.iva),
+      descuento: 0,
+      valorICE: parseFloat((product.service && product.service.iceValue) || 0)
     });
-    if (!$wrap.children().length) {
-      $wrap.append('<div class="factura-empty">No se encontraron productos.</div>');
+    $('#factura-product-search').val('');
+    $('#factura-product-search-modal-input').val('');
+    renderFacturaDetails();
+  }
+
+  function closeFacturaProductSearchModal() {
+    $('#factura-product-search-modal').removeClass('active');
+  }
+
+  function openFacturaProductSearchModal() {
+    $('#factura-product-search-modal').addClass('active');
+    $('#factura-product-search-modal-input').val(($('#factura-product-search').val() || '').toString());
+    searchInvoiceProducts();
+    window.setTimeout(function () {
+      $('#factura-product-search-modal-input').trigger('focus').trigger('select');
+    }, 0);
+  }
+
+  function renderProductSearchResults(rows) {
+    var $tbody = $('#factura-product-search-modal-results').empty();
+    rows.slice(0, 30).forEach(function (product) {
+      var $tr = $(
+        '<tr>' +
+          '<td>' + escapeHtml(product.barcode || product.id || '') + '</td>' +
+          '<td>' + escapeHtml(product.name || '') + '</td>' +
+          '<td class="catalog-center">' + escapeHtml(product.iva || 'No') + '</td>' +
+          '<td class="catalog-money">' + money(product.price || 0) + '</td>' +
+        '</tr>'
+      );
+      $tr.on('click', function () {
+        addProductToFacturaDetail(product);
+        closeFacturaProductSearchModal();
+      });
+      $tbody.append($tr);
+    });
+    if (!$tbody.children().length) {
+      $tbody.append('<tr><td colspan="4" class="factura-empty">No se encontraron productos.</td></tr>');
     }
   }
 
   function searchInvoiceProducts() {
-    var q = ($('#factura-product-search').val() || '').toString().trim().toLowerCase();
-    if (!q) {
-      $('#factura-product-results').empty();
-      return;
-    }
+    var source = $('#factura-product-search-modal').hasClass('active')
+      ? $('#factura-product-search-modal-input').val()
+      : $('#factura-product-search').val();
+    var q = (source || '').toString().trim().toLowerCase();
+    var wide = q.indexOf('*') === 0;
+    var needle = wide ? q.slice(1).trim() : q;
     var rows = (state.products || []).filter(function (product) {
-      var text = ((product.barcode || '') + ' ' + (product.name || '')).toLowerCase();
-      return text.indexOf(q) >= 0;
+      var barcode = (product.barcode || '').toString().toLowerCase();
+      var id = (product.id || '').toString().toLowerCase();
+      var name = (product.name || '').toString().toLowerCase();
+      if (!needle) {
+        return true;
+      }
+      if (wide) {
+        return barcode.indexOf(needle) >= 0 || id.indexOf(needle) >= 0 || name.indexOf(needle) >= 0;
+      }
+      return barcode.indexOf(needle) === 0 || id.indexOf(needle) === 0 || name.indexOf(needle) === 0;
     });
     renderProductSearchResults(rows);
+  }
+
+  function findFacturaProductByCode(query) {
+    var q = (query || '').toString().trim().toLowerCase();
+    if (!q) return null;
+    return (state.products || []).find(function (product) {
+      var barcode = (product.barcode || '').toString().trim().toLowerCase();
+      var id = (product.id || '').toString().trim().toLowerCase();
+      return barcode === q || id === q;
+    }) || null;
+  }
+
+  function findFacturaProductByCodeRemote(query) {
+    var code = (query || '').toString().trim();
+    if (!code) {
+      return $.Deferred().resolve(null).promise();
+    }
+    return $.getJSON('../api/products.php', { q: code }).then(function (res) {
+      if (!res || !res.ok || !Array.isArray(res.data)) {
+        return null;
+      }
+      var q = code.toLowerCase();
+      var exact = res.data.find(function (product) {
+        var barcode = (product.barcode || '').toString().trim().toLowerCase();
+        var id = (product.id || '').toString().trim().toLowerCase();
+        return barcode === q || id === q;
+      }) || null;
+      if (!exact) {
+        return null;
+      }
+      var service = ((state.services || []).find(function (row) { return row.productId === exact.id; }) || null);
+      return $.extend({}, exact, { service: service });
+    }, function () {
+      return null;
+    });
   }
 
   function bindInvoicePage() {
@@ -1114,13 +1679,18 @@
 
       state.details = (salePayload.items || []).map(function (item) {
         var code = (item.barcode || item.id || '').toString();
+        var preferredUnitPrice = parseFloat(
+          item.invoiceUnitPrice !== undefined && item.invoiceUnitPrice !== null
+            ? item.invoiceUnitPrice
+            : item.price
+        ) || 0;
         return {
           productId: (item.id || '').toString(),
           codigoPrincipal: code,
           codigoAuxiliar: code,
           cantidad: parseFloat(item.qty || 0) || 0,
           descripcion: (item.name || '').toString(),
-          precioUnitario: parseFloat(item.price || 0) || 0,
+          precioUnitario: preferredUnitPrice,
           iva: normalizeIva(item.iva),
           descuento: 0,
           valorICE: 0
@@ -1150,38 +1720,42 @@
       updateSaveBuyerIdButton();
     }
 
-    function saveBuyerIdentificationForCustomer() {
+    function saveBuyerAsCustomer() {
       var customerId = (state.buyerCustomerId || '').toString().trim();
-      if (!customerId || customerId === 'c-001') {
-        setStatus('#factura-issue-status', 'No hay un cliente real asociado para guardar la identificacion.', true);
-        updateSaveBuyerIdButton();
-        return;
-      }
-
       var identification = currentBuyerIdentification();
       var identificationType = currentBuyerIdentificationType();
-      var customer = findCustomerById(customerId);
-      if (!customer) {
-        setStatus('#factura-issue-status', 'No se encontro el cliente en el catalogo local.', true);
-        return;
-      }
       if (!identification) {
-        setStatus('#factura-issue-status', 'Ingrese la identificacion antes de guardarla.', true);
+        showNotice('Ingrese la identificacion antes de guardar el adquirente.', 'warning');
         return;
       }
       if (identificationType === 'Consumidor final') {
-        setStatus('#factura-issue-status', 'Consumidor final no se guarda como identificacion de cliente.', true);
+        showNotice('Consumidor final no se guarda como cliente.', 'warning');
         return;
       }
 
-      var payload = $.extend({}, customer, {
-        action: 'update',
-        id: customer.id,
-        name: currentBuyerName() || customer.name || '',
-        taxId: identification,
-        identification: identification
-      });
+      var name = currentBuyerName();
+      if (!name) {
+        showNotice('Ingrese la razon social antes de guardar el adquirente.', 'warning');
+        return;
+      }
 
+      var customer = findCustomerById(customerId) || findCustomerByIdentification(identification) || {};
+      var isUpdate = customer && customer.id && customer.id !== 'c-001';
+      var payload = $.extend({}, customer, {
+        action: isUpdate ? 'update' : 'create',
+        name: name,
+        taxId: identification,
+        identification: identification,
+        address1: ($('#factura-buyer-address').val() || '').toString().trim(),
+        phone: ($('#factura-buyer-phone').val() || '').toString().trim(),
+        email: ($('#factura-buyer-email').val() || '').toString().trim()
+      });
+      if (isUpdate) {
+        payload.id = customer.id;
+      }
+
+      $('#factura-save-buyer-id-btn').prop('disabled', true);
+      showNotice(isUpdate ? 'Actualizando datos del adquirente...' : 'Guardando adquirente como cliente...', 'info');
       $.ajax({
         url: '../api/customers.php',
         method: 'POST',
@@ -1189,23 +1763,41 @@
         data: JSON.stringify(payload)
       }).done(function (res) {
         if (!res.ok) {
-          setStatus('#factura-issue-status', res.error || 'No se pudo guardar la identificacion del cliente.', true);
+          showNotice(res.error || 'No se pudo guardar el adquirente como cliente.', 'error');
           return;
         }
         var updated = res.data || payload;
+        var updatedId = (updated && updated.id !== undefined ? updated.id : '').toString();
+        var found = false;
         state.customers = (state.customers || []).map(function (row) {
-          if ((row && row.id !== undefined ? row.id : '').toString() !== customerId) {
+          if ((row && row.id !== undefined ? row.id : '').toString() !== updatedId) {
             return row;
           }
+          found = true;
           return $.extend({}, row, updated, {
             taxId: updated.taxId || updated.identification || identification,
-            identification: updated.identification || updated.taxId || identification
+            identification: updated.identification || updated.taxId || identification,
+            address1: updated.address1 || payload.address1,
+            phone: updated.phone || payload.phone,
+            email: updated.email || payload.email
           });
         });
-        setStatus('#factura-issue-status', 'Identificacion guardada para el cliente. La proxima vez se cargara automaticamente.');
+        if (!found) {
+          state.customers.push($.extend({}, updated, {
+            taxId: updated.taxId || updated.identification || identification,
+            identification: updated.identification || updated.taxId || identification,
+            address1: updated.address1 || payload.address1,
+            phone: updated.phone || payload.phone,
+            email: updated.email || payload.email
+          }));
+        }
+        state.buyerCustomerId = updatedId;
+        showNotice((isUpdate ? 'Cliente actualizado: ' : 'Cliente creado: ') + name + ' / ' + identification + '.', 'success');
         updateSaveBuyerIdButton();
       }).fail(function (xhr) {
-        setStatus('#factura-issue-status', responseErrorMessage(xhr, 'No se pudo guardar la identificacion del cliente.'), true);
+        showNotice('Error al guardar adquirente: ' + responseErrorMessage(xhr, 'No se pudo guardar el adquirente como cliente.'), 'error');
+      }).always(function () {
+        $('#factura-save-buyer-id-btn').prop('disabled', false);
       });
     }
 
@@ -1226,7 +1818,7 @@
     }
 
     $('#factura-buyer-search-btn').on('click', searchAndFillBuyer);
-    $('#factura-save-buyer-id-btn').on('click', saveBuyerIdentificationForCustomer);
+    $('#factura-save-buyer-id-btn').on('click', saveBuyerAsCustomer);
     $('#factura-point-id, #factura-point-establishment').on('change', function () {
       if (($('#factura-buyer-id-type').val() || '').toString() === 'Consumidor final') {
         applyConsumidorFinalDefaults();
@@ -1246,31 +1838,56 @@
     });
     $('#factura-buyer-name').on('input', updateSaveBuyerIdButton);
 
-    var searchTimer = null;
-    $('#factura-product-search').on('input', function () {
-      if (searchTimer) window.clearTimeout(searchTimer);
-      searchTimer = window.setTimeout(searchInvoiceProducts, 160);
+    $('#factura-product-search-btn').on('click', openFacturaProductSearchModal);
+    $('#factura-product-search').on('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var query = ($(this).val() || '').toString().trim();
+        if (!query) {
+          return;
+        }
+        var localProduct = findFacturaProductByCode(query);
+        if (localProduct) {
+          addProductToFacturaDetail(localProduct);
+          setStatus('#factura-issue-status', 'Producto agregado al detalle.');
+          return;
+        }
+        findFacturaProductByCodeRemote(query).done(function (exactProduct) {
+          if (!exactProduct) {
+            setStatus('#factura-issue-status', 'Producto no encontrado por codigo. Use Buscar (F10) si no conoce el codigo.', true);
+            return;
+          }
+          addProductToFacturaDetail(exactProduct);
+          setStatus('#factura-issue-status', 'Producto agregado al detalle.');
+        });
+        return;
+      }
+      if (e.key === 'F10') {
+        e.preventDefault();
+        openFacturaProductSearchModal();
+      }
     });
-    $('#factura-product-search-btn').on('click', searchInvoiceProducts);
-
-    $('[data-payment-method]').on('click', function () {
-      state.paymentMethodDraft = ($(this).data('payment-method') || 'cash').toString();
-      setStatus('#factura-issue-status', 'Forma de pago seleccionada: ' + state.paymentMethodDraft.replace('_', ' '));
+    $('#factura-product-search-modal-input').on('input', searchInvoiceProducts);
+    $('#factura-product-search-close-btn').on('click', closeFacturaProductSearchModal);
+    $('#factura-product-search-modal').on('click', function (e) {
+      if (e.target === this) {
+        closeFacturaProductSearchModal();
+      }
     });
 
-    $('#factura-add-payment-btn').on('click', function () {
-      var amount = parseFloat(window.prompt('Valor', money(recalcFacturaTotals().importeTotal)) || '0');
-      if (!(amount > 0)) return;
-      var term = parseInt(window.prompt('Plazo', '0') || '0', 10) || 0;
-      var timeUnit = window.prompt('Tiempo', 'dias') || 'dias';
-      state.payments.push({
-        method: state.paymentMethodDraft,
-        label: state.paymentMethodDraft.replace('_', ' '),
-        value: amount,
-        term: term,
-        timeUnit: timeUnit
-      });
-      renderFacturaPayments();
+    $('#factura-open-payment-btn').on('click', openFacturaPaymentModal);
+    $('[data-factura-pay-method]').on('click', function () {
+      setFacturaPaymentDraftMethod(($(this).data('factura-pay-method') || 'cash').toString());
+    });
+    $('#factura-pay-mixed-cash, #factura-pay-mixed-transfer, #factura-pay-mixed-credit').on('input', updateFacturaMixedRemaining);
+    $('#factura-pay-credit-period').on('change', syncFacturaCreditDueDateFromPeriod);
+    $('#factura-pay-mixed-period').on('change', syncFacturaMixedDueDateFromPeriod);
+    $('#factura-payment-cancel-btn').on('click', closeFacturaPaymentModal);
+    $('#factura-payment-apply-btn').on('click', applyFacturaPaymentModal);
+    $('#factura-payment-modal').on('click', function (e) {
+      if (e.target === this) {
+        closeFacturaPaymentModal();
+      }
     });
 
     $('#factura-add-field-btn').on('click', function () {
@@ -1324,6 +1941,9 @@
             (saleTicketId ? (' | Venta registrada: #' + saleTicketId) : '') +
             ' | XML: ' + (files.authorizedXml || files.generatedXml || '')
           );
+          if (printFacturaTicket(res.data || {})) {
+            showNotice('Ticket de factura enviado a impresion.', 'success');
+          }
           setInvoiceSubmitting(false);
         }).fail(function (xhr) {
           setStatus('#factura-issue-status', 'Factura emitida, pero no se pudo registrar la venta en caja: ' + responseErrorMessage(xhr, 'Error desconocido.'), true);
@@ -1338,6 +1958,38 @@
     renderFacturaDetails();
     renderFacturaPayments();
     renderFacturaAdditionalFields();
+
+    $(document).on('keydown.facturaPayment', function (e) {
+      if (e.key === 'F10' && currentSection() === 'emision' && currentView() === 'factura') {
+        e.preventDefault();
+        if ($('#factura-product-search-modal').hasClass('active')) {
+          return;
+        }
+        if (!$('#factura-payment-modal').hasClass('active')) {
+          openFacturaProductSearchModal();
+          return;
+        }
+      }
+      if (e.key === 'F12' && currentSection() === 'emision' && currentView() === 'factura') {
+        e.preventDefault();
+        if (state.pendingPosSale) {
+          return;
+        }
+        if ($('#factura-payment-modal').hasClass('active')) {
+          applyFacturaPaymentModal();
+          return;
+        }
+        openFacturaPaymentModal();
+      }
+      if (e.key === 'Escape' && $('#factura-payment-modal').hasClass('active')) {
+        e.preventDefault();
+        closeFacturaPaymentModal();
+      }
+      if (e.key === 'Escape' && $('#factura-product-search-modal').hasClass('active')) {
+        e.preventDefault();
+        closeFacturaProductSearchModal();
+      }
+    });
   }
 
   function bindDocumentsPage() {
@@ -1355,12 +2007,16 @@
     function renderRows(rows) {
       var q = ($('#facturacion-document-search').val() || '').toString().trim().toLowerCase();
       var $tbody = $('#facturacion-document-body').empty();
+      function envLabel(value) {
+        return (value || '').toString() === '2' ? 'Produccion' : 'Pruebas';
+      }
       rows.filter(function (row) {
-        var haystack = ((row.accessKey || '') + ' ' + (row.secuencial || '') + ' ' + ((row.buyer || {}).razonSocial || '')).toLowerCase();
+        var haystack = ((row.accessKey || '') + ' ' + (row.secuencial || '') + ' ' + ((row.buyer || {}).razonSocial || '') + ' ' + (row.adminTag || '')).toLowerCase();
         return !q || haystack.indexOf(q) >= 0;
       }).forEach(function (row) {
         var files = row.files || {};
         var sri = row.sri || {};
+        var adminTag = (row.adminTag || '').toString().trim();
         var fileList = [files.generatedXml, files.signedXml, files.authorizedXml, files.pdf].filter(Boolean).map(function (item) {
           return escapeHtml((item || '').toString().split(/[\\/]/).pop());
         }).join('<br>');
@@ -1369,6 +2025,8 @@
             '<td>' + escapeHtml((row.issueDate || '').toString()) + '</td>' +
             '<td>' + escapeHtml(row.docName || '') + '</td>' +
             '<td>' + escapeHtml(row.secuencial || '') + '</td>' +
+            '<td>' + escapeHtml(envLabel(row.environment || '')) + '</td>' +
+            '<td>' + escapeHtml(adminTag || '--') + '</td>' +
             '<td>' + escapeHtml(((row.buyer || {}).razonSocial || '')) + '</td>' +
             '<td>' + escapeHtml(row.status || '') + '</td>' +
             '<td>' + escapeHtml(sriStatusLabel(sri.receptionStatus, 'N/D')) + '</td>' +
@@ -1376,11 +2034,36 @@
             '<td>' + escapeHtml(row.accessKey || '') + '</td>' +
             '<td>' + fileList + '</td>' +
             '<td>' +
+              (files.pdf ? '<button class="btn-secondary facturacion-print-pdf" type="button">Imprimir PDF</button> ' : '') +
+              '<button class="btn-secondary facturacion-reprint-ticket" type="button">Reimprimir ticket</button> ' +
               '<button class="btn-secondary facturacion-reprocess" type="button">Reprocesar</button> ' +
               '<button class="btn-secondary facturacion-refresh-auth" type="button">Consultar autorizacion ahora</button>' +
             '</td>' +
           '</tr>'
         );
+        $tr.find('.facturacion-print-pdf').on('click', function () {
+          window.open('../api/facturacion.php?action=document_file&id=' + encodeURIComponent(row.id || '') + '&kind=pdf', '_blank', 'noopener');
+        });
+        $tr.find('.facturacion-reprint-ticket').on('click', function () {
+          var id = (row.id || '').toString();
+          if (!id) {
+            setDocumentStatus('Documento no disponible para reimprimir ticket.', true);
+            return;
+          }
+          setDocumentStatus('Preparando ticket de factura...');
+          apiGet('document', { id: id }).done(function (res) {
+            if (!res.ok) {
+              setDocumentStatus(res.error || 'No se pudo cargar el comprobante para imprimir ticket.', true);
+              return;
+            }
+            if (printFacturaTicket(res.data || row)) {
+              setDocumentStatus('Ticket de factura enviado a impresion.');
+              showNotice('Ticket de factura enviado a impresion.', 'success');
+            }
+          }).fail(function (xhr) {
+            setDocumentStatus(responseErrorMessage(xhr, 'No se pudo cargar el comprobante para imprimir ticket.'), true);
+          });
+        });
         $tr.find('.facturacion-reprocess').on('click', function () {
           if (!requireSecondClickConfirmation('reprocess-' + row.id, '#facturacion-document-status', 'Confirme reprocesar este comprobante.')) return;
           apiPost({ action: 'reprocess_document', id: row.id }).done(function (res) {
@@ -1416,7 +2099,7 @@
         $tbody.append($tr);
       });
       if (!$tbody.children().length) {
-        $tbody.append('<tr><td colspan="10" class="factura-empty">No existen comprobantes</td></tr>');
+        $tbody.append('<tr><td colspan="12" class="factura-empty">No existen comprobantes</td></tr>');
       }
     }
 

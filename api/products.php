@@ -244,6 +244,272 @@ function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
     return 'No';
 }
 
+function normalizeImportedBooleanValue(mixed $raw, bool $default = true): bool
+{
+    if ($raw === null) {
+        return $default;
+    }
+
+    $value = strtolower(trim((string)$raw));
+    if ($value === '') {
+        return $default;
+    }
+
+    if (in_array($value, ['1', 'si', 'sí', 'true', 'yes', 'y'], true)) {
+        return true;
+    }
+    if (in_array($value, ['0', 'no', 'false', 'n'], true)) {
+        return false;
+    }
+
+    return $default;
+}
+
+function normalizeImportedUnitTypeValue(mixed $raw): string
+{
+    $value = strtolower(trim((string)$raw));
+    if ($value === '') {
+        return 'unit';
+    }
+
+    return in_array($value, ['unit', 'bulk', 'package'], true) ? $value : '__invalid__';
+}
+
+function normalizeImportedNumberText(mixed $raw): string
+{
+    $value = trim((string)$raw);
+    if ($value === '') {
+        return '';
+    }
+
+    $value = str_replace(' ', '', $value);
+    if (preg_match('/^-?\d{1,3}(,\d{3})+(\.\d+)?$/', $value) === 1) {
+        return str_replace(',', '', $value);
+    }
+    if (preg_match('/^-?\d+,\d+$/', $value) === 1) {
+        return str_replace(',', '.', $value);
+    }
+
+    return $value;
+}
+
+/** @return array<string, string> */
+function importHeaderAliasMap(): array
+{
+    static $map = null;
+    if (is_array($map)) {
+        return $map;
+    }
+
+    $map = [
+        'codigo' => 'barcode',
+        'barcode' => 'barcode',
+        'descripcion' => 'name',
+        'description' => 'name',
+        'name' => 'name',
+        'pcosto' => 'cost',
+        'cost' => 'cost',
+        'pventa' => 'price',
+        'price' => 'price',
+        'pfinal' => 'finalPrice',
+        'tventa' => 'saleType',
+        'unittype' => 'saleType',
+        'dept' => 'departmentId',
+        'department' => 'departmentId',
+        'provid' => 'providerCode',
+        'provider' => 'providerCode',
+        'mayoreo' => 'wholesalePrice',
+        'wholesaleprice' => 'wholesalePrice',
+        'pmayoreofinal' => 'finalWholesalePrice',
+        'dinventario' => 'stock',
+        'stock' => 'stock',
+        'dinvminimo' => 'minStock',
+        'minstock' => 'minStock',
+        'dinvmaximo' => 'maxStock',
+        'maxstock' => 'maxStock',
+        'porcentaje_ganancia' => 'margin',
+        'margin' => 'margin',
+        'impuestos' => 'iva',
+        'iva' => 'iva',
+        'es_kit' => 'isKit',
+        'iskit' => 'isKit',
+        'usa_inventario' => 'inventoryEnabled',
+        'inventoryenabled' => 'inventoryEnabled',
+    ];
+
+    return $map;
+}
+
+/** @param array<string, mixed> $row
+ *  @return array<string, mixed>
+ */
+function normalizeImportedLegacyProductRow(array $row): array
+{
+    $normalized = [];
+    $aliasMap = importHeaderAliasMap();
+    foreach ($row as $key => $value) {
+        $canonical = $aliasMap[strtolower(trim((string)$key))] ?? null;
+        if ($canonical === null) {
+            continue;
+        }
+        $normalized[$canonical] = $value;
+    }
+
+    $price = normalizeImportedNumberText($normalized['finalPrice'] ?? '');
+    if ($price === '') {
+        $price = normalizeImportedNumberText($normalized['price'] ?? '');
+    }
+
+    $wholesalePrice = normalizeImportedNumberText($normalized['finalWholesalePrice'] ?? '');
+    if ($wholesalePrice === '') {
+        $wholesalePrice = normalizeImportedNumberText($normalized['wholesalePrice'] ?? '');
+    }
+
+    $saleType = strtoupper(trim((string)($normalized['saleType'] ?? 'U')));
+    $isKitRaw = strtolower(trim((string)($normalized['isKit'] ?? '')));
+    $isKit = in_array($isKitRaw, ['1', 'true', 't', 'si', 'sí', 's', 'yes', 'y'], true);
+    $unitType = $isKit ? 'package' : ($saleType === 'D' ? 'bulk' : 'unit');
+
+    return [
+        'barcode' => trim((string)($normalized['barcode'] ?? '')),
+        'name' => trim((string)($normalized['name'] ?? '')),
+        'price' => $price,
+        'cost' => normalizeImportedNumberText($normalized['cost'] ?? ''),
+        'rawSaleType' => $saleType,
+        'rawIsKit' => $isKitRaw,
+        'departmentId' => normalizeImportedNumberText($normalized['departmentId'] ?? ''),
+        'providerCode' => trim((string)($normalized['providerCode'] ?? '')),
+        'stock' => normalizeImportedNumberText($normalized['stock'] ?? ''),
+        'minStock' => normalizeImportedNumberText($normalized['minStock'] ?? ''),
+        'maxStock' => normalizeImportedNumberText($normalized['maxStock'] ?? ''),
+        'unitType' => $unitType,
+        'wholesalePrice' => $wholesalePrice,
+        'margin' => normalizeImportedNumberText($normalized['margin'] ?? ''),
+        'iva' => trim((string)($normalized['iva'] ?? 'No')),
+        'inventoryEnabled' => normalizeImportedBooleanValue($normalized['inventoryEnabled'] ?? null, !$isKit),
+    ];
+}
+
+/**
+ * @param array<int, array<string, mixed>> $products
+ * @return array<string, int>
+ */
+function buildProductBarcodeIndex(array $products): array
+{
+    $barcodeMap = [];
+    foreach ($products as $idx => $product) {
+        $barcode = strtolower(trim((string)($product['barcode'] ?? '')));
+        if ($barcode === '') {
+            continue;
+        }
+        if (array_key_exists($barcode, $barcodeMap)) {
+            errorResponse('Ya existe un producto duplicado con el codigo "' . ($product['barcode'] ?? '') . '" en la base de datos.', 409);
+        }
+        $barcodeMap[$barcode] = $idx;
+    }
+
+    return $barcodeMap;
+}
+
+/**
+ * @param array<int, mixed> $rows
+ * @param array<int, array<string, mixed>>|null $errors
+ * @return array<int, array<string, mixed>>
+ */
+function validateImportedProductRows(array $rows, ?array &$errors = null): array
+{
+    if ($errors === null) {
+        $errors = [];
+    }
+
+    $normalizedRows = [];
+    $seenBarcodes = [];
+
+    foreach ($rows as $index => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $row = normalizeImportedLegacyProductRow($row);
+        $line = $index + 2;
+        $barcode = trim((string)($row['barcode'] ?? ''));
+        $name = trim((string)($row['name'] ?? ''));
+        if ($barcode === '') {
+            $errors[] = ['line' => $line, 'barcode' => $barcode, 'name' => $name, 'error' => 'No tiene codigo de barras.'];
+            continue;
+        }
+        if ($name === '') {
+            $errors[] = ['line' => $line, 'barcode' => $barcode, 'name' => $name, 'error' => 'No tiene nombre de producto.'];
+            continue;
+        }
+
+        $barcodeKey = strtolower($barcode);
+        if (isset($seenBarcodes[$barcodeKey])) {
+            $errors[] = [
+                'line' => $line,
+                'barcode' => $barcode,
+                'name' => $name,
+                'error' => 'Codigo repetido en el archivo (filas ' . $seenBarcodes[$barcodeKey] . ' y ' . $line . ').',
+            ];
+            continue;
+        }
+        $seenBarcodes[$barcodeKey] = $line;
+
+        $numericFields = [
+            'price' => 'precio',
+            'cost' => 'costo',
+            'stock' => 'stock',
+            'minStock' => 'stock minimo',
+            'maxStock' => 'stock maximo',
+            'wholesalePrice' => 'precio por mayor',
+            'margin' => 'porcentaje de ganancia',
+        ];
+        foreach ($numericFields as $field => $label) {
+            $text = trim((string)($row[$field] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            if (!is_numeric($text)) {
+                $errors[] = ['line' => $line, 'barcode' => $barcode, 'name' => $name, 'error' => 'Tiene un ' . $label . ' invalido.'];
+                continue 2;
+            }
+        }
+
+        $rawSaleType = strtoupper(trim((string)($row['rawSaleType'] ?? '')));
+        if ($rawSaleType !== '' && !in_array($rawSaleType, ['U', 'D'], true)) {
+            $errors[] = ['line' => $line, 'barcode' => $barcode, 'name' => $name, 'error' => 'Tiene un TVENTA invalido. Usa U o D.'];
+            continue;
+        }
+
+        $unitType = normalizeImportedUnitTypeValue($row['unitType'] ?? '');
+        if ($unitType === '__invalid__') {
+            $errors[] = ['line' => $line, 'barcode' => $barcode, 'name' => $name, 'error' => 'Tiene un tipo de venta invalido. Usa unit, bulk o package.'];
+            continue;
+        }
+
+        $normalizedRows[] = [
+            'barcode' => $barcode,
+            'name' => $name,
+            'price' => $row['price'] ?? '',
+            'cost' => $row['cost'] ?? '',
+            'departmentId' => trim((string)($row['departmentId'] ?? '')),
+            'department' => trim((string)($row['department'] ?? '')),
+            'stock' => $row['stock'] ?? '',
+            'minStock' => $row['minStock'] ?? '',
+            'maxStock' => $row['maxStock'] ?? '',
+            'unitType' => $unitType,
+            'wholesalePrice' => $row['wholesalePrice'] ?? '',
+            'providerCode' => trim((string)($row['providerCode'] ?? '')),
+            'provider' => trim((string)($row['provider'] ?? '')),
+            'iva' => normalizeIvaValue($row['iva'] ?? 'No', 'No'),
+            'margin' => $row['margin'] ?? '',
+            'inventoryEnabled' => normalizeImportedBooleanValue($row['inventoryEnabled'] ?? null, true),
+        ];
+    }
+
+    return $normalizedRows;
+}
+
 /**
  * @param array<string, mixed> $body
  * @param array<string, mixed>|null $existing
@@ -308,17 +574,19 @@ function normalizeProduct(array $body, ?array $existing = null): array
     $name = trim((string)($body['name'] ?? ($existing['name'] ?? '')));
     $cost = round((float)($body['cost'] ?? ($existing['cost'] ?? 0)), 2);
     $margin = round((float)($body['margin'] ?? ($existing['margin'] ?? 20)), 2);
-    $price = round((float)($body['price'] ?? ($existing['price'] ?? 0)), 2);
+    $price = round((float)($body['finalPrice'] ?? ($body['price'] ?? ($existing['price'] ?? 0))), 2);
     $specialPrice = round((float)($body['specialPrice'] ?? ($existing['specialPrice'] ?? 0)), 2);
-    $wholesalePrice = round((float)($body['wholesalePrice'] ?? ($existing['wholesale']['price'] ?? 0)), 2);
+    $wholesalePrice = round((float)($body['finalWholesalePrice'] ?? ($body['wholesalePrice'] ?? ($existing['wholesale']['price'] ?? 0))), 2);
     $wholesaleMinQty = (int)($body['wholesaleMinQty'] ?? ($existing['wholesale']['minQty'] ?? 6));
     $stock = (int)($body['stock'] ?? ($existing['stock'] ?? 0));
     $minStock = (int)($body['minStock'] ?? ($existing['minStock'] ?? 0));
     $maxStock = (int)($body['maxStock'] ?? ($existing['maxStock'] ?? 0));
     $inventoryEnabled = (bool)($body['inventoryEnabled'] ?? ($existing['inventoryEnabled'] ?? true));
     $department = trim((string)($body['department'] ?? ($existing['department'] ?? 'Sin Departamento')));
+    $departmentId = trim((string)($body['departmentId'] ?? ($existing['departmentId'] ?? '')));
     $unitType = trim((string)($body['unitType'] ?? ($existing['unitType'] ?? 'unit')));
     $provider = trim((string)($body['provider'] ?? ($existing['provider'] ?? '')));
+    $providerCode = trim((string)($body['providerCode'] ?? ($existing['providerCode'] ?? $provider)));
     $iva = normalizeIvaValue($body['iva'] ?? null, (string)($existing['iva'] ?? 'No'));
     $rawPackageItems = $body['packageItems'] ?? ($existing['packageItems'] ?? []);
     $packageItems = [];
@@ -364,6 +632,11 @@ function normalizeProduct(array $body, ?array $existing = null): array
         errorResponse('Precios inválidos', 400);
     }
 
+    $isKitRaw = strtolower(trim((string)($body['isKit'] ?? '')));
+    if (in_array($isKitRaw, ['1', 'true', 't', 'si', 'sí', 's', 'yes', 'y'], true)) {
+        $unitType = 'package';
+    }
+
     if ($unitType === 'package') {
         $inventoryEnabled = false;
     }
@@ -381,8 +654,10 @@ function normalizeProduct(array $body, ?array $existing = null): array
         'maxStock' => $maxStock,
         'inventoryEnabled' => $inventoryEnabled,
         'department' => $department === '' ? 'Sin Departamento' : $department,
+        'departmentId' => is_numeric($departmentId) ? (int)$departmentId : 0,
         'unitType' => in_array($unitType, ['unit', 'bulk', 'package'], true) ? $unitType : 'unit',
         'provider' => $provider,
+        'providerCode' => $providerCode,
         'iva' => $iva,
         'packageItems' => $unitType === 'package' ? $packageItems : [],
     ];
@@ -653,17 +928,13 @@ if ($method === 'POST') {
         if (!is_array($rows) || count($rows) === 0) {
             errorResponse('No hay filas para importar', 400);
         }
+        $failedRows = [];
+        $rows = validateImportedProductRows($rows, $failedRows);
 
         $products = $mode === 'replace' ? [] : readJsonFile($productsPath);
 
         /** @var array<string, int> $barcodeMap */
-        $barcodeMap = [];
-        foreach ($products as $idx => $product) {
-            $barcode = strtolower(trim((string)($product['barcode'] ?? '')));
-            if ($barcode !== '') {
-                $barcodeMap[$barcode] = $idx;
-            }
-        }
+        $barcodeMap = buildProductBarcodeIndex($products);
 
         $created = 0;
         $updated = 0;
@@ -699,12 +970,38 @@ if ($method === 'POST') {
         }
 
         if (dbEnabled()) {
-            if (!legacyWriteProducts($products)) {
-                errorResponse('No se pudo importar productos en la base de datos', 500);
+            foreach ($products as $product) {
+                if (!is_array($product)) {
+                    continue;
+                }
+                $id = (string)($product['id'] ?? '');
+                if ($id === '') {
+                    continue;
+                }
+                $wasInBatch = false;
+                foreach ($rows as $row) {
+                    if (strtolower(trim((string)($row['barcode'] ?? ''))) === strtolower(trim((string)($product['barcode'] ?? '')))) {
+                        $wasInBatch = true;
+                        break;
+                    }
+                }
+                if (!$wasInBatch) {
+                    continue;
+                }
+                if (!legacyUpsertProduct($product)) {
+                    $failedRows[] = [
+                        'line' => null,
+                        'barcode' => (string)($product['barcode'] ?? ''),
+                        'name' => (string)($product['name'] ?? ''),
+                        'error' => 'No se pudo guardar en base de datos.',
+                    ];
+                }
             }
             persistenceMarkDbHealthy('products_import');
-            syncProductsOverlaySnapshot($products);
-            syncProductsBackupFromDb($productsPath);
+            writeProductsSnapshotFast($productsPath, $products);
+            if (!empty($body['finalBatch'])) {
+                syncProductsOverlaySnapshot($products);
+            }
         } else {
             writeJsonFile($productsPath, $products);
             persistenceMarkDbFallback('products_import');
@@ -712,6 +1009,8 @@ if ($method === 'POST') {
         ok([
             'created' => $created,
             'updated' => $updated,
+            'failed' => count($failedRows),
+            'failedRows' => $failedRows,
             'total' => count($products),
             'mode' => $mode,
         ]);

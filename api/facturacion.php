@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../utils/response.php';
 require_once __DIR__ . '/../utils/json_store.php';
 require_once __DIR__ . '/../facturacion/helpers.php';
+require_once __DIR__ . '/../models/legacy_store.php';
 require_once __DIR__ . '/../facturacion/generar_xml.php';
 require_once __DIR__ . '/../facturacion/firmar_xml.php';
 require_once __DIR__ . '/../facturacion/enviar_sri.php';
@@ -23,7 +24,9 @@ $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
 
 function facturacionProductSnapshot(): array
 {
-    $products = readJsonFile(storagePath('products.json'));
+    $products = function_exists('legacyReadProducts')
+        ? legacyReadProducts()
+        : readJsonFile(storagePath('products.json'));
     $services = facturacionLoadProductServices();
     $serviceMap = [];
     foreach ($services as $service) {
@@ -130,7 +133,7 @@ function facturacionFinalizeIfAuthorized(array $document): array
         return $document;
     }
 
-    if ((string)($document['files']['pdf'] ?? '') === '') {
+    if (!facturacionHasDocumentFile($document, 'pdf')) {
         $document = generarPDF($document);
         $document = facturacionPersistDocument($document);
     }
@@ -168,7 +171,14 @@ function facturacionAutoProcessPendingAuthorizations(): void
             $documentId = (string)($document['id'] ?? '');
             try {
                 $document['sri']['authorizationLastCheckAt'] = date('c');
-                $document = consultarAutorizacion($document, ['maxAttempts' => 1, 'sleepMicros' => 0]);
+                $attemptsAuto = (int)($document['sri']['authorizationAttemptsAuto'] ?? 0);
+                $dynamicAttempts = min(20, max(2, 2 + intdiv($attemptsAuto, 2)));
+                $dynamicSleepMicros = min(5000000, 750000 + ($attemptsAuto * 250000));
+                $document = consultarAutorizacion($document, [
+                    'maxAttempts' => $dynamicAttempts,
+                    'sleepMicros' => $dynamicSleepMicros,
+                    'logRawResponse' => true,
+                ]);
                 $document['sri']['authorizationLastCheckAt'] = date('c');
                 $document['sri']['authorizationAttemptsAuto'] = (int)($document['sri']['authorizationAttemptsAuto'] ?? 0) + 1;
                 $document = facturacionPersistDocument($document);
@@ -229,7 +239,9 @@ if ($method === 'GET') {
 
     if ($action === 'invoice_defaults') {
         $customers = readJsonFile(storagePath('customers.json'));
-        $products = readJsonFile(storagePath('products.json'));
+        $products = function_exists('legacyReadProducts')
+            ? legacyReadProducts()
+            : readJsonFile(storagePath('products.json'));
         ok([
             'emitter' => facturacionLoadEmitter(),
             'points' => facturacionLoadPoints(),
@@ -269,7 +281,9 @@ if ($method === 'GET') {
             }
         }
 
-        $products = readJsonFile(storagePath('products.json'));
+        $products = function_exists('legacyReadProducts')
+            ? legacyReadProducts()
+            : readJsonFile(storagePath('products.json'));
         $productMap = [];
         foreach ($products as $product) {
             $productMap[(string)($product['id'] ?? '')] = $product;
@@ -409,6 +423,35 @@ if ($method === 'GET') {
         ok($document);
     }
 
+    if ($action === 'document_file') {
+        $id = trim((string)($_GET['id'] ?? ''));
+        $kind = strtolower(trim((string)($_GET['kind'] ?? 'pdf')));
+        if ($id === '') {
+            errorResponse('Documento requerido', 400);
+        }
+        if (!in_array($kind, ['pdf', 'generatedXml', 'signedXml', 'authorizedXml'], true)) {
+            errorResponse('Tipo de archivo no soportado', 400);
+        }
+        $document = facturacionFindDocument($id);
+        if ($document === null) {
+            errorResponse('Documento no encontrado', 404);
+        }
+        $payload = facturacionReadDocumentFile($document, $kind);
+        if ($payload === null) {
+            errorResponse('Archivo no disponible', 404);
+        }
+
+        $fileName = (string)($payload['fileName'] ?? ($kind === 'pdf' ? 'documento.pdf' : 'documento.xml'));
+        $mimeType = (string)($payload['mimeType'] ?? ($kind === 'pdf' ? 'application/pdf' : 'application/xml'));
+        $content = (string)($payload['content'] ?? '');
+
+        header('Content-Type: ' . $mimeType);
+        header('Content-Length: ' . strlen($content));
+        header('Content-Disposition: inline; filename="' . str_replace('"', '', $fileName) . '"');
+        echo $content;
+        exit;
+    }
+
     if ($action === 'logs') {
         ok(facturacionReadJson('logs.json', []));
     }
@@ -493,6 +536,58 @@ if ($method === 'POST') {
                 }
                 break;
 
+            case 'test_email':
+                $currentSignature = facturacionLoadSignature();
+                $signature = array_merge($currentSignature, [
+                    'emailMode' => in_array((string)($body['emailMode'] ?? ($currentSignature['emailMode'] ?? 'mock')), ['mock', 'brevo_api'], true)
+                        ? (string)($body['emailMode'] ?? ($currentSignature['emailMode'] ?? 'mock'))
+                        : 'mock',
+                    'brevoApiKey' => trim((string)($body['brevoApiKey'] ?? ($currentSignature['brevoApiKey'] ?? ''))),
+                    'brevoEndpoint' => trim((string)($body['brevoEndpoint'] ?? ($currentSignature['brevoEndpoint'] ?? 'https://api.brevo.com/v3/smtp/email'))),
+                    'fromEmail' => trim((string)($body['fromEmail'] ?? ($currentSignature['fromEmail'] ?? ''))),
+                    'fromName' => trim((string)($body['fromName'] ?? ($currentSignature['fromName'] ?? ''))),
+                ]);
+                $toEmail = trim((string)($body['testEmail'] ?? ''));
+                if ($toEmail === '' || !filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+                    errorResponse('Ingrese un correo valido para la prueba.', 400);
+                }
+
+                if (($signature['emailMode'] ?? 'mock') === 'mock') {
+                    ok([
+                        'sent' => false,
+                        'message' => 'El modo de correo esta en Mock / cola interna. Cambielo a Brevo API para enviar un correo real.',
+                        'mode' => 'mock',
+                    ]);
+                }
+
+                $document = [
+                    'id' => 'test-mail-' . date('YmdHis'),
+                    'docName' => 'Prueba de correo',
+                    'secuencial' => date('His'),
+                    'accessKey' => 'PRUEBA-' . date('YmdHis'),
+                    'buyer' => [
+                        'razonSocial' => 'Prueba de correo',
+                        'email' => $toEmail,
+                    ],
+                    'files' => [
+                        'authorizedXml' => '',
+                        'pdf' => '',
+                    ],
+                ];
+
+                $response = facturacionBrevoSend($signature, $document, $toEmail);
+                facturacionAppendLog('info', 'Correo de prueba enviado por Brevo API', [
+                    'to' => $toEmail,
+                    'response' => $response,
+                ]);
+                ok([
+                    'sent' => true,
+                    'message' => 'Correo de prueba enviado correctamente a ' . $toEmail . '.',
+                    'mode' => 'brevo_api',
+                    'response' => $response,
+                ]);
+                break;
+
             case 'save_point':
                 ok(facturacionSavePoint($body));
                 break;
@@ -520,7 +615,7 @@ if ($method === 'POST') {
                 $document = facturacionPersistDocument($document);
                 $document = enviarSRI($document);
                 $document = facturacionPersistDocument($document);
-                $document = consultarAutorizacion($document);
+                $document = consultarAutorizacion($document, ['maxAttempts' => 3, 'sleepMicros' => 750000, 'logRawResponse' => true]);
                 $document = facturacionPersistDocument($document);
                 if ((string)($document['sri']['authorizationStatus'] ?? '') === 'AUT' || (string)($document['status'] ?? '') === 'authorized') {
                     $document = generarPDF($document);
@@ -590,8 +685,7 @@ if ($method === 'POST') {
                     errorResponse('Documento no encontrado', 404);
                 }
 
-                $signedXml = (string)($document['files']['signedXml'] ?? '');
-                if ($signedXml === '' || !file_exists($signedXml)) {
+                if (!facturacionHasDocumentFile($document, 'signedXml')) {
                     throw new RuntimeException('No existe XML firmado para consultar autorizacion.');
                 }
 
@@ -601,7 +695,7 @@ if ($method === 'POST') {
 
                 $currentAuth = (string)($document['sri']['authorizationStatus'] ?? '');
                 if ($currentAuth === 'AUT') {
-                    if ((string)($document['files']['pdf'] ?? '') === '') {
+                    if (!facturacionHasDocumentFile($document, 'pdf')) {
                         $document = generarPDF($document);
                         $document = facturacionPersistDocument($document);
                     }

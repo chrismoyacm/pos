@@ -17,6 +17,20 @@ function facturacionSignatureRandom(string $prefix, int $digits = 6): string
     return $prefix . str_pad((string) random_int(0, $max), $digits, '0', STR_PAD_LEFT);
 }
 
+function facturacionSignatureGuidLike(string $prefix): string
+{
+    $bytes = random_bytes(16);
+    $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
+    $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
+    $hex = bin2hex($bytes);
+    $guid = substr($hex, 0, 8)
+        . '-' . substr($hex, 8, 4)
+        . '-' . substr($hex, 12, 4)
+        . '-' . substr($hex, 16, 4)
+        . '-' . substr($hex, 20, 12);
+    return $prefix . $guid;
+}
+
 function facturacionPemBody(string $pem): string
 {
     return preg_replace('/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/m', '', $pem) ?? '';
@@ -70,7 +84,7 @@ function facturacionFormatDn(array|string $dn): string
         array_unshift($parts, $key . '=' . $value);
     }
 
-    return implode(',', $parts);
+    return implode(', ', $parts);
 }
 
 function facturacionCreateDigestValue(string $binary, string $algorithm = 'sha1'): string
@@ -127,6 +141,86 @@ function facturacionRemoveEmptyTransforms(DOMElement $reference): void
     }
 }
 
+function facturacionRemoveAllTransforms(DOMElement $reference): void
+{
+    foreach (iterator_to_array($reference->childNodes) as $child) {
+        if ($child instanceof DOMElement && $child->localName === 'Transforms') {
+            $reference->removeChild($child);
+            return;
+        }
+    }
+}
+
+function facturacionStripNamespaceDeclarations(DOMElement $node, string $prefix): void
+{
+    $xmlnsNamespace = 'http://www.w3.org/2000/xmlns/';
+    if ($node->hasAttributeNS($xmlnsNamespace, $prefix)) {
+        $node->removeAttributeNS($xmlnsNamespace, $prefix);
+    }
+    foreach (iterator_to_array($node->childNodes) as $child) {
+        if ($child instanceof DOMElement) {
+            facturacionStripNamespaceDeclarations($child, $prefix);
+        }
+    }
+}
+
+function facturacionStripWhitespaceTextNodes(DOMNode $node): void
+{
+    $toRemove = [];
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMText) {
+            if (trim($child->nodeValue ?? '') === '') {
+                $toRemove[] = $child;
+            }
+            continue;
+        }
+        if ($child instanceof DOMNode) {
+            facturacionStripWhitespaceTextNodes($child);
+        }
+    }
+    foreach ($toRemove as $child) {
+        $node->removeChild($child);
+    }
+}
+
+function facturacionRecalculateComprobanteDigest(DOMDocument $dom, DOMElement $factura, DOMElement $signatureNode, DOMElement $referenceNode): void
+{
+    $digestValueNode = null;
+    foreach ($referenceNode->childNodes as $child) {
+        if ($child instanceof DOMElement && $child->localName === 'DigestValue') {
+            $digestValueNode = $child;
+            break;
+        }
+    }
+    if (!$digestValueNode instanceof DOMElement) {
+        throw new RuntimeException('No se pudo ubicar DigestValue de la referencia al comprobante.');
+    }
+
+    $clone = $dom->cloneNode(true);
+    if (!$clone instanceof DOMDocument) {
+        throw new RuntimeException('No se pudo clonar el XML para recalcular el digest del comprobante.');
+    }
+
+    $cloneXPath = new DOMXPath($clone);
+    $cloneXPath->registerNamespace('ds', XMLSecurityDSig::XMLDSIGNS);
+    $cloneFactura = $clone->documentElement;
+    if (!$cloneFactura instanceof DOMElement) {
+        throw new RuntimeException('No se pudo ubicar la factura clonada para recalcular el digest.');
+    }
+
+    $cloneSignature = $cloneXPath->query('./ds:Signature', $cloneFactura)?->item(0);
+    if ($cloneSignature instanceof DOMElement) {
+        $cloneFactura->removeChild($cloneSignature);
+    }
+
+    $canonical = $cloneFactura->C14N(false, false);
+    if ($canonical === false) {
+        throw new RuntimeException('No se pudo canonicalizar el comprobante para recalcular su digest.');
+    }
+
+    $digestValueNode->nodeValue = base64_encode(sha1($canonical, true));
+}
+
 function facturacionAppendRsaKeyValue(XMLSecurityDSig $dsig, string $privateKeyPem): void
 {
     $resource = openssl_pkey_get_private($privateKeyPem);
@@ -157,28 +251,32 @@ function facturacionAppendRsaKeyValue(XMLSecurityDSig $dsig, string $privateKeyP
 
 function facturacionBuildSignedProperties(
     DOMDocument $doc,
+    DOMElement $objectNode,
     string $signatureId,
+    string $qualifyingPropertiesId,
     string $signedPropertiesId,
     string $comprobanteReferenceId,
     string $certificatePem,
     array $certificateData,
     string $signingTime
 ): DOMElement {
-    $etsiNs = 'http://uri.etsi.org/01903/v1.3.2#';
+    $xadesNs = 'http://uri.etsi.org/01903/v1.3.2#';
     $dsNs = XMLSecurityDSig::XMLDSIGNS;
 
-    $qualifying = $doc->createElementNS($etsiNs, 'etsi:QualifyingProperties');
+    $qualifying = facturacionCreateElement($doc, $objectNode, $xadesNs, 'xades:QualifyingProperties');
+    $qualifying->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xades', $xadesNs);
+    $qualifying->setAttribute('Id', $qualifyingPropertiesId);
     $qualifying->setAttribute('Target', '#' . $signatureId);
 
-    $signedProperties = facturacionCreateElement($doc, $qualifying, $etsiNs, 'etsi:SignedProperties');
+    $signedProperties = facturacionCreateElement($doc, $qualifying, $xadesNs, 'xades:SignedProperties');
     $signedProperties->setAttribute('Id', $signedPropertiesId);
 
-    $signedSignatureProperties = facturacionCreateElement($doc, $signedProperties, $etsiNs, 'etsi:SignedSignatureProperties');
-    facturacionCreateElement($doc, $signedSignatureProperties, $etsiNs, 'etsi:SigningTime', $signingTime);
+    $signedSignatureProperties = facturacionCreateElement($doc, $signedProperties, $xadesNs, 'xades:SignedSignatureProperties');
+    facturacionCreateElement($doc, $signedSignatureProperties, $xadesNs, 'xades:SigningTime', $signingTime);
 
-    $signingCertificate = facturacionCreateElement($doc, $signedSignatureProperties, $etsiNs, 'etsi:SigningCertificate');
-    $certNode = facturacionCreateElement($doc, $signingCertificate, $etsiNs, 'etsi:Cert');
-    $certDigest = facturacionCreateElement($doc, $certNode, $etsiNs, 'etsi:CertDigest');
+    $signingCertificate = facturacionCreateElement($doc, $signedSignatureProperties, $xadesNs, 'xades:SigningCertificate');
+    $certNode = facturacionCreateElement($doc, $signingCertificate, $xadesNs, 'xades:Cert');
+    $certDigest = facturacionCreateElement($doc, $certNode, $xadesNs, 'xades:CertDigest');
     $digestMethod = facturacionCreateElement($doc, $certDigest, $dsNs, 'ds:DigestMethod');
     $digestMethod->setAttribute('Algorithm', XMLSecurityDSig::SHA1);
 
@@ -189,7 +287,7 @@ function facturacionBuildSignedProperties(
     }
     facturacionCreateElement($doc, $certDigest, $dsNs, 'ds:DigestValue', facturacionCreateDigestValue($certificateDer));
 
-    $issuerSerial = facturacionCreateElement($doc, $certNode, $etsiNs, 'etsi:IssuerSerial');
+    $issuerSerial = facturacionCreateElement($doc, $certNode, $xadesNs, 'xades:IssuerSerial');
     $issuerName = facturacionFormatDn($certificateData['issuer'] ?? []);
     $serialNumber = trim((string) ($certificateData['serialNumber'] ?? ''));
     if ($serialNumber === '') {
@@ -198,13 +296,13 @@ function facturacionBuildSignedProperties(
     facturacionCreateElement($doc, $issuerSerial, $dsNs, 'ds:X509IssuerName', $issuerName);
     facturacionCreateElement($doc, $issuerSerial, $dsNs, 'ds:X509SerialNumber', $serialNumber);
 
-    $signedDataObjectProperties = facturacionCreateElement($doc, $signedProperties, $etsiNs, 'etsi:SignedDataObjectProperties');
-    $dataObjectFormat = facturacionCreateElement($doc, $signedDataObjectProperties, $etsiNs, 'etsi:DataObjectFormat');
+    $signedDataObjectProperties = facturacionCreateElement($doc, $signedProperties, $xadesNs, 'xades:SignedDataObjectProperties');
+    $dataObjectFormat = facturacionCreateElement($doc, $signedDataObjectProperties, $xadesNs, 'xades:DataObjectFormat');
     $dataObjectFormat->setAttribute('ObjectReference', '#' . $comprobanteReferenceId);
-    facturacionCreateElement($doc, $dataObjectFormat, $etsiNs, 'etsi:Description', 'contenido comprobante');
-    facturacionCreateElement($doc, $dataObjectFormat, $etsiNs, 'etsi:MimeType', 'text/xml');
+    facturacionCreateElement($doc, $dataObjectFormat, $xadesNs, 'xades:MimeType', 'text/xml');
+    facturacionCreateElement($doc, $dataObjectFormat, $xadesNs, 'xades:Encoding', 'UTF-8');
 
-    return $qualifying;
+    return $signedProperties;
 }
 
 function facturacionPrepareRealSignature(string $source, string $certificatePath, string $certificatePassword): array
@@ -240,16 +338,10 @@ function facturacionPrepareRealSignature(string $source, string $certificatePath
 function firmarXML(array $document): array
 {
     $signature = facturacionLoadSignature();
-    $source = (string) ($document['files']['generatedXml'] ?? '');
-    if ($source === '' || !file_exists($source)) {
+    $source = facturacionMaterializeDocumentFile($document, 'generatedXml');
+    if ($source === '') {
         throw new RuntimeException('Primero debe generarse el XML antes de firmarlo.');
     }
-
-    $signedDir = facturacionStoragePath('xml/firmados');
-    if (!is_dir($signedDir)) {
-        mkdir($signedDir, 0777, true);
-    }
-    $target = $signedDir . DIRECTORY_SEPARATOR . (string) $document['accessKey'] . '.xml';
 
     $certificatePath = trim((string) ($signature['certificatePath'] ?? ''));
     $certificatePassword = (string) ($signature['certificatePassword'] ?? '');
@@ -266,14 +358,15 @@ function firmarXML(array $document): array
         $certificatePassword
     );
 
-    $signatureId = facturacionSignatureRandom('Signature');
-    $signedInfoId = facturacionSignatureRandom('Signature-SignedInfo');
-    $signatureValueId = facturacionSignatureRandom('SignatureValue');
-    $keyInfoId = facturacionSignatureRandom('Certificate');
-    $signedPropertiesId = $signatureId . '-' . facturacionSignatureRandom('SignedProperties');
-    $signedPropertiesReferenceId = facturacionSignatureRandom('SignedPropertiesID');
-    $comprobanteReferenceId = facturacionSignatureRandom('Reference-ID-');
-    $objectId = $signatureId . '-' . facturacionSignatureRandom('Object');
+    $signatureId = facturacionSignatureGuidLike('Signature-');
+    $signatureValueId = 'SignatureValue-' . substr($signatureId, strlen('Signature-'));
+    $keyInfoId = 'KeyInfoId-' . $signatureId;
+    $signedPropertiesId = 'SignedProperties-' . $signatureId;
+    $qualifyingPropertiesId = 'QualifyingProperties-' . substr($signatureId, strlen('Signature-'));
+    $signedPropertiesReferenceId = facturacionSignatureGuidLike('Reference-');
+    $keyInfoReferenceId = 'ReferenceKeyInfo';
+    $comprobanteReferenceId = facturacionSignatureGuidLike('Reference-');
+    $objectId = 'XadesObjectId-' . substr($signatureId, strlen('Signature-'));
     $signingTime = date('c');
 
     $dsig = new XMLSecurityDSig('ds');
@@ -290,7 +383,6 @@ function firmarXML(array $document): array
         throw new RuntimeException('No se pudo crear el nodo de firma XML.');
     }
     $signatureNode->setAttribute('Id', $signatureId);
-    $signatureNode->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:etsi', 'http://uri.etsi.org/01903/v1.3.2#');
 
     $xpath = new DOMXPath($dom);
     $xpath->registerNamespace('ds', XMLSecurityDSig::XMLDSIGNS);
@@ -299,52 +391,14 @@ function firmarXML(array $document): array
     if (!$signedInfoNode instanceof DOMElement) {
         throw new RuntimeException('No se pudo crear SignedInfo para la firma XML.');
     }
-    $signedInfoNode->setAttribute('Id', $signedInfoId);
 
-    $dsig->add509Cert($certificatePem, true, false, ['issuerSerial' => true]);
+    $dsig->add509Cert($certificatePem, true, false, ['issuerSerial' => false]);
+    facturacionAppendRsaKeyValue($dsig, $privateKeyPem);
     $keyInfoNode = $xpath->query('./ds:KeyInfo', $signatureNode)?->item(0);
     if (!$keyInfoNode instanceof DOMElement) {
         throw new RuntimeException('No se pudo crear KeyInfo para la firma XML.');
     }
     $keyInfoNode->setAttribute('Id', $keyInfoId);
-    facturacionAppendRsaKeyValue($dsig, $privateKeyPem);
-
-    $qualifyingProperties = facturacionBuildSignedProperties(
-        $dom,
-        $signatureId,
-        $signedPropertiesId,
-        $comprobanteReferenceId,
-        $certificatePem,
-        $certificateData,
-        $signingTime
-    );
-    $objectNode = $dsig->addObject($qualifyingProperties);
-    $objectNode->setAttribute('Id', $objectId);
-
-    $signedPropertiesNode = $xpath->query('.//*[local-name()="SignedProperties"]', $objectNode)?->item(0);
-    if (!$signedPropertiesNode instanceof DOMElement) {
-        throw new RuntimeException('No se pudo crear el nodo SignedProperties para la firma XAdES-BES.');
-    }
-
-    $dsig->addReference(
-        $signedPropertiesNode,
-        XMLSecurityDSig::SHA1,
-        null,
-        ['overwrite' => false, 'id_name' => 'Id']
-    );
-    $signedPropertiesReference = facturacionFindLastReference($dsig);
-    $signedPropertiesReference->setAttribute('Id', $signedPropertiesReferenceId);
-    $signedPropertiesReference->setAttribute('Type', 'http://uri.etsi.org/01903#SignedProperties');
-    facturacionRemoveEmptyTransforms($signedPropertiesReference);
-
-    $dsig->addReference(
-        $keyInfoNode,
-        XMLSecurityDSig::SHA1,
-        null,
-        ['overwrite' => false, 'id_name' => 'Id']
-    );
-    $keyInfoReference = facturacionFindLastReference($dsig);
-    facturacionRemoveEmptyTransforms($keyInfoReference);
 
     $dsig->addReference(
         $factura,
@@ -355,6 +409,47 @@ function firmarXML(array $document): array
     $comprobanteReference = facturacionFindLastReference($dsig);
     $comprobanteReference->setAttribute('Id', $comprobanteReferenceId);
 
+    $dsig->addReference(
+        $keyInfoNode,
+        XMLSecurityDSig::SHA1,
+        null,
+        ['overwrite' => false, 'id_name' => 'Id']
+    );
+    $keyInfoReference = facturacionFindLastReference($dsig);
+    $keyInfoReference->setAttribute('Id', $keyInfoReferenceId);
+    facturacionRemoveAllTransforms($keyInfoReference);
+
+    $objectNode = $dsig->addObject('');
+    $objectNode->setAttribute('Id', $objectId);
+    while ($objectNode->firstChild !== null) {
+        $objectNode->removeChild($objectNode->firstChild);
+    }
+
+    $signedPropertiesNode = facturacionBuildSignedProperties(
+        $dom,
+        $objectNode,
+        $signatureId,
+        $qualifyingPropertiesId,
+        $signedPropertiesId,
+        $comprobanteReferenceId,
+        $certificatePem,
+        $certificateData,
+        $signingTime
+    );
+
+    facturacionStripWhitespaceTextNodes($signatureNode);
+    facturacionRecalculateComprobanteDigest($dom, $factura, $signatureNode, $comprobanteReference);
+
+    $dsig->addReference(
+        $signedPropertiesNode,
+        XMLSecurityDSig::SHA1,
+        null,
+        ['overwrite' => false, 'id_name' => 'Id']
+    );
+    $signedPropertiesReference = facturacionFindLastReference($dsig);
+    $signedPropertiesReference->setAttribute('Type', 'http://uri.etsi.org/01903#SignedProperties');
+    facturacionRemoveAllTransforms($signedPropertiesReference);
+
     $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA1, ['type' => 'private']);
     $key->loadKey($privateKeyPem, false);
     $dsig->sign($key);
@@ -364,9 +459,11 @@ function firmarXML(array $document): array
         $signatureValueNode->setAttribute('Id', $signatureValueId);
     }
 
-    facturacionSaveSignedXml($dom, $target);
-
-    $document['files']['signedXml'] = $target;
+    $signedXml = $dom->saveXML();
+    if (!is_string($signedXml) || trim($signedXml) === '') {
+        throw new RuntimeException('No se pudo serializar el XML firmado.');
+    }
+    $document = facturacionStoreDocumentFile($document, 'signedXml', $signedXml);
     $document['status'] = 'signed';
     $document['updatedAt'] = date('c');
     facturacionAppendLog('info', 'XML firmado con XAdES-BES', [
@@ -376,48 +473,4 @@ function firmarXML(array $document): array
     ]);
 
     return $document;
-}
-
-function facturacionSaveSignedXml(DOMDocument $dom, string $target): void
-{
-    $dir = dirname($target);
-    if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
-        throw new RuntimeException('No se pudo crear la carpeta para el XML firmado: ' . $dir);
-    }
-
-    if (!is_writable($dir)) {
-        throw new RuntimeException('La carpeta de XML firmados no tiene permisos de escritura: ' . $dir);
-    }
-
-    $tempPath = tempnam($dir, 'signed-');
-    if ($tempPath === false) {
-        throw new RuntimeException('No se pudo crear archivo temporal para el XML firmado en: ' . $dir);
-    }
-
-    try {
-        if ($dom->save($tempPath) === false || !file_exists($tempPath) || filesize($tempPath) === 0) {
-            throw new RuntimeException('No se pudo escribir el contenido del XML firmado temporal.');
-        }
-
-        if (file_exists($target) && !is_writable($target)) {
-            throw new RuntimeException('El archivo XML firmado existente no tiene permisos de escritura: ' . $target);
-        }
-
-        if (@rename($tempPath, $target)) {
-            $tempPath = '';
-            return;
-        }
-
-        if (@copy($tempPath, $target)) {
-            @unlink($tempPath);
-            $tempPath = '';
-            return;
-        }
-
-        throw new RuntimeException('No se pudo mover el XML firmado al destino final: ' . $target);
-    } finally {
-        if ($tempPath !== '' && file_exists($tempPath)) {
-            @unlink($tempPath);
-        }
-    }
 }

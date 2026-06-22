@@ -24,6 +24,8 @@ $titles = [
           <th>Fecha</th>
           <th>Tipo</th>
           <th>Secuencial</th>
+          <th>Ambiente</th>
+          <th>Marca</th>
           <th>Cliente</th>
           <th>Estado interno</th>
           <th>Recepcion SRI</th>
@@ -34,7 +36,7 @@ $titles = [
         </tr>
       </thead>
       <tbody id="facturacion-document-body">
-        <tr><td colspan="10" class="factura-empty">No existen comprobantes</td></tr>
+        <tr><td colspan="12" class="factura-empty">No existen comprobantes</td></tr>
       </tbody>
     </table>
   </div>

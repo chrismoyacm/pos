@@ -10,7 +10,7 @@ function generarXMLFactura(array $document): array
 
     $factura = $dom->createElement('factura');
     $factura->setAttribute('id', 'comprobante');
-    $factura->setAttribute('version', '2.1.0');
+    $factura->setAttribute('version', '1.0.0');
     $dom->appendChild($factura);
 
     $infoTributaria = $dom->createElement('infoTributaria');
@@ -64,6 +64,7 @@ function generarXMLFactura(array $document): array
         $totalImpuesto->appendChild($dom->createElement('codigo', (string)($tax['codigo'] ?? '2')));
         $totalImpuesto->appendChild($dom->createElement('codigoPorcentaje', (string)($tax['codigoPorcentaje'] ?? '0')));
         $totalImpuesto->appendChild($dom->createElement('baseImponible', facturacionFormatDecimal((float)($tax['baseImponible'] ?? 0))));
+        $totalImpuesto->appendChild($dom->createElement('tarifa', facturacionFormatDecimal((float)($tax['tarifa'] ?? 0))));
         $totalImpuesto->appendChild($dom->createElement('valor', facturacionFormatDecimal((float)($tax['valor'] ?? 0))));
         $totalConImpuestos->appendChild($totalImpuesto);
     }
@@ -77,11 +78,17 @@ function generarXMLFactura(array $document): array
         $pagoNode = $dom->createElement('pago');
         $pagoNode->appendChild($dom->createElement('formaPago', (string)($payment['formaPago'] ?? '01')));
         $pagoNode->appendChild($dom->createElement('total', facturacionFormatDecimal((float)($payment['total'] ?? 0))));
-        $pagoNode->appendChild($dom->createElement('plazo', (string)($payment['plazo'] ?? 0)));
-        $pagoNode->appendChild($dom->createElement('unidadTiempo', (string)($payment['unidadTiempo'] ?? 'dias')));
+        $plazo = (int)($payment['plazo'] ?? 0);
+        $unidadTiempo = trim((string)($payment['unidadTiempo'] ?? 'dias'));
+        if ($plazo > 0) {
+            $pagoNode->appendChild($dom->createElement('plazo', (string)$plazo));
+            $pagoNode->appendChild($dom->createElement('unidadTiempo', $unidadTiempo !== '' ? $unidadTiempo : 'dias'));
+        }
         $pagosNode->appendChild($pagoNode);
     }
     $infoFactura->appendChild($pagosNode);
+    $infoFactura->appendChild($dom->createElement('valorRetIva', '0.00'));
+    $infoFactura->appendChild($dom->createElement('valorRetRenta', '0.00'));
 
     $detallesNode = $dom->createElement('detalles');
     foreach (($document['details'] ?? []) as $detail) {
@@ -118,14 +125,12 @@ function generarXMLFactura(array $document): array
         $factura->appendChild($infoAdicional);
     }
 
-    $xmlDir = facturacionStoragePath('xml/generados');
-    if (!is_dir($xmlDir)) {
-        mkdir($xmlDir, 0777, true);
+    $xml = $dom->saveXML();
+    if (!is_string($xml) || trim($xml) === '') {
+        throw new RuntimeException('No se pudo generar el XML de la factura.');
     }
-    $path = $xmlDir . DIRECTORY_SEPARATOR . (string)$document['accessKey'] . '.xml';
-    $dom->save($path);
 
-    $document['files']['generatedXml'] = $path;
+    $document = facturacionStoreDocumentFile($document, 'generatedXml', $xml);
     $document['status'] = 'xml_generated';
     $document['updatedAt'] = date('c');
 

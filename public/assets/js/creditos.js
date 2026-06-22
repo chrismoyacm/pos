@@ -6,7 +6,7 @@
   function isReportePage() { return $('#cred-reporte-tbody').length > 0; }
 
   function escapeHtml(str) {
-    return (str || '').toString().replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+    return (str || '').toString().replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
   }
 
   function formatMoney(n) {
@@ -17,11 +17,78 @@
     customers: [],
     selectedId: null,
     reporteRows: [],
-    reportePage: 1,
-    reportePageSize: 15,
-    reporteTotal: 0,
-    reporteTotalPages: 1
+    reporteSortBy: 'balance',
+    reporteSortDir: 'desc'
   };
+
+  function reporteSortValue(row, key) {
+    const current = row || {};
+    switch ((key || '').toString()) {
+      case 'number':
+        return (current.number || '').toString().toLowerCase();
+      case 'nameAddress':
+        return (current.nameAddress || '').toString().toLowerCase();
+      case 'phone':
+        return (current.phone || '').toString().toLowerCase();
+      case 'creditLimit':
+        return Number(current.creditLimit || 0);
+      case 'balance':
+        return Number(current.balance || 0);
+      case 'paymentDate':
+        return Date.parse(current.paymentDate || '') || 0;
+      case 'lastPayment':
+        return Date.parse(current.lastPayment || '') || 0;
+      default:
+        return Number(current.balance || 0);
+    }
+  }
+
+  function compareReporteRows(a, b) {
+    const key = state.reporteSortBy || 'balance';
+    const dir = state.reporteSortDir === 'asc' ? 1 : -1;
+    const aValue = reporteSortValue(a, key);
+    const bValue = reporteSortValue(b, key);
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      if (aValue === bValue) return 0;
+      return aValue > bValue ? dir : -dir;
+    }
+
+    const cmp = aValue.toString().localeCompare(bValue.toString(), 'es', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+    if (cmp === 0) return 0;
+    return cmp > 0 ? dir : -dir;
+  }
+
+  function updateReporteSortHeaders() {
+    $('[data-cred-reporte-sort]').each(function () {
+      const $th = $(this);
+      const sortKey = ($th.data('cred-reporte-sort') || '').toString();
+      let label = ($th.data('cred-reporte-sort-label') || '').toString();
+      if (!label) {
+        label = $th.text().replace(/\s+[↑↓]$/, '').trim();
+        $th.data('cred-reporte-sort-label', label);
+      }
+      const active = sortKey === state.reporteSortBy;
+      const arrow = active ? (state.reporteSortDir === 'asc' ? ' ↑' : ' ↓') : '';
+      $th.text(label + arrow);
+      $th.toggleClass('is-sort-active', active);
+    });
+  }
+
+  function toggleReporteSort(sortBy) {
+    const nextKey = (sortBy || '').toString();
+    if (!nextKey) return;
+    if (state.reporteSortBy === nextKey) {
+      state.reporteSortDir = state.reporteSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.reporteSortBy = nextKey;
+      state.reporteSortDir = nextKey === 'paymentDate' || nextKey === 'lastPayment' || nextKey === 'balance' ? 'desc' : 'asc';
+    }
+    renderReporte(state.reporteRows);
+  }
 
   function setAcceptEnabled() {
     $('#cred-accept').prop('disabled', !state.selectedId);
@@ -52,7 +119,10 @@
 
   function renderReporte(rows) {
     const $tbody = $('#cred-reporte-tbody').empty();
-    const safeRows = Array.isArray(rows) ? rows : [];
+    const safeRows = Array.isArray(rows) ? rows.slice() : [];
+    safeRows.sort(compareReporteRows);
+    updateReporteSortHeaders();
+
     safeRows.forEach(r => {
       const nameAddress = (r?.nameAddress || '').toString();
       const parts = nameAddress.split('\n');
@@ -85,49 +155,16 @@
     if (safeRows.length === 0) {
       $tbody.append('<tr><td colspan="7" class="muted">No hay saldos para mostrar.</td></tr>');
     }
-
-    renderReportePager();
   }
 
-  function renderReportePager() {
-    const $pager = $('#cred-reporte-pager').empty();
-    if ($pager.length === 0 || state.reporteTotalPages <= 1) {
-      return;
-    }
-
-    const $prev = $('<button type="button" class="btn-secondary">Anterior</button>');
-    const $next = $('<button type="button" class="btn-secondary">Siguiente</button>');
-    $prev.prop('disabled', state.reportePage <= 1);
-    $next.prop('disabled', state.reportePage >= state.reporteTotalPages);
-
-    $prev.on('click', function () {
-      if (state.reportePage <= 1) return;
-      loadReporte(state.reportePage - 1);
-    });
-
-    $next.on('click', function () {
-      if (state.reportePage >= state.reporteTotalPages) return;
-      loadReporte(state.reportePage + 1);
-    });
-
-    $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + state.reportePage + ' de ' + state.reporteTotalPages + ' · ' + state.reporteTotal + ' registros</span>');
-    $pager.append($next);
-  }
-
-  function loadReporte(page) {
-    const requestedPage = Number.isFinite(Number(page)) ? Math.max(1, Number(page)) : state.reportePage;
+  function loadReporte() {
     return $.getJSON('../api/creditos_reporte_saldos.php', {
-      page: requestedPage,
-      pageSize: state.reportePageSize
+      all: 1
     }).done(res => {
       const data = (res && res.ok) ? res.data : null;
       const total = data?.totalPending ?? 0;
       $('#cred-total-pendiente').text(formatMoney(total));
       state.reporteRows = Array.isArray(data?.rows) ? data.rows : [];
-      state.reporteTotal = Number(data?.pagination?.total || state.reporteRows.length || 0);
-      state.reporteTotalPages = Number(data?.pagination?.totalPages || 1);
-      state.reportePage = Number(data?.pagination?.page || requestedPage || 1);
       renderReporte(state.reporteRows);
     });
   }
@@ -176,7 +213,10 @@
       // ya estamos en Reporte de Saldos
     });
     $('#cred-print').on('click', function () {
-      // Solo el botón por ahora (sin funcionalidad)
+      // Solo el boton por ahora (sin funcionalidad)
+    });
+    $('[data-cred-reporte-sort]').on('click', function () {
+      toggleReporteSort(($(this).data('cred-reporte-sort') || '').toString());
     });
   }
 
@@ -189,7 +229,7 @@
     }
     if (isReportePage()) {
       bindReporte();
-      loadReporte(1);
+      loadReporte();
     }
   });
 })();

@@ -13,8 +13,8 @@ function facturacionReceptionWsdl(string $ambiente): string
 function enviarSRI(array $document): array
 {
     $signature = facturacionLoadSignature();
-    $signedPath = (string)($document['files']['signedXml'] ?? '');
-    if ($signedPath === '' || !file_exists($signedPath)) {
+    $signedPath = facturacionMaterializeDocumentFile($document, 'signedXml');
+    if ($signedPath === '') {
         throw new RuntimeException('Primero debe firmarse el XML.');
     }
 
@@ -42,34 +42,39 @@ function enviarSRI(array $document): array
         facturacionReceptionWsdl((string)($document['environment'] ?? '1'))
     );
 
-    $xml = file_get_contents($signedPath);
+    $xmlPayload = facturacionReadDocumentFile($document, 'signedXml');
+    $xml = $xmlPayload['content'] ?? null;
     if ($xml === false) {
         throw new RuntimeException('No se pudo leer el XML firmado.');
     }
+    if (!is_string($xml) || $xml === '') {
+        throw new RuntimeException('El XML firmado no esta disponible para enviar al SRI.');
+    }
 
-    $response = $soap->validarComprobante(['xml' => base64_encode($xml)]);
+    $response = $soap->validarComprobante(['xml' => $xml]);
     $responseArray = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
     if (!is_array($responseArray)) {
         $responseArray = [];
     }
     $root = (array)($responseArray['RespuestaRecepcionComprobante'] ?? []);
-    $estado = strtoupper(trim((string)($root['estado'] ?? 'RECIBIDA')));
+    $lastRequestXml = method_exists($soap, '__getLastRequest') ? (string)$soap->__getLastRequest() : '';
+    $lastResponseXml = method_exists($soap, '__getLastResponse') ? (string)$soap->__getLastResponse() : '';
+
+    $estadoRaw = trim((string)($root['estado'] ?? ''));
+    $estado = strtoupper($estadoRaw);
 
     $document['sri']['receptionStatus'] = $estado;
     $document['sri']['response'] = $responseArray;
-    $document['status'] = $estado === 'RECIBIDA' ? 'sent' : 'error';
+    if ($lastRequestXml !== '') {
+        $document['sri']['receptionLastRequestXml'] = $lastRequestXml;
+    }
+    if ($lastResponseXml !== '') {
+        $document['sri']['receptionLastResponseXml'] = $lastResponseXml;
+    }
     $document['updatedAt'] = date('c');
 
-    if ($estado === 'RECIBIDA') {
-        facturacionAppendLog('info', 'Comprobante recibido por SRI', [
-            'documentId' => $document['id'] ?? null,
-            'accessKey' => $document['accessKey'] ?? null,
-        ]);
-        return $document;
-    }
-
-    $mensajes = [];
     $comprobantes = facturacionEnsureList($root['comprobantes']['comprobante'] ?? []);
+    $mensajes = [];
     foreach ($comprobantes as $comprobante) {
         if (!is_array($comprobante)) {
             continue;
@@ -87,6 +92,31 @@ function enviarSRI(array $document): array
         }
     }
     $mensajes = array_values(array_filter(array_unique($mensajes), static fn($m) => $m !== ''));
+
+    if ($estado === 'RECIBIDA') {
+        $document['status'] = 'sent';
+        facturacionAppendLog('info', 'Comprobante recibido por SRI', [
+            'documentId' => $document['id'] ?? null,
+            'accessKey' => $document['accessKey'] ?? null,
+            'lastRequestXml' => $lastRequestXml,
+            'lastResponseXml' => $lastResponseXml,
+        ]);
+        return $document;
+    }
+
+    if ($estado === '' && $mensajes !== []) {
+        $estado = 'DEVUELTA';
+        $document['sri']['receptionStatus'] = $estado;
+    }
+    $document['status'] = 'error';
     $texto = $mensajes !== [] ? implode(' | ', $mensajes) : 'El SRI devolvio el comprobante en recepcion.';
+    facturacionAppendLog('error', 'SRI rechazo comprobante en recepcion', [
+        'documentId' => $document['id'] ?? null,
+        'accessKey' => $document['accessKey'] ?? null,
+        'estado' => $estado,
+        'mensajes' => $mensajes,
+        'lastRequestXml' => $lastRequestXml,
+        'lastResponseXml' => $lastResponseXml,
+    ]);
     throw new RuntimeException('SRI recepcion estado ' . $estado . ': ' . $texto);
 }

@@ -13,8 +13,77 @@ declare(strict_types=1);
     </div>
     <div class="clientes-actions">
       <button class="btn" id="cli-new" type="button">Nuevo Cliente</button>
+      <button class="btn btn-secondary" id="cli-import-toggle" type="button">Importar CSV</button>
       <button class="btn btn-danger-soft" id="cli-del" type="button" disabled>Eliminar</button>
       <button class="btn btn-primary-soft" id="cli-save" type="button" disabled>Guardar</button>
+    </div>
+  </div>
+
+  <div class="clientes-import" id="cli-import-panel" hidden>
+    <div class="prod-import-card">
+      <h3>Importar clientes desde CSV</h3>
+      <p class="muted">
+        Campos mínimos: <strong>NOMBRES</strong> o <strong>APELLIDOS</strong>. El campo <strong>ACTIVO</strong> del sistema anterior se ignora para evitar ocultar clientes.
+      </p>
+      <p class="muted">
+        Para Ecuador, el ejemplo usa <strong>CANTON</strong> y <strong>PROVINCIA</strong>. Si el archivo viene del sistema anterior, el importador tambiÃ©n acepta <strong>MUNICIPIO</strong> y <strong>ESTADO</strong>.
+      </p>
+      <div class="prod-import-example" aria-label="Ejemplo de formato CSV para clientes">
+        <table class="prod-import-example-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>NOMBRES</th>
+              <th>APELLIDOS</th>
+              <th>EMAIL</th>
+              <th>TELEFONO</th>
+              <th>DOMICILIO1</th>
+              <th>CANTON</th>
+              <th>PROVINCIA</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>25</td>
+              <td>Pedro</td>
+              <td>Perez</td>
+              <td>correo@ejemplo.com</td>
+              <td>0999999999</td>
+              <td>Ibarra</td>
+              <td>Ibarra</td>
+              <td>Imbabura</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="prod-import-toolbar">
+        <input type="file" id="cli-import-file" accept=".csv,text/csv">
+        <button class="btn-secondary" type="button" id="cli-import-preview-btn">Vista previa</button>
+        <button class="btn-primary" type="button" id="cli-import-run-btn" disabled>Importar</button>
+      </div>
+      <div class="prod-import-result" id="cli-import-result">Sin archivo cargado.</div>
+      <div class="prod-import-progress" id="cli-import-progress" hidden>
+        <div class="prod-import-progress-bar">
+          <div class="prod-import-progress-fill" id="cli-import-progress-fill"></div>
+        </div>
+        <div class="prod-import-progress-meta" id="cli-import-progress-meta">0%</div>
+      </div>
+      <div class="catalog-table-wrap prod-import-table-wrap">
+        <table class="grid grid-compact">
+          <thead>
+            <tr>
+              <th>Fila</th>
+              <th>ID</th>
+              <th>Cliente</th>
+              <th>Telefono</th>
+              <th>Correo</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="cli-import-preview-body"></tbody>
+        </table>
+      </div>
+      <div class="prod-import-result" id="cli-import-failed" hidden></div>
     </div>
   </div>
 

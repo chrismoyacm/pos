@@ -1,4 +1,4 @@
-/* global $, window, document, Blob, URL */
+﻿/* global $, window, document, Blob, URL */
 (function () {
   'use strict';
 
@@ -105,7 +105,10 @@
     kardexPage: 1,
     kardexPageSize: 20,
     kardexTotal: 0,
-    kardexTotalPages: 1
+    kardexTotalPages: 1,
+    searchMode: 'add',
+    searchRows: [],
+    searchIndex: -1
   };
 
   function paginateRowsInv(rows, page, pageSize) {
@@ -135,7 +138,7 @@
     $next.on('click', onNext);
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + page + ' de ' + totalPages + ' · ' + total + ' registros</span>');
+    $pager.append('<span class="table-pager-status">PÃ¡gina ' + page + ' de ' + totalPages + ' Â· ' + total + ' registros</span>');
     $pager.append($next);
   }
 
@@ -164,8 +167,110 @@
     }, 2600);
   }
 
+  function inventoryAjaxErrorMessageInv(xhr, fallback) {
+    return xhr?.responseJSON?.error || xhr?.statusText || fallback;
+  }
+
   function productByIdInv(id) {
     return invState.products.find(p => (p.id || '') === id) || null;
+  }
+
+  function isInventorySearchOpenInv() {
+    return $('#inv-search-modal').hasClass('active');
+  }
+
+  function closeInventorySearchInv() {
+    $('#inv-search-modal').removeClass('active');
+    $('#inv-search-query').val('');
+    $('#inv-search-results').empty();
+    invState.searchRows = [];
+    invState.searchIndex = -1;
+    focusInventoryCodeInputInv(true);
+  }
+
+  function inventorySearchRowsInv(query) {
+    const q = (query || '').toString().trim().toLowerCase();
+    let rows = invState.products.slice();
+    if (q) {
+      const wide = q.startsWith('*');
+      const needle = wide ? q.slice(1).trim() : q;
+      if (needle) {
+        rows = rows.filter(product => {
+          const barcode = (product.barcode || '').toString().toLowerCase();
+          const id = (product.id || '').toString().toLowerCase();
+          const name = (product.name || '').toString().toLowerCase();
+          if (wide) {
+            return barcode.includes(needle) || id.includes(needle) || name.includes(needle);
+          }
+          return barcode.startsWith(needle) || id.startsWith(needle) || name.startsWith(needle);
+        });
+      }
+    }
+    rows.sort((a, b) => {
+      const aCode = (a.barcode || a.id || '').toString().toLowerCase();
+      const bCode = (b.barcode || b.id || '').toString().toLowerCase();
+      return aCode.localeCompare(bCode, 'es', { numeric: true, sensitivity: 'base' });
+    });
+    return rows.slice(0, 100);
+  }
+
+  function applyInventorySearchSelectionInv(product) {
+    if (!product) return;
+    if (invState.searchMode === 'adjust') {
+      const code = (product.barcode || product.id || '').toString();
+      invState.adjustSelectedId = (product.id || '').toString();
+      $('#inv-adjust-code').val(code);
+      $('#inv-adjust-entry-cost').val(Number(product.cost || 0).toFixed(2));
+      updateAdjustPreviewInv();
+    } else {
+      const code = (product.barcode || product.id || '').toString();
+      $('#inv-add-code').val(code);
+      fillAddFormInv(product);
+    }
+    closeInventorySearchInv();
+  }
+
+  function renderInventorySearchInv() {
+    const $tbody = $('#inv-search-results').empty();
+    invState.searchRows.forEach((product, index) => {
+      const selected = index === invState.searchIndex ? 'row-selected' : '';
+      const $tr = $(`
+        <tr class="${selected}" data-inv-search-idx="${index}">
+          <td>${escapeHtmlInv(product.barcode || product.id || '')}</td>
+          <td>${escapeHtmlInv(product.name || '')}</td>
+          <td class="catalog-center">${escapeHtmlInv(String(product.stock ?? 0))}</td>
+          <td class="catalog-money">${formatMoneyInv(product.cost || 0)}</td>
+          <td class="catalog-money">${formatMoneyInv(product.price || 0)}</td>
+        </tr>
+      `);
+      $tr.on('click', function () {
+        applyInventorySearchSelectionInv(product);
+      });
+      $tbody.append($tr);
+    });
+
+    if (invState.searchRows.length === 0) {
+      $tbody.append('<tr><td colspan="5" class="muted">No se encontraron productos.</td></tr>');
+    }
+  }
+
+  function refreshInventorySearchInv() {
+    invState.searchRows = inventorySearchRowsInv($('#inv-search-query').val());
+    invState.searchIndex = invState.searchRows.length > 0 ? 0 : -1;
+    renderInventorySearchInv();
+  }
+
+  function openInventorySearchInv(mode) {
+    invState.searchMode = mode === 'adjust' ? 'adjust' : 'add';
+    $('#inv-search-modal').addClass('active');
+    const currentCode = invState.searchMode === 'adjust'
+      ? ($('#inv-adjust-code').val() || '').toString().trim()
+      : ($('#inv-add-code').val() || '').toString().trim();
+    $('#inv-search-query').val(currentCode);
+    refreshInventorySearchInv();
+    window.setTimeout(function () {
+      $('#inv-search-query').trigger('focus').trigger('select');
+    }, 0);
   }
 
   function setProductSelectOptionsInv() {
@@ -207,74 +312,15 @@
     $('#inv-adjust-suggest').prop('hidden', true).empty();
   }
 
-  function adjustSuggestionsByQueryInv(query) {
-    const q = (query || '').toString().trim().toLowerCase();
-    if (!q) return [];
-    const matched = invState.products.filter(product => {
-      const barcode = (product.barcode || '').toString().toLowerCase();
-      const id = (product.id || '').toString().toLowerCase();
-      const name = (product.name || '').toString().toLowerCase();
-      return barcode.includes(q) || id.includes(q) || name.includes(q);
-    });
-    return matched.slice(0, 15);
-  }
-
-  function selectAdjustSuggestionInv(index) {
-    const product = invState.adjustSuggestions[index] || null;
-    if (!product) return;
-    const code = (product.barcode || product.id || '').toString();
-    invState.adjustSelectedId = (product.id || '').toString();
-    $('#inv-adjust-code').val(code);
-    $('#inv-adjust-entry-cost').val(Number(product.cost || 0).toFixed(2));
-    updateAdjustPreviewInv();
-    clearAdjustSuggestionsInv();
-  }
-
-  function renderAdjustSuggestionsInv() {
-    const $box = $('#inv-adjust-suggest').empty();
-    if (!Array.isArray(invState.adjustSuggestions) || invState.adjustSuggestions.length === 0) {
-      $box.prop('hidden', true);
-      return;
-    }
-
-    invState.adjustSuggestions.forEach((product, index) => {
-      const isActive = index === invState.adjustSuggestionIndex;
-      const code = (product.barcode || product.id || '').toString();
-      const name = (product.name || 'Producto').toString();
-      const $item = $(
-        '<div class="inv-add-suggest-item ' + (isActive ? 'active' : '') + '" data-adjust-suggest-idx="' + index + '">' +
-          '<span class="inv-add-suggest-code">' + escapeHtmlInv(code) + '</span>' +
-          '<span class="inv-add-suggest-name">' + escapeHtmlInv(name) + '</span>' +
-        '</div>'
-      );
-      $item.on('click', function () {
-        selectAdjustSuggestionInv(index);
-      });
-      $box.append($item);
-    });
-
-    $box.prop('hidden', false);
-  }
-
   function findAdjustProductInv(query) {
     const q = (query || '').toString().trim().toLowerCase();
     if (!q) return null;
 
-    const exact = invState.products.find(product => {
+    return invState.products.find(product => {
       const barcode = (product.barcode || '').toString().toLowerCase();
       const id = (product.id || '').toString().toLowerCase();
       return barcode === q || id === q;
-    });
-    if (exact) return exact;
-
-    const matched = invState.products.filter(product => {
-      const barcode = (product.barcode || '').toString().toLowerCase();
-      const id = (product.id || '').toString().toLowerCase();
-      const name = (product.name || '').toString().toLowerCase();
-      return barcode.includes(q) || id.includes(q) || name.includes(q);
-    });
-
-    return matched.length === 1 ? matched[0] : null;
+    }) || null;
   }
 
   function computeAdjustPreviewInv(product, kind, qty, entryCost, marginOverride) {
@@ -335,7 +381,7 @@
   function loadAdjustFormByCodeInv() {
     const query = ($('#inv-adjust-code').val() || '').toString().trim();
     if (!query) {
-      window.alert('Ingrese un código o ID de producto.');
+      window.alert('Ingrese un codigo o ID de producto.');
       return;
     }
 
@@ -346,20 +392,11 @@
       $('#inv-adjust-code').val(code);
       $('#inv-adjust-entry-cost').val(Number(product.cost || 0).toFixed(2));
       updateAdjustPreviewInv();
-      clearAdjustSuggestionsInv();
       return;
     }
 
-    const suggestions = adjustSuggestionsByQueryInv(query);
-    if (suggestions.length === 0) {
-      window.alert('Producto no encontrado.');
-      resetAdjustFormInv();
-      return;
-    }
-
-    invState.adjustSuggestions = suggestions;
-    invState.adjustSuggestionIndex = 0;
-    renderAdjustSuggestionsInv();
+    window.alert('Producto no encontrado.');
+    resetAdjustFormInv();
   }
 
   function resetAddFormInv() {
@@ -422,78 +459,21 @@
     $('#inv-add-suggest').prop('hidden', true).empty();
   }
 
-  function renderAddSuggestionsInv() {
-    const $box = $('#inv-add-suggest').empty();
-    if (!Array.isArray(invState.addSuggestions) || invState.addSuggestions.length === 0) {
-      $box.prop('hidden', true);
-      return;
-    }
-
-    invState.addSuggestions.forEach((product, index) => {
-      const isActive = index === invState.addSuggestionIndex;
-      const code = (product.barcode || product.id || '').toString();
-      const name = (product.name || 'Producto').toString();
-      const $item = $(
-        '<div class="inv-add-suggest-item ' + (isActive ? 'active' : '') + '" data-suggest-idx="' + index + '">' +
-          '<span class="inv-add-suggest-code">' + escapeHtmlInv(code) + '</span>' +
-          '<span class="inv-add-suggest-name">' + escapeHtmlInv(name) + '</span>' +
-        '</div>'
-      );
-      $item.on('click', function () {
-        selectAddSuggestionInv(index);
-      });
-      $box.append($item);
-    });
-
-    $box.prop('hidden', false);
-  }
-
-  function selectAddSuggestionInv(index) {
-    const product = invState.addSuggestions[index] || null;
-    if (!product) return;
-    const code = (product.barcode || product.id || '').toString();
-    $('#inv-add-code').val(code);
-    fillAddFormInv(product);
-  }
-
-  function addSuggestionsByQueryInv(query) {
-    const q = (query || '').toString().trim().toLowerCase();
-    if (!q) return [];
-    const matched = invState.products.filter(product => {
-      const barcode = (product.barcode || '').toString().toLowerCase();
-      const id = (product.id || '').toString().toLowerCase();
-      const name = (product.name || '').toString().toLowerCase();
-      return barcode.includes(q) || id.includes(q) || name.includes(q);
-    });
-    return matched.slice(0, 15);
-  }
-
   function findAddProductInv(query) {
     const q = (query || '').toString().trim().toLowerCase();
     if (!q) return null;
 
-    const exact = invState.products.find(product => {
+    return invState.products.find(product => {
       const barcode = (product.barcode || '').toString().toLowerCase();
       const id = (product.id || '').toString().toLowerCase();
       return barcode === q || id === q;
-    });
-    if (exact) return exact;
-
-    const byName = invState.products.filter(product => {
-      const barcode = (product.barcode || '').toString().toLowerCase();
-      const id = (product.id || '').toString().toLowerCase();
-      const name = (product.name || '').toString().toLowerCase();
-      return barcode.includes(q) || id.includes(q) || name.includes(q);
-    });
-
-    if (byName.length === 1) return byName[0];
-    return null;
+    }) || null;
   }
 
   function loadAddFormByCodeInv() {
     const query = ($('#inv-add-code').val() || '').toString().trim();
     if (!query) {
-      window.alert('Ingrese un código o ID de producto.');
+      window.alert('Ingrese un codigo o ID de producto.');
       return;
     }
     const product = findAddProductInv(query);
@@ -502,16 +482,8 @@
       return;
     }
 
-    const suggestions = addSuggestionsByQueryInv(query);
-    if (suggestions.length === 0) {
-      window.alert('Producto no encontrado.');
-      resetAddFormInv();
-      return;
-    }
-
-    invState.addSuggestions = suggestions;
-    invState.addSuggestionIndex = 0;
-    renderAddSuggestionsInv();
+    window.alert('Producto no encontrado.');
+    resetAddFormInv();
   }
 
   function setDepartmentOptionsInv() {
@@ -600,7 +572,7 @@
     });
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + invState.reportPage + ' de ' + invState.reportTotalPages + ' · ' + invState.reportTotal + ' registros</span>');
+    $pager.append('<span class="table-pager-status">PÃ¡gina ' + invState.reportPage + ' de ' + invState.reportTotalPages + ' Â· ' + invState.reportTotal + ' registros</span>');
     $pager.append($next);
   }
 
@@ -856,12 +828,12 @@
       'thead th{background:#eef2ff}' +
       'h1{font-size:18px;margin:0 0 12px}' +
       '</style></head><body>' +
-      '<table><thead><tr><th>Código</th><th>Descripción del Producto</th><th>Costo</th><th>Precio Venta</th><th>Existencia</th><th>Inventario Mínimo</th><th>Inventario Máximo</th></tr></thead><tbody>' + bodyRows + '</tbody></table>' +
+      '<table><thead><tr><th>CÃ³digo</th><th>DescripciÃ³n del Producto</th><th>Costo</th><th>Precio Venta</th><th>Existencia</th><th>Inventario MÃ­nimo</th><th>Inventario MÃ¡ximo</th></tr></thead><tbody>' + bodyRows + '</tbody></table>' +
       '</body></html>';
 
     const win = window.open('', '_blank', 'width=960,height=700');
     if (!win) {
-      showNoticeInv('No se pudo abrir la ventana de impresión.', 'error');
+      showNoticeInv('No se pudo abrir la ventana de impresiÃ³n.', 'error');
       return;
     }
     win.document.open();
@@ -943,6 +915,7 @@
     $('#inv-print-btn').on('click', printInventoryTableInv);
 
     $('#inv-add-save-btn').on('click', function () {
+      const $btn = $('#inv-add-save-btn');
       const productId = (invState.addSelectedId || '').toString();
       const qty = Number($('#inv-add-qty').val() || 0);
       const addCost = Number($('#inv-add-cost').val() || 0);
@@ -953,29 +926,30 @@
       const addWholesale = wholesaleRaw === '' ? null : Number(wholesaleRaw);
       const note = ($('#inv-add-note').val() || '').toString().trim();
       if (!productId || qty <= 0) {
-        window.alert('Busque/cargue un producto y cantidad válida.');
+        window.alert('Busque/cargue un producto y cantidad vÃ¡lida.');
         return;
       }
       if (addCost <= 0) {
-        window.alert('Capture un precio costo válido.');
+        window.alert('Capture un precio costo vÃ¡lido.');
         return;
       }
       if (!addName) {
-        window.alert('Capture una descripción válida.');
+        window.alert('Capture una descripciÃ³n vÃ¡lida.');
         return;
       }
       if (!Number.isFinite(addSalePrice) || addSalePrice < 0) {
-        window.alert('Capture un precio de venta válido.');
+        window.alert('Capture un precio de venta vÃ¡lido.');
         return;
       }
       if (!Number.isFinite(addMargin) || addMargin < 0) {
-        window.alert('Capture un % de ganancia válido.');
+        window.alert('Capture un % de ganancia vÃ¡lido.');
         return;
       }
       if (addWholesale !== null && (!Number.isFinite(addWholesale) || addWholesale < 0)) {
-        window.alert('Capture un precio mayoreo válido.');
+        window.alert('Capture un precio mayoreo vÃ¡lido.');
         return;
       }
+      $btn.prop('disabled', true).text('Guardando...');
       applyMovementInv(productId, Math.abs(qty), 'entry', note, addCost, addMargin, {
         name: addName,
         salePrice: addSalePrice,
@@ -987,12 +961,18 @@
         }
         $('#inv-add-qty').val('1');
         $('#inv-add-note').val('');
-        showNoticeInv('Entrada registrada correctamente.', 'success');
+        showNoticeInv('Entrada registrada correctamente en inventario.', 'success');
         $.when(loadProductsInv(), loadMovementsInv(), loadReportProductsInv()).done(renderInventoryTableInv);
+      }).fail(function (xhr) {
+        showNoticeInv(inventoryAjaxErrorMessageInv(xhr, 'No se pudo registrar la entrada.'), 'error');
+      }).always(function () {
+        $btn.prop('disabled', false).text('Agregar cantidad a inventario');
       });
     });
 
-    $('#inv-add-load-btn').on('click', loadAddFormByCodeInv);
+    $('#inv-add-load-btn').on('click', function () {
+      openInventorySearchInv('add');
+    });
     $('#inv-add-cost, #inv-add-margin').on('input change', function () {
       updateAddPriceFromMarginInv();
     });
@@ -1000,60 +980,24 @@
       updateAddMarginFromPriceInv();
     });
     $('#inv-add-code').on('input', function () {
-      const query = ($(this).val() || '').toString().trim();
-      if (!query) {
-        clearAddSuggestionsInv();
-        return;
+      const typed = ($(this).val() || '').toString().trim().toLowerCase();
+      const current = productByIdInv((invState.addSelectedId || '').toString());
+      const currentCode = (current?.barcode || current?.id || '').toString().trim().toLowerCase();
+      if (!typed || typed !== currentCode) {
+        invState.addSelectedId = null;
+        $('#inv-add-name').val('');
+        $('#inv-add-stock').val('');
       }
-
-      const exact = findAddProductInv(query);
-      if (exact) {
-        fillAddFormInv(exact);
-        clearAddSuggestionsInv();
-        return;
-      }
-
-      // Keep stock/value fields blank until user loads an existing product.
-      invState.addSelectedId = null;
-      $('#inv-add-stock').val('');
-
-      invState.addSuggestions = addSuggestionsByQueryInv(query);
-      invState.addSuggestionIndex = invState.addSuggestions.length > 0 ? 0 : -1;
-      renderAddSuggestionsInv();
     });
     $('#inv-add-code').on('keydown', function (e) {
-      if (e.key === 'ArrowDown' && invState.addSuggestions.length > 0) {
-        e.preventDefault();
-        invState.addSuggestionIndex = Math.min(invState.addSuggestions.length - 1, invState.addSuggestionIndex + 1);
-        renderAddSuggestionsInv();
-        return;
-      }
-      if (e.key === 'ArrowUp' && invState.addSuggestions.length > 0) {
-        e.preventDefault();
-        invState.addSuggestionIndex = Math.max(0, invState.addSuggestionIndex - 1);
-        renderAddSuggestionsInv();
-        return;
-      }
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (invState.addSuggestions.length > 0 && invState.addSuggestionIndex >= 0) {
-          selectAddSuggestionInv(invState.addSuggestionIndex);
-          return;
-        }
         loadAddFormByCodeInv();
-      }
-      if (e.key === 'Escape') {
-        clearAddSuggestionsInv();
-      }
-    });
-
-    $(document).on('click', function (e) {
-      if (!$(e.target).closest('#inv-add-code, #inv-add-suggest').length) {
-        clearAddSuggestionsInv();
       }
     });
 
     $('#inv-adjust-save-btn').on('click', function () {
+      const $btn = $('#inv-adjust-save-btn');
       const productId = (invState.adjustSelectedId || '').toString();
       const kind = ($('#inv-adjust-type').val() || 'entry').toString();
       const qty = Number($('#inv-adjust-qty').val() || 0);
@@ -1061,18 +1005,19 @@
       const marginPct = Number($('#inv-adjust-margin').val() || 0);
       const note = ($('#inv-adjust-note').val() || '').toString().trim();
       if (!productId || qty <= 0) {
-        window.alert('Busque/cargue un producto y capture cantidad válida.');
+        window.alert('Busque/cargue un producto y capture cantidad vÃ¡lida.');
         return;
       }
       if (marginPct < 0) {
-        window.alert('Capture un % de ganancia válido.');
+        window.alert('Capture un % de ganancia vÃ¡lido.');
         return;
       }
       if (kind === 'entry' && entryCost <= 0) {
-        window.alert('Capture un costo de entrada válido para calcular costo promedio y precio venta.');
+        window.alert('Capture un costo de entrada vÃ¡lido para calcular costo promedio y precio venta.');
         return;
       }
       const delta = kind === 'exit' ? -Math.abs(qty) : Math.abs(qty);
+      $btn.prop('disabled', true).text('Guardando...');
       applyMovementInv(productId, delta, kind, note, entryCost, marginPct, null).done(res => {
         if (!res.ok) {
           showNoticeInv(res.error || 'No se pudo aplicar el ajuste.', 'error');
@@ -1080,56 +1025,39 @@
         }
         $('#inv-adjust-qty').val('1');
         $('#inv-adjust-note').val('');
-        showNoticeInv('Ajuste aplicado correctamente.', 'success');
+        showNoticeInv('Ajuste aplicado correctamente en inventario.', 'success');
         $.when(loadProductsInv(), loadMovementsInv(), loadReportProductsInv()).done(() => {
           updateAdjustPreviewInv();
           renderInventoryTableInv();
           renderLowStockInv();
         });
+      }).fail(function (xhr) {
+        showNoticeInv(inventoryAjaxErrorMessageInv(xhr, 'No se pudo aplicar el ajuste.'), 'error');
+      }).always(function () {
+        $btn.prop('disabled', false).text('Aplicar Ajuste');
       });
     });
 
-    $('#inv-adjust-load-btn').on('click', loadAdjustFormByCodeInv);
+    $('#inv-adjust-load-btn').on('click', function () {
+      openInventorySearchInv('adjust');
+    });
     $('#inv-adjust-code').on('input', function () {
-      const query = ($(this).val() || '').toString().trim();
-      if (!query) {
-        clearAdjustSuggestionsInv();
-        return;
+      const typed = ($(this).val() || '').toString().trim().toLowerCase();
+      const current = productByIdInv((invState.adjustSelectedId || '').toString());
+      const currentCode = (current?.barcode || current?.id || '').toString().trim().toLowerCase();
+      if (!typed || typed !== currentCode) {
+        invState.adjustSelectedId = null;
+        $('#inv-adjust-name').val('');
+        $('#inv-adjust-current-stock').val('');
+        $('#inv-adjust-new-stock').val('');
+        $('#inv-adjust-new-cost').val('');
+        $('#inv-adjust-new-price').val('');
       }
-
-      const exact = findAdjustProductInv(query);
-      if (exact) {
-        clearAdjustSuggestionsInv();
-        return;
-      }
-
-      invState.adjustSuggestions = adjustSuggestionsByQueryInv(query);
-      invState.adjustSuggestionIndex = invState.adjustSuggestions.length > 0 ? 0 : -1;
-      renderAdjustSuggestionsInv();
     });
     $('#inv-adjust-code').on('keydown', function (e) {
-      if (e.key === 'ArrowDown' && invState.adjustSuggestions.length > 0) {
-        e.preventDefault();
-        invState.adjustSuggestionIndex = Math.min(invState.adjustSuggestions.length - 1, invState.adjustSuggestionIndex + 1);
-        renderAdjustSuggestionsInv();
-        return;
-      }
-      if (e.key === 'ArrowUp' && invState.adjustSuggestions.length > 0) {
-        e.preventDefault();
-        invState.adjustSuggestionIndex = Math.max(0, invState.adjustSuggestionIndex - 1);
-        renderAdjustSuggestionsInv();
-        return;
-      }
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (invState.adjustSuggestions.length > 0 && invState.adjustSuggestionIndex >= 0) {
-          selectAdjustSuggestionInv(invState.adjustSuggestionIndex);
-          return;
-        }
         loadAdjustFormByCodeInv();
-      }
-      if (e.key === 'Escape') {
-        clearAdjustSuggestionsInv();
       }
     });
     $('#inv-adjust-type, #inv-adjust-qty, #inv-adjust-entry-cost, #inv-adjust-margin').on('input change', updateAdjustPreviewInv);
@@ -1143,25 +1071,73 @@
       }
       const parsed = Number(raw);
       if (!Number.isFinite(parsed) || parsed < 0) {
-        window.alert('Capture un % de ganancia válido.');
+        window.alert('Capture un % de ganancia vÃ¡lido.');
         return;
       }
       $(this).val(parsed.toFixed(2));
       updateAdjustPreviewInv();
     });
 
-    $(document).on('click', function (e) {
-      if (!$(e.target).closest('#inv-adjust-code, #inv-adjust-suggest').length) {
-        clearAdjustSuggestionsInv();
-      }
-    });
-
     $('#inv-add-code, #inv-adjust-code').on('blur', function () {
       window.setTimeout(function () { focusInventoryCodeInputInv(false); }, 0);
     });
 
+    $('#inv-search-close-btn').on('click', closeInventorySearchInv);
+    $('#inv-search-modal').on('click', function (e) {
+      if (e.target === this) {
+        closeInventorySearchInv();
+      }
+    });
+    $('#inv-search-query').on('input', function () {
+      refreshInventorySearchInv();
+    });
+    $('#inv-search-query').on('keydown', function (e) {
+      if (e.key === 'ArrowDown' && invState.searchRows.length > 0) {
+        e.preventDefault();
+        invState.searchIndex = Math.min(invState.searchRows.length - 1, invState.searchIndex + 1);
+        renderInventorySearchInv();
+        return;
+      }
+      if (e.key === 'ArrowUp' && invState.searchRows.length > 0) {
+        e.preventDefault();
+        invState.searchIndex = Math.max(0, invState.searchIndex - 1);
+        renderInventorySearchInv();
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (invState.searchIndex >= 0 && invState.searchRows[invState.searchIndex]) {
+          applyInventorySearchSelectionInv(invState.searchRows[invState.searchIndex]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeInventorySearchInv();
+      }
+    });
+
+    $(document).on('keydown', function (e) {
+      if (e.key === 'F10') {
+        e.preventDefault();
+        if (isInventorySearchOpenInv()) {
+          return;
+        }
+        const active = document.activeElement;
+        if (active && $(active).closest('#inv-adjust-code, #inv-adjust-name, #inv-adjust-note, #inv-adjust-type, #inv-adjust-qty').length > 0) {
+          openInventorySearchInv('adjust');
+          return;
+        }
+        openInventorySearchInv($('#inv-adjust-code').length > 0 ? 'adjust' : 'add');
+      }
+      if (e.key === 'Escape' && isInventorySearchOpenInv()) {
+        e.preventDefault();
+        closeInventorySearchInv();
+      }
+    });
+
     $(document).on('click', function (e) {
-      if ($(e.target).closest('.modal.active, #inv-add-code, #inv-add-suggest, #inv-adjust-code, #inv-adjust-suggest').length > 0) {
+      if ($(e.target).closest('.modal.active, #inv-add-code, #inv-adjust-code').length > 0) {
         return;
       }
       window.setTimeout(function () { focusInventoryCodeInputInv(false); }, 0);
@@ -1206,3 +1182,4 @@
     }
   });
 })();
+

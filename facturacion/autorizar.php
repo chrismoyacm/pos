@@ -63,16 +63,10 @@ function consultarAutorizacion(array $document, array $options = []): array
 {
     $previousAuth = strtoupper(trim((string)($document['sri']['authorizationStatus'] ?? '')));
     $previousStatus = strtolower(trim((string)($document['status'] ?? '')));
-    $signedPath = (string)($document['files']['signedXml'] ?? '');
-    if ($signedPath === '' || !file_exists($signedPath)) {
+    $signedPath = facturacionMaterializeDocumentFile($document, 'signedXml');
+    if ($signedPath === '') {
         throw new RuntimeException('No existe XML firmado para consultar autorizacion.');
     }
-
-    $authorizedDir = facturacionStoragePath('xml/autorizados');
-    if (!is_dir($authorizedDir)) {
-        mkdir($authorizedDir, 0777, true);
-    }
-    $authorizedPath = $authorizedDir . DIRECTORY_SEPARATOR . (string)$document['accessKey'] . '.xml';
 
     if (!class_exists('SoapClient')) {
         $runtime = 'PHP=' . PHP_VERSION . ' | SAPI=' . PHP_SAPI . ' | BIN=' . PHP_BINARY;
@@ -88,15 +82,25 @@ function consultarAutorizacion(array $document, array $options = []): array
     );
 
     // En esquema offline la autorizacion puede tardar algunos segundos/minutos.
-    // Permitimos personalizar intentos para llamadas de fondo (auto) sin bloquear la UI.
-    $maxAttempts = max(1, (int)($options['maxAttempts'] ?? 12));
-    $sleepMicros = max(0, (int)($options['sleepMicros'] ?? 2000000));
+    // Para llamadas desde UI usamos una consulta corta para no superar el timeout
+    // de FastCGI en IIS. Los reintentos de fondo siguen controlados por opciones.
+    $maxAttempts = max(1, (int)($options['maxAttempts'] ?? 3));
+    $sleepMicros = max(0, (int)($options['sleepMicros'] ?? 750000));
+    $logRawResponse = !empty($options['logRawResponse']);
     $responseArray = [];
     $root = [];
     $autorizaciones = [];
+    $lastRequestXml = '';
+    $lastResponseXml = '';
     $attempt = 1;
     while ($attempt <= $maxAttempts) {
         $response = $soap->autorizacionComprobante(['claveAccesoComprobante' => (string)($document['accessKey'] ?? '')]);
+        if (method_exists($soap, '__getLastRequest')) {
+            $lastRequestXml = (string)$soap->__getLastRequest();
+        }
+        if (method_exists($soap, '__getLastResponse')) {
+            $lastResponseXml = (string)$soap->__getLastResponse();
+        }
         $responseArray = json_decode(json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
         if (!is_array($responseArray)) {
             $responseArray = [];
@@ -118,6 +122,12 @@ function consultarAutorizacion(array $document, array $options = []): array
     }
 
     $document['sri']['response'] = $responseArray;
+    if ($lastRequestXml !== '') {
+        $document['sri']['authorizationLastRequestXml'] = $lastRequestXml;
+    }
+    if ($lastResponseXml !== '') {
+        $document['sri']['authorizationLastResponseXml'] = $lastResponseXml;
+    }
 
     if ($autorizaciones === []) {
         if ($previousAuth === 'AUT' || $previousStatus === 'authorized') {
@@ -140,6 +150,16 @@ function consultarAutorizacion(array $document, array $options = []): array
             'attempts' => min($attempt, $maxAttempts),
             'response' => $root,
         ]);
+        if ($logRawResponse || ((string)($root['numeroComprobantes'] ?? '') === '0')) {
+            facturacionAppendLog('warning', 'Respuesta cruda de autorizacion sin comprobantes', [
+                'documentId' => $document['id'] ?? null,
+                'accessKey' => $document['accessKey'] ?? null,
+                'attempts' => min($attempt, $maxAttempts),
+                'numeroComprobantes' => (string)($root['numeroComprobantes'] ?? ''),
+                'lastRequestXml' => $lastRequestXml,
+                'lastResponseXml' => $lastResponseXml,
+            ]);
+        }
         return $document;
     }
 
@@ -152,8 +172,11 @@ function consultarAutorizacion(array $document, array $options = []): array
     $document['sri']['authorizationDate'] = (string)($authorization['fechaAutorizacion'] ?? date('c'));
 
     if ($estado === 'AUTORIZADO') {
-        file_put_contents($authorizedPath, facturacionBuildAuthorizationXml($authorization));
-        $document['files']['authorizedXml'] = $authorizedPath;
+        $authorizedXml = facturacionBuildAuthorizationXml($authorization);
+        if ($authorizedXml === '') {
+            throw new RuntimeException('No se pudo construir el XML autorizado del SRI.');
+        }
+        $document = facturacionStoreDocumentFile($document, 'authorizedXml', $authorizedXml);
         $document['status'] = 'authorized';
         facturacionAppendLog('info', 'Comprobante autorizado por SRI', [
             'documentId' => $document['id'] ?? null,

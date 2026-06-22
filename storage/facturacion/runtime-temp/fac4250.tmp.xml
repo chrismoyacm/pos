@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="1.0.0">
+  <infoTributaria>
+    <ambiente>1</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>ELVIS DANIEL SIGUENZA FLORES</razonSocial>
+    <nombreComercial>MAGABASTOS SIGUENZA</nombreComercial>
+    <ruc>1004408967001</ruc>
+    <claveAcceso>0706202601100440896700110010010000012063630179216</claveAcceso>
+    <codDoc>01</codDoc>
+    <estab>001</estab>
+    <ptoEmi>001</ptoEmi>
+    <secuencial>000001206</secuencial>
+    <dirMatriz>SELVA ALEGRE - OTAVALO - IMBABURA</dirMatriz>
+  </infoTributaria>
+  <infoFactura>
+    <fechaEmision>07/06/2026</fechaEmision>
+    <dirEstablecimiento>SELVA ALEGRE - OTAVALO - IMBABURA</dirEstablecimiento>
+    <obligadoContabilidad>NO</obligadoContabilidad>
+    <tipoIdentificacionComprador>05</tipoIdentificacionComprador>
+    <razonSocialComprador>Christyan Moya</razonSocialComprador>
+    <identificacionComprador>1004478234</identificacionComprador>
+    <direccionComprador>Ibarra</direccionComprador>
+    <totalSinImpuestos>0.95</totalSinImpuestos>
+    <totalDescuento>0.00</totalDescuento>
+    <totalConImpuestos>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>6</codigoPorcentaje>
+        <baseImponible>0.95</baseImponible>
+        <tarifa>0.00</tarifa>
+        <valor>0.00</valor>
+      </totalImpuesto>
+    </totalConImpuestos>
+    <propina>0.00</propina>
+    <importeTotal>0.95</importeTotal>
+    <moneda>DOLAR</moneda>
+    <pagos>
+      <pago>
+        <formaPago>01</formaPago>
+        <total>0.95</total>
+      </pago>
+    </pagos>
+    <valorRetIva>0.00</valorRetIva>
+    <valorRetRenta>0.00</valorRetRenta>
+  </infoFactura>
+  <detalles>
+    <detalle>
+      <codigoPrincipal>7861002501932</codigoPrincipal>
+      <codigoAuxiliar>7861002501932</codigoAuxiliar>
+      <descripcion>Aceite Palma De Oro Funda 560ml</descripcion>
+      <cantidad>1.000000</cantidad>
+      <precioUnitario>0.950000</precioUnitario>
+      <descuento>0.00</descuento>
+      <precioTotalSinImpuesto>0.95</precioTotalSinImpuesto>
+      <impuestos>
+        <impuesto>
+          <codigo>2</codigo>
+          <codigoPorcentaje>6</codigoPorcentaje>
+          <tarifa>0.00</tarifa>
+          <baseImponible>0.95</baseImponible>
+          <valor>0.00</valor>
+        </impuesto>
+      </impuestos>
+    </detalle>
+  </detalles>
+  <infoAdicional>
+    <campoAdicional nombre="Email">crissmoya.cm@gmail.com</campoAdicional>
+    <campoAdicional nombre="Direccion">Ibarra</campoAdicional>
+    <campoAdicional nombre="Telefono">0982258275</campoAdicional>
+  </infoAdicional>
+</factura>

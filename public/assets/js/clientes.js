@@ -112,8 +112,14 @@
     page: 1,
     pageSize: 15,
     total: 0,
-    totalPages: 1
+    totalPages: 1,
+    importHeaders: [],
+    importRows: [],
+    importFailedRows: [],
+    importBusy: false
   };
+
+  const IMPORT_BATCH_SIZE = 250;
 
   function paginateRows(rows, page, pageSize) {
     const total = rows.length;
@@ -367,6 +373,373 @@
     });
   }
 
+  function splitCsvLine(line, delimiter) {
+    const out = [];
+    let current = '';
+    let quoted = false;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line.charAt(i);
+      if (ch === '"') {
+        if (quoted && line.charAt(i + 1) === '"') {
+          current += '"';
+          i += 1;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (ch === delimiter && !quoted) {
+        out.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    out.push(current);
+    return out;
+  }
+
+  function detectDelimiter(line) {
+    const semicolonCount = splitCsvLine(line, ';').length;
+    const commaCount = splitCsvLine(line, ',').length;
+    return semicolonCount >= commaCount ? ';' : ',';
+  }
+
+  function normalizeImportHeader(value) {
+    return (value || '').toString()
+      .replace(/^\uFEFF/, '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9_]+/g, '');
+  }
+
+  function customerImportAliasMap() {
+    return {
+      id: 'legacyId',
+      folio: 'folio',
+      nombres: 'firstName',
+      nombre: 'firstName',
+      apellidos: 'lastName',
+      apellido: 'lastName',
+      identificacion: 'taxId',
+      cedula: 'taxId',
+      ruc: 'taxId',
+      email: 'email',
+      correo: 'email',
+      telefono: 'phone',
+      celular: 'phone',
+      domicilio1: 'address1',
+      direccion: 'address1',
+      domicilio2: 'address2',
+      colonia: 'parish',
+      parroquia: 'parish',
+      municipio: 'canton',
+      canton: 'canton',
+      estado: 'province',
+      provincia: 'province',
+      pais: 'country',
+      codigo_postal: 'zip',
+      codigopostal: 'zip',
+      notas: 'notes',
+      total_ventas: 'totalSales',
+      totalventas: 'totalSales',
+      total_ganancias: 'totalProfit',
+      totalganancias: 'totalProfit',
+      total_tickets: 'totalTickets',
+      totaltickets: 'totalTickets',
+      de_sistema: 'systemFlag',
+      desistema: 'systemFlag',
+      old_cliente_id: 'oldCustomerId',
+      oldclienteid: 'oldCustomerId',
+      old_facturacion_clientes_id: 'oldBillingCustomerId',
+      oldfacturacionclientesid: 'oldBillingCustomerId'
+    };
+  }
+
+  function normalizeImportRow(row, index) {
+    const alias = customerImportAliasMap();
+    const normalized = { _line: index + 2, _source: row };
+    Object.keys(row).forEach(function (header) {
+      const key = alias[normalizeImportHeader(header)];
+      if (key) normalized[key] = (row[header] || '').toString().trim();
+    });
+    normalized.name = ((normalized.firstName || '') + ' ' + (normalized.lastName || '')).trim();
+    normalized._importIssues = [];
+    if (!normalized.name) {
+      normalized._importIssues.push('Sin nombres o apellidos');
+    }
+    const legacyId = (normalized.legacyId || '').toString().trim();
+    if (legacyId && !/^\d+$/.test(legacyId)) {
+      normalized._importIssues.push('ID invalido');
+    }
+    normalized._importStatus = normalized._importIssues.length ? 'warning' : 'ok';
+    return normalized;
+  }
+
+  function parseCustomerCsv(text) {
+    const clean = (text || '').toString().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = clean.split('\n').filter(function (line) { return line.trim() !== ''; });
+    if (lines.length < 2) {
+      throw new Error('El archivo no tiene datos para importar.');
+    }
+    const delimiter = detectDelimiter(lines[0]);
+    const headers = splitCsvLine(lines[0], delimiter).map(function (header) {
+      return header.replace(/^\uFEFF/, '').trim();
+    });
+    const rows = [];
+    for (let i = 1; i < lines.length; i += 1) {
+      const values = splitCsvLine(lines[i], delimiter);
+      const row = {};
+      headers.forEach(function (header, idx) {
+        row[header] = values[idx] !== undefined ? values[idx] : '';
+      });
+      rows.push(normalizeImportRow(row, i - 1));
+    }
+    return { headers, rows };
+  }
+
+  function updateCustomerImportProgress(done, total, label) {
+    const safeTotal = Math.max(1, Number(total || 0));
+    const percent = Math.max(0, Math.min(100, (Number(done || 0) / safeTotal) * 100));
+    $('#cli-import-progress').prop('hidden', false);
+    $('#cli-import-progress-fill').css('width', percent.toFixed(2) + '%');
+    $('#cli-import-progress-meta').text(label || (percent.toFixed(0) + '%'));
+  }
+
+  function resetCustomerImportProgress() {
+    $('#cli-import-progress').prop('hidden', true);
+    $('#cli-import-progress-fill').css('width', '0%');
+    $('#cli-import-progress-meta').text('0%');
+  }
+
+  function setCustomerImportBusy(isBusy) {
+    state.importBusy = !!isBusy;
+    $('#cli-import-file, #cli-import-preview-btn, #cli-import-run-btn').prop('disabled', !!isBusy);
+    $('#cli-import-run-btn').text(isBusy ? 'Importando...' : 'Importar');
+    if (!isBusy) {
+      $('#cli-import-run-btn').prop('disabled', state.importRows.length === 0);
+    }
+  }
+
+  function renderCustomerImportPreview() {
+    const $tbody = $('#cli-import-preview-body').empty();
+    const rows = state.importRows.slice(0, 250);
+    rows.forEach(function (row) {
+      const ok = row._importStatus !== 'warning';
+      const status = ok ? 'OK - Apta' : 'Revisar: ' + row._importIssues.join(', ');
+      $tbody.append(
+        '<tr class="' + (ok ? '' : 'prod-import-row-warning') + '">' +
+          '<td>' + escapeHtml(row._line || '') + '</td>' +
+          '<td>' + escapeHtml(row.legacyId || '') + '</td>' +
+          '<td>' + escapeHtml(row.name || '') + '</td>' +
+          '<td>' + escapeHtml(row.phone || '') + '</td>' +
+          '<td>' + escapeHtml(row.email || '') + '</td>' +
+          '<td class="' + (ok ? 'prod-import-status-ok' : 'prod-import-status-warning') + '">' + escapeHtml(status) + '</td>' +
+        '</tr>'
+      );
+    });
+    if (!rows.length) {
+      $tbody.append('<tr><td colspan="6" class="muted">No hay filas para mostrar.</td></tr>');
+    }
+  }
+
+  function readCustomerImportFile() {
+    const file = $('#cli-import-file')[0]?.files?.[0];
+    if (!file) {
+      alert('Seleccione un archivo CSV.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function () {
+      try {
+        const parsed = parseCustomerCsv(reader.result || '');
+        state.importHeaders = parsed.headers;
+        state.importRows = parsed.rows;
+        state.importFailedRows = [];
+        renderCustomerImportFailedRows([]);
+        renderCustomerImportPreview();
+        const okCount = parsed.rows.filter(function (row) { return row._importStatus !== 'warning'; }).length;
+        const warnCount = parsed.rows.length - okCount;
+        $('#cli-import-result').text('Vista previa lista. Aptos: ' + okCount + ' | Revisar: ' + warnCount + ' | Total: ' + parsed.rows.length);
+        $('#cli-import-run-btn').prop('disabled', okCount === 0);
+        resetCustomerImportProgress();
+      } catch (err) {
+        state.importRows = [];
+        renderCustomerImportPreview();
+        $('#cli-import-run-btn').prop('disabled', true);
+        $('#cli-import-result').text(err?.message || 'No se pudo leer el archivo.');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  function ajaxErrorMessage(xhr, fallback) {
+    return xhr?.responseJSON?.error || xhr?.statusText || fallback;
+  }
+
+  function renderCustomerImportFailedRows(rows) {
+    state.importFailedRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    const list = state.importFailedRows;
+    const $box = $('#cli-import-failed');
+    if (!list.length) {
+      $box.prop('hidden', true).empty();
+      return;
+    }
+    const body = list.map(function (row, index) {
+      return '<tr>' +
+        '<td>' + escapeHtml(row.line || '') + '</td>' +
+        '<td><input class="prod-import-failed-input cli-import-failed-input" data-failed-index="' + index + '" data-field="legacyId" value="' + escapeHtml(row.legacyId || '') + '"></td>' +
+        '<td><input class="prod-import-failed-input cli-import-failed-input" data-failed-index="' + index + '" data-field="firstName" value="' + escapeHtml(row.firstName || '') + '"></td>' +
+        '<td><input class="prod-import-failed-input cli-import-failed-input" data-failed-index="' + index + '" data-field="lastName" value="' + escapeHtml(row.lastName || '') + '"></td>' +
+        '<td>' + escapeHtml(row.error || '') + '</td>' +
+      '</tr>';
+    }).join('');
+    $box.prop('hidden', false).html(
+      '<div class="prod-import-failed-head">' +
+        '<strong>Filas no importadas: ' + list.length + '</strong>' +
+        '<div class="prod-import-failed-actions">' +
+          '<button type="button" class="btn-secondary" id="cli-import-failed-download">Descargar errores CSV</button>' +
+          '<button type="button" class="btn-primary" id="cli-import-failed-retry">Guardar correcciones</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="catalog-table-wrap prod-import-failed-wrap">' +
+        '<table class="grid grid-compact">' +
+          '<thead><tr><th>Fila</th><th>ID</th><th>Nombres</th><th>Apellidos</th><th>Error</th></tr></thead>' +
+          '<tbody>' + body + '</tbody>' +
+        '</table>' +
+      '</div>'
+    );
+    $('#cli-import-failed-download').on('click', downloadCustomerImportFailedRows);
+    $('#cli-import-failed-retry').on('click', retryCustomerImportFailedRows);
+  }
+
+  function syncCustomerFailedInputs() {
+    $('.cli-import-failed-input').each(function () {
+      const index = Number($(this).data('failed-index'));
+      const field = ($(this).data('field') || '').toString();
+      if (Number.isInteger(index) && state.importFailedRows[index] && field) {
+        state.importFailedRows[index][field] = ($(this).val() || '').toString();
+      }
+    });
+  }
+
+  function csvEscape(value) {
+    const text = (value ?? '').toString();
+    return /[",;\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function downloadCustomerImportFailedRows() {
+    syncCustomerFailedInputs();
+    const headers = ['ID', 'NOMBRES', 'APELLIDOS', 'EMAIL', 'TELEFONO', 'DOMICILIO1', 'DOMICILIO2', 'COLONIA', 'MUNICIPIO', 'ESTADO', 'CODIGO_POSTAL', 'NOTAS', 'ERROR'];
+    const lines = [headers.map(csvEscape).join(';')];
+    state.importFailedRows.forEach(function (row) {
+      lines.push([
+        row.legacyId || '',
+        row.firstName || '',
+        row.lastName || '',
+        row.email || '',
+        row.phone || '',
+        row.address1 || '',
+        row.address2 || '',
+        row.parish || '',
+        row.canton || '',
+        row.province || '',
+        row.zip || '',
+        row.notes || '',
+        row.error || ''
+      ].map(csvEscape).join(';'));
+    });
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'clientes_no_importados.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function failedCustomerRowSource(row) {
+    const source = $.extend({}, row);
+    source.name = ((source.firstName || '') + ' ' + (source.lastName || '')).trim();
+    source._importIssues = [];
+    if (!source.name) source._importIssues.push('Sin nombres o apellidos');
+    if (source.legacyId && !/^\d+$/.test((source.legacyId || '').toString())) source._importIssues.push('ID invalido');
+    source._importStatus = source._importIssues.length ? 'warning' : 'ok';
+    return source;
+  }
+
+  function runCustomerImportRows(rows, doneCallback) {
+    const failedRows = rows
+      .filter(function (row) { return row._importStatus === 'warning'; })
+      .map(function (row) {
+        return $.extend({}, row, { line: row._line || '', error: row._importIssues.join(', ') });
+      });
+    const validRows = rows.filter(function (row) { return row._importStatus !== 'warning'; });
+    if (!validRows.length) {
+      renderCustomerImportFailedRows(failedRows);
+      $('#cli-import-result').text('No hay filas aptas para importar.');
+      return;
+    }
+    let createdTotal = 0;
+    let updatedTotal = 0;
+    let processed = 0;
+    setCustomerImportBusy(true);
+    const sendBatch = function (startIndex) {
+      const batchRows = validRows.slice(startIndex, startIndex + IMPORT_BATCH_SIZE);
+      const currentBatch = Math.floor(startIndex / IMPORT_BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(validRows.length / IMPORT_BATCH_SIZE);
+      updateCustomerImportProgress(processed, validRows.length, 'Procesando lote ' + currentBatch + ' de ' + totalBatches + '...');
+      $.ajax({
+        url: '../api/customers.php',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ action: 'import_customers', rows: batchRows, finalBatch: startIndex + IMPORT_BATCH_SIZE >= validRows.length })
+      }).done(function (res) {
+        if (!res.ok) {
+          failedRows.push({ line: '', legacyId: '', firstName: 'Lote ' + currentBatch, lastName: '', error: res.error || 'No se pudo completar la importacion.' });
+          renderCustomerImportFailedRows(failedRows);
+          setCustomerImportBusy(false);
+          $('#cli-import-result').text('Importacion pausada. Revisa las filas con error.');
+          return;
+        }
+        const data = res.data || {};
+        createdTotal += Number(data.created || 0);
+        updatedTotal += Number(data.updated || 0);
+        (data.failedRows || []).forEach(function (row) { failedRows.push(row); });
+        processed += batchRows.length;
+        updateCustomerImportProgress(processed, validRows.length, Math.min(100, Math.round((processed / Math.max(1, validRows.length)) * 100)) + '%');
+        if (startIndex + IMPORT_BATCH_SIZE < validRows.length) {
+          sendBatch(startIndex + IMPORT_BATCH_SIZE);
+          return;
+        }
+        setCustomerImportBusy(false);
+        renderCustomerImportFailedRows(failedRows);
+        $('#cli-import-result').text('Importacion completada. Creados: ' + createdTotal + ' | Actualizados: ' + updatedTotal + ' | No importados: ' + failedRows.length);
+        loadCustomers($('#cli-search').val().toString());
+        if (typeof doneCallback === 'function') doneCallback();
+      }).fail(function (xhr) {
+        failedRows.push({ line: '', legacyId: '', firstName: 'Lote ' + currentBatch, lastName: '', error: ajaxErrorMessage(xhr, 'No se pudo completar la importacion.') });
+        renderCustomerImportFailedRows(failedRows);
+        setCustomerImportBusy(false);
+        $('#cli-import-result').text('Importacion pausada. Revisa las filas con error.');
+      });
+    };
+    sendBatch(0);
+  }
+
+  function retryCustomerImportFailedRows() {
+    syncCustomerFailedInputs();
+    const rows = state.importFailedRows.map(failedCustomerRowSource);
+    runCustomerImportRows(rows);
+  }
+
+  function toggleImportPanel() {
+    const $panel = $('#cli-import-panel');
+    const visible = !$panel.prop('hidden');
+    $panel.prop('hidden', visible);
+    $('#cli-import-toggle').text(visible ? 'Importar CSV' : 'Ocultar importacion');
+  }
+
   function startNew() {
     state.selectedId = null;
     state.mode = 'new';
@@ -451,6 +824,9 @@
       }, 180);
     });
     $('#cli-new').on('click', startNew);
+    $('#cli-import-toggle').on('click', toggleImportPanel);
+    $('#cli-import-preview-btn').on('click', readCustomerImportFile);
+    $('#cli-import-run-btn').on('click', function () { runCustomerImportRows(state.importRows); });
     $('#cli-save').on('click', save);
     $('#cli-del').on('click', del);
     $('#cli-tax-id').on('input blur', function () {

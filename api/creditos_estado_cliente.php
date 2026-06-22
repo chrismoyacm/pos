@@ -4,9 +4,6 @@ declare(strict_types=1);
 require_once __DIR__ . '/../utils/json_store.php';
 require_once __DIR__ . '/../utils/credit_ledger.php';
 
-/**
- * Build a valid date clamped to the last day of month when needed.
- */
 function buildSafeDate(int $year, int $month, int $day): DateTimeImmutable
 {
     $month = max(1, min(12, $month));
@@ -16,14 +13,6 @@ function buildSafeDate(int $year, int $month, int $day): DateTimeImmutable
     return new DateTimeImmutable(sprintf('%04d-%02d-%02d', $year, $month, $safeDay));
 }
 
-/**
- * Calculate next due date using existing customer schedule.
- *
- * Priority:
- * 1) Existing paymentDueDate day-of-month
- * 2) paymentDueDay recurring day
- * 3) Current day as fallback
- */
 function nextDueDateForCustomer(array $customer): string
 {
     $today = new DateTimeImmutable('today');
@@ -81,7 +70,7 @@ $request = getRequestInfo();
 $method = strtoupper((string)($request['method'] ?? 'GET'));
 
 if (!in_array($method, ['GET', 'POST'], true)) {
-    errorResponse('Método no soportado', 405);
+    errorResponse('Metodo no soportado', 405);
 }
 
 $cid = trim((string)($_GET['cid'] ?? ''));
@@ -105,12 +94,12 @@ if ($client === null) {
 if ($method === 'POST') {
     $body = $request['body'];
     if (!is_array($body)) {
-        errorResponse('Cuerpo inválido', 400);
+        errorResponse('Cuerpo invalido', 400);
     }
 
     $action = strtolower(trim((string)($body['action'] ?? '')));
     if (!in_array($action, ['abonar', 'liquidar'], true)) {
-        errorResponse('Acción no soportada', 400);
+        errorResponse('Accion no soportada', 400);
     }
 
     $ledgers = buildCreditLedgers();
@@ -122,11 +111,53 @@ if ($method === 'POST') {
 
     $amount = round((float)($body['amount'] ?? 0), 2);
     if ($amount <= 0) {
-        errorResponse('Monto inválido', 400);
+        errorResponse('Monto invalido', 400);
     }
 
     if ($action === 'abonar' && $amount >= $balance) {
         errorResponse('El abono debe ser menor que la deuda total. Use Liquidar.', 400);
+    }
+
+    $allocations = [];
+    if ($action === 'abonar') {
+        $destination = strtolower(trim((string)($body['destination'] ?? 'selected_only')));
+        if (!in_array($destination, ['selected_only', 'all_equal'], true)) {
+            $destination = 'selected_only';
+        }
+        $selectedSaleKey = trim((string)($body['selectedSaleKey'] ?? ''));
+        if ($destination === 'selected_only' && $selectedSaleKey === '') {
+            errorResponse('Seleccione la venta a la que desea abonar.', 400);
+        }
+
+        $openSales = array_values(array_filter(
+            is_array($ledger['openSales'] ?? null) ? $ledger['openSales'] : [],
+            static function ($sale): bool {
+                return is_array($sale) && (float)($sale['pending'] ?? 0) > 0;
+            }
+        ));
+
+        if ($destination === 'all_equal') {
+            $allocations = creditPlanEqualPayment($openSales, $amount);
+            if ($allocations === []) {
+                errorResponse('No hay ventas pendientes a las que se pueda aplicar el abono.', 409);
+            }
+        } else {
+            $preview = creditPreviewTargetedPayment($openSales, $selectedSaleKey, $amount);
+            $allocations = $preview['allocations'];
+
+            if ($allocations === []) {
+                errorResponse('La venta seleccionada ya no tiene saldo pendiente.', 409);
+            }
+
+            $overflowAmount = (float)($preview['overflowAmount'] ?? 0);
+            if ($overflowAmount > 0.009) {
+                errorResponse('El monto supera el pendiente de la venta seleccionada. Cambie el destino o reduzca el abono.', 409, [
+                    'selectedSaleKey' => $selectedSaleKey,
+                    'selectedPending' => (float)($preview['selectedPending'] ?? 0),
+                    'overflowAmount' => $overflowAmount,
+                ]);
+            }
+        }
     }
 
     if ($action === 'liquidar') {
@@ -144,14 +175,16 @@ if ($method === 'POST') {
         'customerId' => $cid,
         'amount' => $amount,
         'paymentMethod' => 'cash',
-        'description' => trim((string)($body['description'] ?? ($action === 'liquidar' ? 'Liquidación de deuda' : 'Abono a deuda'))),
+        'description' => trim((string)($body['description'] ?? ($action === 'liquidar' ? 'Liquidacion de deuda' : 'Abono a deuda'))),
         'cashier' => (string)($_SESSION['name'] ?? $_SESSION['username'] ?? 'Cajero'),
         'createdAt' => date('c'),
+        'allocations' => $allocations,
     ];
     $payments[] = $payment;
     writeJsonFile($creditPaymentsPath, $payments);
 
-    // Move due date to the next month after any registered payment.
+    $nextPaymentDueDate = null;
+    $nextPaymentDueDay = null;
     foreach ($customers as &$customer) {
         if (!is_array($customer)) {
             continue;
@@ -160,10 +193,31 @@ if ($method === 'POST') {
             continue;
         }
         $customer['paymentDueDate'] = nextDueDateForCustomer($customer);
+        $dueDate = trim((string)($customer['paymentDueDate'] ?? ''));
+        $customer['paymentDueDay'] = $dueDate !== '' ? (int)substr($dueDate, 8, 2) : ($customer['paymentDueDay'] ?? null);
+        $nextPaymentDueDate = $dueDate !== '' ? $dueDate : null;
+        $nextPaymentDueDay = isset($customer['paymentDueDay']) && is_numeric($customer['paymentDueDay']) ? (int)$customer['paymentDueDay'] : null;
         break;
     }
     unset($customer);
-    writeJsonFile($customersPath, $customers);
+
+    $customersPersisted = false;
+    if (dbEnabled() && function_exists('legacyUpdateCustomerCreditSchedule')) {
+        $customersPersisted = legacyUpdateCustomerCreditSchedule($cid, $nextPaymentDueDate, $nextPaymentDueDay);
+    }
+    if (!$customersPersisted && function_exists('legacyWriteEntityOverlay')) {
+        $customersPersisted = legacyWriteEntityOverlay('customers.json', $customers);
+    }
+    if (!$customersPersisted) {
+        $customersPersisted = writeJsonBackupFile($customersPath, $customers);
+    }
+    if (!$customersPersisted) {
+        errorResponse('No se pudo guardar la fecha de pago del cliente', 500);
+    }
+
+    if (dbEnabled()) {
+        writeJsonBackupFile($customersPath, legacyReadCustomers());
+    }
 
     $freshLedgers = buildCreditLedgers();
     $freshBalance = round((float)($freshLedgers[$cid]['summary']['balance'] ?? 0), 2);
@@ -197,5 +251,6 @@ ok([
         'ultimoPago' => $lastPaymentText,
         'saldoActual' => round($balance, 2),
     ],
+    'openSales' => array_values(is_array($ledger['openSales'] ?? null) ? $ledger['openSales'] : []),
     'movimientos' => $movements,
 ]);

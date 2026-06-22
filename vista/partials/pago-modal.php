@@ -46,6 +46,24 @@
         <label class="field">Buscar cliente
           <input type="text" name="creditCustomerQ" placeholder="Nombre, telefono o ID">
         </label>
+        <label class="field">Fecha de pago
+          <input type="date" name="creditDueDate">
+        </label>
+        <label class="field">Interes %
+          <input type="number" step="0.01" min="0" name="creditInterestPct" placeholder="0.00">
+        </label>
+        <label class="field">Periodo
+          <select name="creditPeriod">
+            <option value="daily">Diario</option>
+            <option value="weekly">Semanal</option>
+            <option value="biweekly">Quincenal</option>
+            <option value="monthly" selected>Mensual</option>
+            <option value="bimonthly">Bimestral</option>
+            <option value="quarterly">Trimestral</option>
+            <option value="semiannual">Semestral</option>
+            <option value="annual">Anual</option>
+          </select>
+        </label>
         <div class="pay-credit-table-wrap">
           <table class="grid grid-compact" style="margin:0">
             <thead>
@@ -117,7 +135,7 @@
         </label>
         <label class="field-col">
           <span>Total</span>
-          <input type="text" name="total" readonly value="$0.00">
+          <input type="number" step="0.01" min="0.00" name="total" placeholder="0.00" value="0.00">
         </label>
       </div>
       <div class="bulk-summary">
@@ -134,13 +152,13 @@
 </div>
 
 <div id="modal-buscar" class="modal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true">
+  <div class="modal-card modal-card--search" role="dialog" aria-modal="true">
     <header>Buscar producto (F10)</header>
     <section>
       <input type="text" name="q" placeholder="Buscar por codigo o descripcion">
       <div class="muted">Click en un resultado para agregar.</div>
-      <div style="max-height:240px;overflow:auto;border:1px solid #e5e7eb;border-radius:6px">
-        <table class="grid" style="margin:0">
+      <div class="search-results-table-wrap">
+        <table class="grid search-results-table" style="margin:0">
           <thead>
             <tr>
               <th style="width:140px">Codigo</th>
@@ -255,6 +273,7 @@
     <footer>
       <button type="button" class="btn-secondary" id="sales-day-close">Cerrar</button>
       <button type="button" class="btn-secondary" id="sales-day-reprint-btn" disabled>Reimprimir ticket</button>
+      <button type="button" class="btn-primary" id="sales-day-invoice-btn" disabled>Facturar venta</button>
       <button type="button" class="btn-secondary" id="sales-day-assign-btn" hidden>Asignar cliente</button>
       <button type="button" class="btn-primary" id="sales-day-charge-btn" hidden>Cobrar pendiente</button>
       <button type="button" class="btn-danger" id="sales-day-cancel-pending-btn" hidden>Cancelar pendiente</button>
@@ -276,6 +295,27 @@
       <button type="button" class="btn-secondary" id="sale-discount-clear">Quitar descuento</button>
       <button type="button" class="btn-secondary" id="sale-discount-cancel">Cancelar</button>
       <button type="button" class="btn-primary" id="sale-discount-apply">Aplicar</button>
+    </footer>
+  </div>
+</div>
+
+<div id="modal-price-change" class="modal" aria-hidden="true">
+  <div class="modal-card modal-card--compact" role="dialog" aria-modal="true">
+    <header>Cambiar precio</header>
+    <section>
+      <label class="field">Precio normal:
+        <input type="text" id="sale-price-normal" readonly>
+      </label>
+      <label class="field">Nuevo precio:
+        <input type="number" id="sale-price-new" min="0" step="0.01" placeholder="0.00">
+      </label>
+      <label class="field">Descuento:
+        <input type="text" id="sale-price-discount" readonly>
+      </label>
+    </section>
+    <footer>
+      <button type="button" class="btn-secondary" id="sale-price-cancel">Cancelar</button>
+      <button type="button" class="btn-primary" id="sale-price-apply">Cambiar precio</button>
     </footer>
   </div>
 </div>

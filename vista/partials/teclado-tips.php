@@ -10,6 +10,5 @@
   <button type="button" class="btn" id="btn-del"><span class="kbd">DEL</span> Borrar Art.</button>
   <button type="button" class="btn" id="btn-verificador"><span class="kbd">F9</span> Verificador</button>
   <button type="button" class="btn"><span class="kbd">ENTER</span> Agregar Producto</button>
-  <span class="muted" style="margin-left:auto">elev*nta (UI similar)</span>
 </div>
 

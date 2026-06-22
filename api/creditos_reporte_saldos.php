@@ -112,13 +112,14 @@ function customersScheduleMap(array $customers): array
 }
 
 /** @return array{totalPending:float,rows:array<int,array<string,mixed>>,pagination:array<string,int>} */
-function creditReportFetchPagedDb(int $page, int $pageSize, array $scheduleMap): array
+function creditReportFetchPagedDb(int $page, int $pageSize, array $scheduleMap, bool $all = false): array
 {
     $pdo = db();
-    $offset = ($page - 1) * $pageSize;
 
     $countStmt = $pdo->query('SELECT COUNT(*) FROM CLIENTESV2');
     $total = (int)$countStmt->fetchColumn();
+    $effectivePageSize = $all ? max(1, $total) : $pageSize;
+    $offset = $all ? 0 : (($page - 1) * $effectivePageSize);
 
     $sql = <<<SQL
 SELECT
@@ -157,12 +158,17 @@ ORDER BY (COALESCE(CAST(cr.SALDO_ACTUAL AS DECIMAL(12,2)), 0.00)
        - COALESCE((SELECT SUM(CAST(m.MONTO AS DECIMAL(12,2))) FROM MOVIMIENTOS m WHERE m.CLIENTE_ID = CONCAT('c-', LPAD(CAST(c.ID AS UNSIGNED), 3, '0')) AND m.TIPO LIKE 'credit_payment%'), 0.00)
       ) DESC,
       NOMBRE_COMPLETO ASC
-LIMIT :limit OFFSET :offset
 SQL;
 
+    if (!$all) {
+        $sql .= "\nLIMIT :limit OFFSET :offset";
+    }
+
     $stmt = $pdo->prepare($sql);
-    $stmt->bindValue(':limit', $pageSize, PDO::PARAM_INT);
-    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    if (!$all) {
+        $stmt->bindValue(':limit', $effectivePageSize, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    }
     $stmt->execute();
     $dbRows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -240,15 +246,15 @@ SQL;
         'rows' => $rows,
         'pagination' => [
             'page' => $page,
-            'pageSize' => $pageSize,
+            'pageSize' => $effectivePageSize,
             'total' => $total,
-            'totalPages' => max(1, (int)ceil($total / max(1, $pageSize))),
+            'totalPages' => $all ? 1 : max(1, (int)ceil($total / max(1, $effectivePageSize))),
         ],
     ];
 }
 
 /** @return array{totalPending:float,rows:array<int,array<string,mixed>>,pagination:array<string,int>} */
-function creditReportFetchPagedLegacy(int $page, int $pageSize): array
+function creditReportFetchPagedLegacy(int $page, int $pageSize, bool $all = false): array
 {
     $customers = readJsonFile(storagePath('customers.json'));
     $ledgers = buildCreditLedgers();
@@ -371,27 +377,29 @@ function creditReportFetchPagedLegacy(int $page, int $pageSize): array
     unset($row);
 
     $total = count($rows);
-    $offset = ($page - 1) * $pageSize;
-    $items = array_slice($rows, $offset, $pageSize);
+    $effectivePageSize = $all ? max(1, $total) : $pageSize;
+    $offset = $all ? 0 : (($page - 1) * $effectivePageSize);
+    $items = $all ? $rows : array_slice($rows, $offset, $effectivePageSize);
 
     return [
         'totalPending' => round($totalPending, 2),
         'rows' => $items,
         'pagination' => [
             'page' => $page,
-            'pageSize' => $pageSize,
+            'pageSize' => $effectivePageSize,
             'total' => $total,
-            'totalPages' => max(1, (int)ceil($total / max(1, $pageSize))),
+            'totalPages' => $all ? 1 : max(1, (int)ceil($total / max(1, $effectivePageSize))),
         ],
     ];
 }
 
 $page = max(1, (int)($_GET['page'] ?? 1));
 $pageSize = max(1, min(100, (int)($_GET['pageSize'] ?? 15)));
+$loadAll = in_array(strtolower((string)($_GET['all'] ?? '0')), ['1', 'true', 'yes', 'si'], true);
 
 if (canUseCreditsReportDb()) {
     $scheduleMap = customersScheduleMap(readJsonFile($customersPath));
-    ok(creditReportFetchPagedDb($page, $pageSize, $scheduleMap));
+    ok(creditReportFetchPagedDb($page, $pageSize, $scheduleMap, $loadAll));
 }
 
-ok(creditReportFetchPagedLegacy($page, $pageSize));
+ok(creditReportFetchPagedLegacy($page, $pageSize, $loadAll));

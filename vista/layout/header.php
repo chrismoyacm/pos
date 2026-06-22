@@ -10,8 +10,7 @@ $persistenceMessage = trim((string)($persistenceStatus['message'] ?? ''));
 ?>
 <header class="topbar">
   <div class="logo">
-    <img src="assets/img/logo.svg" alt="logo">
-    <span>Punto de Venta</span>
+    <img src="assets/img/tecnoclick-logo.png" alt="Tecnoclick">
   </div>
   <div class="topbar-user">
     <span class="user-name"><?php echo htmlspecialchars($userName); ?></span>

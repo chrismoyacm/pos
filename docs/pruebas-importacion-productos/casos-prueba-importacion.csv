@@ -1,0 +1,14 @@
+CASO,ARCHIVO_REFERENCIA,RESULTADO_ESPERADO,CODIGO,DETALLE
+OK minimo,01-ok-minimo.csv,Debe pasar,7501000010001,Importacion con campos obligatorios
+OK completo,02-ok-completo.csv,Debe pasar,7501000010002,Importacion con encabezados legacy y campos opcionales
+OK kit,03-ok-kit.csv,Debe pasar,7501000010003,Importacion de producto marcado como kit
+Error sin codigo,11-error-sin-barcode.csv,Debe fallar,,Fila sin CODIGO
+Error sin descripcion,12-error-sin-nombre.csv,Debe fallar,7501000010012,Fila sin DESCRIPCION
+Error precio invalido,13-error-precio-invalido.csv,Debe fallar,7501000010013,PVENTA no numerico
+Error costo invalido,14-error-costo-invalido.csv,Debe fallar,7501000010014,PCOSTO no numerico
+Error stock invalido,15-error-stock-invalido.csv,Debe fallar,7501000010015,DINVENTARIO no numerico
+Error tipo venta invalido,16-error-unitType-invalido.csv,Debe fallar,7501000010016,TVENTA o ES_KIT invalido
+Error codigo duplicado en archivo,17-error-codigo-duplicado.csv,Debe fallar,7501000010017,CODIGO repetido dentro del mismo CSV
+Error columna faltante,18-error-header-faltante.csv,Debe fallar,7501000010018,Falta encabezado obligatorio
+Error columna desconocida,19-error-header-desconocido.csv,Debe fallar,7501000010019,Encabezado no soportado
+Error columna repetida,20-error-header-duplicado.csv,Debe fallar,7501000010020,Encabezado duplicado

@@ -1,0 +1,45 @@
+{
+    "ok": true,
+    "steps": [
+        {
+            "step": "signature_profile",
+            "signatureMode": "mock"
+        },
+        {
+            "step": "document_built",
+            "documentId": "doc-000041",
+            "environment": "1",
+            "secuencial": "000001202",
+            "accessKey": "0606202601100440896700110010010000012028509245711",
+            "status": "draft"
+        },
+        {
+            "step": "generarXMLFactura",
+            "status": "xml_generated",
+            "generatedXml": "C:\\inetpub\\wwwroot\\pos\\storage\\facturacion\\xml\\generados\\0606202601100440896700110010010000012028509245711.xml"
+        },
+        {
+            "step": "firmarXML",
+            "status": "signed",
+            "signedXml": "C:\\inetpub\\wwwroot\\pos\\storage\\facturacion\\xml\\firmados\\0606202601100440896700110010010000012028509245711.xml"
+        },
+        {
+            "step": "enviarSRI",
+            "status": "sent",
+            "receptionStatus": "RECIBIDA",
+            "messages": []
+        },
+        {
+            "step": "consultarAutorizacion",
+            "status": "authorized",
+            "authorizationStatus": "AUT",
+            "messages": []
+        }
+    ],
+    "documentId": "doc-000041",
+    "accessKey": "0606202601100440896700110010010000012028509245711",
+    "currentStatus": "authorized",
+    "receptionStatus": "RECIBIDA",
+    "authorizationStatus": "AUT",
+    "signedXml": "C:\\inetpub\\wwwroot\\pos\\storage\\facturacion\\xml\\firmados\\0606202601100440896700110010010000012028509245711.xml"
+}

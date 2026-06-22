@@ -43,6 +43,10 @@
       <span>Nombre remitente</span>
       <input type="text" name="fromName">
     </label>
+    <label class="factura-field factura-field--wide">
+      <span>Correo para prueba</span>
+      <input type="email" name="testEmail" placeholder="cliente@correo.com">
+    </label>
   </form>
   <div class="facturacion-note">
     Ambos modos firman y consumen servicios reales del SRI. <code>Pruebas SRI</code> usa certificacion y <code>Produccion SRI</code> usa el ambiente productivo.
@@ -50,6 +54,7 @@
   <div class="facturacion-card-footer">
     <div class="facturacion-status" id="facturacion-firma-status"></div>
     <button class="btn-secondary" type="button" id="facturacion-firma-test">Probar certificado</button>
+    <button class="btn-secondary" type="button" id="facturacion-email-test">Probar correo</button>
     <button class="btn-primary" type="button" id="facturacion-firma-save">Guardar perfil y firma</button>
   </div>
 </section>

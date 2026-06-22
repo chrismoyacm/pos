@@ -47,6 +47,13 @@ function salesStatus(array $sale): string
     return 'completed';
 }
 
+function salesInventoryControlEnabled(): bool
+{
+    $settings = readJsonFile(storagePath('settings.json'));
+    $enabled = $settings['enabledOptions']['inventory_control'] ?? true;
+    return $enabled !== false;
+}
+
 function pendingTicketNextId(array $sales): string
 {
     $max = 0;
@@ -163,6 +170,10 @@ function salesFooterMeta(array $sale): string
         'discountAmount' => salesToFloat($sale['discountAmount'] ?? 0),
         'transferMeta' => is_array($sale['transferMeta'] ?? null) ? $sale['transferMeta'] : ['reference' => '', 'phone' => ''],
         'mixedPayments' => is_array($sale['mixedPayments'] ?? null) ? $sale['mixedPayments'] : null,
+        'creditDueDate' => trim((string)($sale['creditDueDate'] ?? '')),
+        'creditInterestPct' => salesToFloat($sale['creditInterestPct'] ?? 0),
+        'creditPeriod' => trim((string)($sale['creditPeriod'] ?? '')),
+        'creditPeriodDays' => (int)($sale['creditPeriodDays'] ?? 0),
     ];
 
     $encoded = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -525,6 +536,10 @@ if ($action === 'create_pending' || $action === 'update_pending') {
     $customerName = trim((string)($body['customerName'] ?? ''));
     $paymentMethod = strtolower(trim((string)($body['paymentMethod'] ?? 'cash')));
     $paymentNote = trim((string)($body['paymentNote'] ?? ''));
+    $creditDueDate = trim((string)($body['creditDueDate'] ?? ''));
+    $creditInterestPct = round((float)($body['creditInterestPct'] ?? 0), 2);
+    $creditPeriod = trim((string)($body['creditPeriod'] ?? 'monthly'));
+    $creditPeriodDays = max(0, (int)($body['creditPeriodDays'] ?? 0));
     $amountPending = round((float)($body['amountPending'] ?? 0), 2);
     $discountPct = round((float)($body['discountPct'] ?? 0), 2);
     $discountAmount = round((float)($body['discountAmount'] ?? 0), 2);
@@ -569,6 +584,10 @@ if ($action === 'create_pending' || $action === 'update_pending') {
                 'paymentMethod' => $paymentMethod,
                 'mixedPayments' => $paymentMethod === 'mixed' ? $mixedPayments : null,
                 'paymentNote' => $paymentNote,
+                'creditDueDate' => $creditDueDate,
+                'creditInterestPct' => $creditInterestPct,
+                'creditPeriod' => $creditPeriod,
+                'creditPeriodDays' => $creditPeriodDays,
                 'customerId' => $customerId,
                 'customerName' => $customerName,
                 'amountPending' => $amountPending,
@@ -628,6 +647,10 @@ if ($action === 'create_pending' || $action === 'update_pending') {
                 'paymentMethod' => $paymentMethod,
                 'mixedPayments' => $paymentMethod === 'mixed' ? $mixedPayments : null,
                 'paymentNote' => $paymentNote,
+                'creditDueDate' => $creditDueDate,
+                'creditInterestPct' => $creditInterestPct,
+                'creditPeriod' => $creditPeriod,
+                'creditPeriodDays' => $creditPeriodDays,
                 'customerId' => $customerId,
                 'customerName' => $customerName,
                 'amountPending' => $amountPending,
@@ -662,6 +685,10 @@ if ($action === 'create_pending' || $action === 'update_pending') {
         'paymentMethod' => $paymentMethod,
         'mixedPayments' => $paymentMethod === 'mixed' ? $mixedPayments : null,
         'paymentNote' => $paymentNote,
+        'creditDueDate' => $creditDueDate,
+        'creditInterestPct' => $creditInterestPct,
+        'creditPeriod' => $creditPeriod,
+        'creditPeriodDays' => $creditPeriodDays,
         'customerId' => $customerId,
         'customerName' => $customerName,
         'amountPending' => $amountPending,
@@ -1114,6 +1141,10 @@ $customerName = trim((string)($body['customerName'] ?? ''));
 $paymentMethod = strtolower(trim((string)($body['paymentMethod'] ?? 'cash')));
 $mixedPaymentsBody = $body['mixedPayments'] ?? null;
 $paymentNote = trim((string)($body['paymentNote'] ?? ''));
+$creditDueDate = trim((string)($body['creditDueDate'] ?? ''));
+$creditInterestPct = round((float)($body['creditInterestPct'] ?? 0), 2);
+$creditPeriod = trim((string)($body['creditPeriod'] ?? 'monthly'));
+$creditPeriodDays = max(0, (int)($body['creditPeriodDays'] ?? 0));
 $clientRequestId = trim((string)($body['clientRequestId'] ?? ''));
 $mixedPayments = [
     'cash' => 0.0,
@@ -1214,6 +1245,7 @@ foreach ($products as $idx => $p) {
 
 $ticketId = $action === 'complete_pending' ? $pendingTicketId : (salesCanUseTicketsDb() ? salesNextTicketIdFromDb() : (string)(count($sales) + 1));
 $movementEntries = [];
+$inventoryControlEnabled = salesInventoryControlEnabled();
 
 foreach ($items as $it) {
     if (!is_array($it)) {
@@ -1231,6 +1263,9 @@ foreach ($items as $it) {
     $inventoryEnabled = (bool)($products[$pIdx]['inventoryEnabled'] ?? true);
     $unitType = strtolower(trim((string)($products[$pIdx]['unitType'] ?? 'unit')));
     if ($unitType === 'package') {
+        if (!$inventoryControlEnabled) {
+            continue;
+        }
         $packageItems = is_array($products[$pIdx]['packageItems'] ?? null) ? $products[$pIdx]['packageItems'] : [];
         if ($packageItems === []) {
             errorResponse('No se puede armar el kit ' . (string)($products[$pIdx]['name'] ?? $id) . ' porque no tiene componentes configurados.', 409);
@@ -1284,7 +1319,7 @@ foreach ($items as $it) {
         continue;
     }
 
-    if (!$inventoryEnabled) {
+    if (!$inventoryControlEnabled || !$inventoryEnabled) {
         continue;
     }
     $current = round((float)($products[$pIdx]['stock'] ?? 0), 3);
@@ -1317,6 +1352,10 @@ $sale = [
     'paymentMethod' => $paymentMethod,
     'mixedPayments' => $paymentMethod === 'mixed' ? $mixedPayments : null,
     'paymentNote' => $paymentNote,
+    'creditDueDate' => $creditDueDate,
+    'creditInterestPct' => $creditInterestPct,
+    'creditPeriod' => $creditPeriod,
+    'creditPeriodDays' => $creditPeriodDays,
     'customerId' => $customerId,
     'customerName' => $customerName,
     'amountPending' => $amountPending,

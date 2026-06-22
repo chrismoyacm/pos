@@ -1,4 +1,4 @@
-/* global $, window, document, Blob, URL */
+﻿/* global $, window, document, Blob, URL */
 (function () {
   'use strict';
 
@@ -53,6 +53,37 @@
   function formatMoney(n) {
     return '$' + Number(n || 0).toFixed(2);
   }
+
+  const IMPORT_HEADER_SPECS = [
+    { canonical: 'CODIGO', internal: 'barcode', required: true, aliases: ['codigo', 'barcode'] },
+    { canonical: 'DESCRIPCION', internal: 'name', required: true, aliases: ['descripcion', 'description', 'name'] },
+    { canonical: 'PCOSTO', internal: 'cost', required: false, aliases: ['pcosto', 'cost'] },
+    { canonical: 'PVENTA', internal: 'price', required: false, aliases: ['pventa', 'price'] },
+    { canonical: 'TVENTA', internal: 'saleType', required: false, aliases: ['tventa', 'unittype'] },
+    { canonical: 'DEPT', internal: 'departmentId', required: false, aliases: ['dept', 'department', 'departmentid'] },
+    { canonical: 'PROVID', internal: 'providerCode', required: false, aliases: ['provid', 'provider', 'providercode'] },
+    { canonical: 'MAYOREO', internal: 'wholesalePrice', required: false, aliases: ['mayoreo', 'wholesaleprice'] },
+    { canonical: 'DINVENTARIO', internal: 'stock', required: false, aliases: ['dinventario', 'stock'] },
+    { canonical: 'DINVMINIMO', internal: 'minStock', required: false, aliases: ['dinvminimo', 'minstock'] },
+    { canonical: 'DINVMAXIMO', internal: 'maxStock', required: false, aliases: ['dinvmaximo', 'maxstock'] },
+    { canonical: 'PORCENTAJE_GANANCIA', internal: 'margin', required: false, aliases: ['porcentaje_ganancia', 'margin'] },
+    { canonical: 'IMPUESTOS', internal: 'iva', required: false, aliases: ['impuestos', 'iva'] },
+    { canonical: 'PFINAL', internal: 'finalPrice', required: false, aliases: ['pfinal', 'finalprice'] },
+    { canonical: 'PMAYOREOFINAL', internal: 'finalWholesalePrice', required: false, aliases: ['pmayoreofinal', 'finalwholesaleprice'] },
+    { canonical: 'ES_KIT', internal: 'isKit', required: false, aliases: ['es_kit', 'iskit'] },
+    { canonical: 'USA_INVENTARIO', internal: 'inventoryEnabled', required: false, aliases: ['usa_inventario', 'inventoryenabled'] },
+    { canonical: 'ID', internal: '', required: false, aliases: ['id'] },
+    { canonical: 'UMEDIDA', internal: '', required: false, aliases: ['umedida'] },
+    { canonical: 'IPRIORIDAD', internal: '', required: false, aliases: ['iprioridad'] },
+    { canonical: 'CHECADO_EN', internal: '', required: false, aliases: ['checado_en'] },
+    { canonical: 'COMPONENTES', internal: '', required: false, aliases: ['componentes'] },
+    { canonical: 'PVENTA_ANTERIOR', internal: '', required: false, aliases: ['pventa_anterior'] },
+    { canonical: 'PCOSTO_ANTERIOR', internal: '', required: false, aliases: ['pcosto_anterior'] },
+    { canonical: 'PMAYOREO_ANTERIOR', internal: '', required: false, aliases: ['pmayoreo_anterior'] },
+    { canonical: 'MEDIDA_ID', internal: '', required: false, aliases: ['medida_id'] },
+    { canonical: 'ELIMINADO_EN', internal: '', required: false, aliases: ['eliminado_en'] }
+  ];
+  const IMPORT_BATCH_SIZE = 250;
 
   function ajaxErrorMessage(xhr, fallbackMessage) {
     const backendError = xhr?.responseJSON?.error;
@@ -198,7 +229,7 @@
     if (byId) return formatIvaPercent(byId.percentage) || 'No';
     const numeric = Number(raw.replace('iva', '').replace('%', '').trim());
     if (numeric > 0) return formatIvaPercent(numeric) || 'No';
-    if (raw === 'si' || raw === 'sï¿½' || raw === 'yes' || raw === 'true') {
+    if (raw === 'si' || raw === 'sÃ¯Â¿Â½' || raw === 'yes' || raw === 'true') {
       const labels = availableIvaLabels().filter(function (label) { return label !== 'No'; });
       return labels[0] || 'No';
     }
@@ -223,7 +254,10 @@
     promotions: [],
     selectedPromotionId: null,
     promoSelectedProductIds: [],
+    importHeaders: [],
     importRows: [],
+    importFailedRows: [],
+    importBusy: false,
     catalogPage: 1,
     catalogPageSize: 20,
     catalogTotal: 0,
@@ -271,7 +305,7 @@
     });
 
     $pager.append($prev);
-    $pager.append('<span class="table-pager-status">Página ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' · ' + state.catalogTotal + ' registros</span>');
+    $pager.append('<span class="table-pager-status">PÃ¡gina ' + state.catalogPage + ' de ' + state.catalogTotalPages + ' Â· ' + state.catalogTotal + ' registros</span>');
     $pager.append($next);
   }
 
@@ -809,7 +843,7 @@
     }
     $('#prod-delete-summary').html(
       '<strong>' + escapeHtml(product.name || '') + '</strong><br>' +
-      'Código: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
+      'CÃ³digo: ' + escapeHtml(product.barcode || product.id || '') + '<br>' +
       'Precio: ' + formatMoney(product.price || 0) + '<br>' +
       'Existencia: ' + escapeHtml(String(product.stock ?? 0))
     );
@@ -1584,7 +1618,7 @@
       showSaveFeedback('Selecciona un producto de la lista para eliminar.', 'error');
       return;
     }
-    if (!window.confirm('¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
+    if (!window.confirm('Â¿Eliminar el producto "' + (product.name || product.id) + '"?')) {
       return;
     }
 
@@ -1680,7 +1714,7 @@
     if (!department) {
       return;
     }
-    if (!window.confirm('¿Eliminar el departamento "' + department.name + '"?')) {
+    if (!window.confirm('Â¿Eliminar el departamento "' + department.name + '"?')) {
       return;
     }
 
@@ -2277,7 +2311,7 @@
   function savePromotion() {
     const payload = readPromotionForm();
     if (!payload.name) {
-      window.alert('Nombre de promoción requerido.');
+      window.alert('Nombre de promociÃ³n requerido.');
       return;
     }
     if (!payload.startDate || !payload.endDate) {
@@ -2302,7 +2336,7 @@
       data: JSON.stringify(payload)
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo guardar la promoción.');
+        window.alert(res.error || 'No se pudo guardar la promociÃ³n.');
         return;
       }
       state.selectedPromotionId = res.data?.id || null;
@@ -2310,7 +2344,7 @@
         fillPromotionForm(selectedPromotion() || promotionDefaults());
       });
     }).fail(function (xhr) {
-      window.alert(ajaxErrorMessage(xhr, 'No se pudo guardar la promoción.'));
+      window.alert(ajaxErrorMessage(xhr, 'No se pudo guardar la promociÃ³n.'));
     });
   }
 
@@ -2319,7 +2353,7 @@
     if (!promo) {
       return;
     }
-    if (!window.confirm('¿Eliminar la promoción "' + (promo.name || promo.id) + '"?')) {
+    if (!window.confirm('Â¿Eliminar la promociÃ³n "' + (promo.name || promo.id) + '"?')) {
       return;
     }
 
@@ -2330,7 +2364,7 @@
       data: JSON.stringify({ action: 'delete_promotion', id: promo.id })
     }).done(res => {
       if (!res.ok) {
-        window.alert(res.error || 'No se pudo eliminar la promoción.');
+        window.alert(res.error || 'No se pudo eliminar la promociÃ³n.');
         return;
       }
       state.selectedPromotionId = null;
@@ -2368,10 +2402,11 @@
     });
   }
 
-  function parseCsvLine(line) {
+  function parseCsvLine(line, delimiter) {
     const result = [];
     let current = '';
     let inQuotes = false;
+    const fieldDelimiter = delimiter || ',';
     for (let i = 0; i < line.length; i += 1) {
       const ch = line[i];
       if (ch === '"') {
@@ -2381,7 +2416,7 @@
         } else {
           inQuotes = !inQuotes;
         }
-      } else if (ch === ',' && !inQuotes) {
+      } else if (ch === fieldDelimiter && !inQuotes) {
         result.push(current.trim());
         current = '';
       } else {
@@ -2395,36 +2430,344 @@
   function parseCsvText(text) {
     const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
     if (lines.length < 2) {
-      return [];
+      return { headers: [], rows: [] };
     }
-    const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase());
+    const firstLine = lines[0] || '';
+    const commaCount = (firstLine.match(/,/g) || []).length;
+    const semicolonCount = (firstLine.match(/;/g) || []).length;
+    const delimiter = semicolonCount > commaCount ? ';' : ',';
+    const headers = parseCsvLine(firstLine, delimiter).map(function (h) {
+      return (h || '').toString().replace(/^\uFEFF/, '').trim();
+    });
     const rows = [];
     for (let i = 1; i < lines.length; i += 1) {
-      const cols = parseCsvLine(lines[i]);
+      const cols = parseCsvLine(lines[i], delimiter);
       const row = {};
       headers.forEach((h, idx) => {
         row[h] = cols[idx] || '';
       });
       rows.push(row);
     }
-    return rows;
+    return { headers, rows };
+  }
+
+  function canonicalImportHeaderSpec(header) {
+    const key = (header || '').toString().replace(/^\uFEFF/, '').trim().toLowerCase();
+    return IMPORT_HEADER_SPECS.find(function (spec) {
+      if (spec.canonical.toLowerCase() === key) {
+        return true;
+      }
+      return Array.isArray(spec.aliases) && spec.aliases.includes(key);
+    }) || null;
+  }
+
+  function validateImportHeaders(headers) {
+    const normalizedSpecs = Array.isArray(headers)
+      ? headers.map(canonicalImportHeaderSpec).filter(Boolean)
+      : [];
+    const normalizedCanonicals = normalizedSpecs.map(function (spec) {
+      return spec.canonical;
+    });
+    const missing = IMPORT_HEADER_SPECS.filter(function (spec) {
+      return spec.required && !normalizedCanonicals.includes(spec.canonical);
+    }).map(function (spec) {
+      return spec.canonical;
+    });
+    if (missing.length) {
+      return 'Faltan columnas obligatorias: ' + missing.join(', ') + '.';
+    }
+
+    const duplicates = normalizedCanonicals.filter((header, index) => normalizedCanonicals.indexOf(header) !== index);
+    if (duplicates.length) {
+      return 'Hay columnas repetidas en el archivo: ' + Array.from(new Set(duplicates)).join(', ') + '.';
+    }
+
+    const unknown = (Array.isArray(headers) ? headers : []).filter(function (h) {
+      return !canonicalImportHeaderSpec(h);
+    }).map(function (h) {
+      return (h || '').toString().trim();
+    }).filter(Boolean);
+    if (unknown.length) {
+      return 'Hay columnas no reconocidas: ' + unknown.join(', ') + '.';
+    }
+
+    return '';
+  }
+
+  function normalizeImportRows(headers, rows) {
+    const headerSpecs = headers.map(canonicalImportHeaderSpec);
+    return rows.map(function (row) {
+      const normalized = {};
+      headers.forEach(function (header, idx) {
+        const spec = headerSpecs[idx];
+        if (!spec || !spec.internal) {
+          return;
+        }
+        const rawValue = row[header] || '';
+        normalized[spec.internal] = rawValue;
+      });
+      return normalized;
+    });
+  }
+
+  function normalizeImportNumberText(value) {
+    const text = (value || '').toString().trim().replace(/\s+/g, '');
+    if (!text) return '';
+    if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(text)) {
+      return text.replace(/,/g, '');
+    }
+    if (/^-?\d+,\d+$/.test(text)) {
+      return text.replace(',', '.');
+    }
+    return text;
+  }
+
+  function validateImportRowsBeforeRun(rows) {
+    const seen = new Map();
+    rows.forEach(function (row, index) {
+      row._line = row._line || (index + 2);
+      row._importIssues = [];
+      row._importStatus = 'ok';
+    });
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index] || {};
+      const barcode = (row.barcode || '').toString().trim().toLowerCase();
+      const name = (row.name || '').toString().trim();
+      if (!barcode) {
+        row._importIssues.push('Sin codigo');
+      }
+      if (!name) {
+        row._importIssues.push('Sin descripcion');
+      }
+      if (barcode && seen.has(barcode)) {
+        row._importIssues.push('Codigo repetido con fila ' + seen.get(barcode));
+      } else if (barcode) {
+        seen.set(barcode, index + 2);
+      }
+
+      ['price', 'cost', 'stock', 'minStock', 'maxStock', 'wholesalePrice', 'margin'].forEach(function (field) {
+        const raw = (row[field] || '').toString().trim();
+        if (raw && Number.isNaN(Number(normalizeImportNumberText(raw)))) {
+          row._importIssues.push(field + ' invalido');
+        }
+      });
+
+      if (row._importIssues.length) {
+        row._importStatus = 'warning';
+      }
+    }
+
+    const okCount = rows.filter(function (row) { return row._importStatus === 'ok'; }).length;
+    const warnCount = rows.length - okCount;
+    return { okCount: okCount, warnCount: warnCount };
+  }
+
+  function importSaleTypeLabel(value, isKit) {
+    if ((isKit || '').toString().trim().toLowerCase() === 't' || ['1', 'true', 'si', 's', 'yes', 'y'].includes((isKit || '').toString().trim().toLowerCase())) {
+      return 'KIT';
+    }
+    return ((value || '').toString().trim().toUpperCase() === 'D') ? 'GRANEL' : 'UNIDAD';
+  }
+
+  function updateImportProgress(percent, processed, total) {
+    const safePercent = Math.max(0, Math.min(100, Number(percent || 0)));
+    $('#prod-import-progress').prop('hidden', false);
+    $('#prod-import-progress-fill').css('width', safePercent.toFixed(2) + '%');
+    const meta = total > 0
+      ? (safePercent.toFixed(0) + '% - ' + processed + ' de ' + total + ' filas procesadas')
+      : (safePercent.toFixed(0) + '%');
+    $('#prod-import-progress-meta').text(meta);
+  }
+
+  function updateImportProgressRunning(startIndex, batchSize, total) {
+    const totalBatches = Math.max(1, Math.ceil(total / IMPORT_BATCH_SIZE));
+    const currentBatch = Math.min(totalBatches, Math.floor(startIndex / IMPORT_BATCH_SIZE) + 1);
+    const baselinePercent = total > 0 ? (startIndex / total) * 100 : 0;
+    const visiblePercent = Math.max(8, Math.min(95, baselinePercent + Math.min(20, (batchSize / Math.max(total, 1)) * 100)));
+    $('#prod-import-progress').prop('hidden', false);
+    $('#prod-import-progress-fill').css('width', visiblePercent.toFixed(2) + '%');
+    $('#prod-import-progress-meta').text('Procesando lote ' + currentBatch + ' de ' + totalBatches + '...');
+  }
+
+  function resetImportProgress() {
+    $('#prod-import-progress').prop('hidden', true);
+    $('#prod-import-progress-fill').css('width', '0%');
+    $('#prod-import-progress-meta').text('0%');
+  }
+
+  function setImportBusy(isBusy) {
+    state.importBusy = !!isBusy;
+    $('#prod-import-file, #prod-import-mode, #prod-import-preview-btn, #prod-import-run-btn').prop('disabled', !!isBusy);
+    if (isBusy) {
+      $('#prod-import-run-btn').text('Importando...');
+      return;
+    }
+    $('#prod-import-run-btn').text('Importar').prop('disabled', state.importRows.length === 0);
   }
 
   function renderImportPreview(rows) {
     const $tbody = $('#prod-import-preview-body').empty();
     rows.slice(0, 300).forEach(row => {
+      const taxLabel = row.iva || row.impuestos || '';
+      const ok = row._importStatus !== 'warning';
+      const statusText = ok ? 'OK - Apta' : 'Revisar: ' + (row._importIssues || []).join(', ');
       $tbody.append(`
-        <tr>
+        <tr class="${ok ? '' : 'prod-import-row-warning'}">
           <td>${escapeHtml(row.barcode || '')}</td>
           <td>${escapeHtml(row.name || '')}</td>
-          <td class="catalog-money">${formatMoney(row.price || 0)}</td>
+          <td class="catalog-money">${formatMoney(row.price || row.finalPrice || 0)}</td>
           <td class="catalog-money">${formatMoney(row.cost || 0)}</td>
-          <td>${escapeHtml(row.department || 'Sin Departamento')}</td>
+          <td>${escapeHtml(String(row.departmentId || row.department || ''))}</td>
           <td class="catalog-center">${escapeHtml(String(row.stock || 0))}</td>
-          <td>${escapeHtml(row.provider || '')}</td>
-          <td class="catalog-center">${escapeHtml(normalizeIvaLabel(row.iva))}</td>
+          <td>${escapeHtml(row.providerCode || row.provider || '')}</td>
+          <td class="catalog-center">${escapeHtml(taxLabel ? normalizeIvaLabel(taxLabel) : '')}</td>
+          <td class="${ok ? 'prod-import-status-ok' : 'prod-import-status-warning'}">${escapeHtml(statusText)}</td>
         </tr>
       `);
+    });
+  }
+
+  function renderImportFailedRows(rows) {
+    state.importFailedRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    const list = state.importFailedRows;
+    const $box = $('#prod-import-failed');
+    if (!list.length) {
+      $box.prop('hidden', true).empty();
+      return;
+    }
+
+    const rowsHtml = list.slice(0, 200).map(function (row, index) {
+      return (
+        '<tr>' +
+          '<td>' + escapeHtml(row.line === null || row.line === undefined ? '' : String(row.line)) + '</td>' +
+          '<td><input class="prod-import-failed-input" data-failed-index="' + index + '" data-field="barcode" value="' + escapeHtml(row.barcode || '') + '"></td>' +
+          '<td><input class="prod-import-failed-input" data-failed-index="' + index + '" data-field="name" value="' + escapeHtml(row.name || '') + '"></td>' +
+          '<td>' + escapeHtml(row.error || 'Error no especificado') + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    $box.prop('hidden', false).html(
+      '<div class="prod-import-failed-head">' +
+        '<strong>Filas no importadas: ' + list.length + '</strong>' +
+        '<div class="prod-import-failed-actions">' +
+          '<button type="button" class="btn-secondary" id="prod-import-failed-download">Descargar errores CSV</button>' +
+          '<button type="button" class="btn-primary" id="prod-import-failed-retry">Guardar correcciones</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="catalog-table-wrap prod-import-failed-wrap">' +
+        '<table class="grid grid-compact catalog-table">' +
+          '<thead><tr><th style="width:80px">Fila</th><th style="width:140px">Codigo</th><th>Descripcion</th><th>Error</th></tr></thead>' +
+          '<tbody>' + rowsHtml + '</tbody>' +
+        '</table>' +
+      '</div>' +
+      (list.length > 200 ? '<div class="muted">Se muestran las primeras 200 filas con error.</div>' : '')
+    );
+
+    $('#prod-import-failed-download').on('click', downloadImportFailedRows);
+    $('#prod-import-failed-retry').on('click', retryCorrectedImportFailedRows);
+  }
+
+  function importCsvEscape(value) {
+    const text = (value === null || value === undefined ? '' : value).toString();
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+
+  function syncImportFailedRowsFromInputs() {
+    $('.prod-import-failed-input').each(function () {
+      const index = Number($(this).data('failed-index'));
+      const field = ($(this).data('field') || '').toString();
+      if (!Number.isInteger(index) || !state.importFailedRows[index] || !field) {
+        return;
+      }
+      state.importFailedRows[index][field] = ($(this).val() || '').toString();
+    });
+  }
+
+  function failedRowSource(row) {
+    return $.extend({}, row.source || {}, {
+      barcode: row.barcode || '',
+      name: row.name || ''
+    });
+  }
+
+  function downloadImportFailedRows() {
+    syncImportFailedRowsFromInputs();
+    const headers = state.importHeaders.length ? state.importHeaders : ['CODIGO', 'DESCRIPCION'];
+    const lines = [headers.map(importCsvEscape).join(';')];
+    state.importFailedRows.forEach(function (row) {
+      const source = failedRowSource(row);
+      const byCanonical = $.extend({}, source, {
+        CODIGO: row.barcode || source.CODIGO || source.codigo || '',
+        DESCRIPCION: row.name || source.DESCRIPCION || source.descripcion || ''
+      });
+      lines.push(headers.map(function (header) {
+        const spec = canonicalImportHeaderSpec(header);
+        if (spec?.internal === 'barcode') return importCsvEscape(row.barcode || '');
+        if (spec?.internal === 'name') return importCsvEscape(row.name || '');
+        if (spec?.internal && source[spec.internal] !== undefined) return importCsvEscape(source[spec.internal]);
+        return importCsvEscape(byCanonical[header] !== undefined ? byCanonical[header] : '');
+      }).join(';'));
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'productos_no_importados.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function retryCorrectedImportFailedRows() {
+    syncImportFailedRowsFromInputs();
+    const rows = state.importFailedRows.map(failedRowSource);
+    const validation = validateImportRowsBeforeRun(rows);
+    const validRows = rows.filter(function (row) { return row._importStatus !== 'warning'; });
+    const invalidRows = rows.filter(function (row) { return row._importStatus === 'warning'; }).map(function (row) {
+      return {
+        line: row._line || '',
+        barcode: row.barcode || '',
+        name: row.name || '',
+        error: (row._importIssues || []).join(', '),
+        source: row
+      };
+    });
+
+    if (!validRows.length) {
+      $('#prod-import-result').text('No hay correcciones aptas para importar.');
+      renderImportFailedRows(invalidRows);
+      return;
+    }
+
+    $('#prod-import-failed-retry').prop('disabled', true).text('Guardando...');
+    $.ajax({
+      url: '../api/products.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify({ action: 'import_products', mode: 'merge', rows: validRows, finalBatch: true })
+    }).done(function (res) {
+      const backendFailures = (res.data?.failedRows || []).map(function (row) {
+        const source = validRows.find(function (candidate) {
+          return (candidate.barcode || '').toString() === (row.barcode || '').toString();
+        }) || {};
+        return $.extend({}, row, { source: source });
+      });
+      const nextFailures = invalidRows.concat(backendFailures);
+      $('#prod-import-result').text(
+        'Correcciones procesadas. Actualizados: ' + Number(res.data?.updated || 0) +
+        ' | Creados: ' + Number(res.data?.created || 0) +
+        ' | Pendientes: ' + nextFailures.length
+      );
+      renderImportFailedRows(nextFailures);
+    }).fail(function (xhr) {
+      $('#prod-import-result').text(ajaxErrorMessage(xhr, 'No se pudieron guardar las correcciones.'));
+      renderImportFailedRows(state.importFailedRows);
+    }).always(function () {
+      $('#prod-import-failed-retry').prop('disabled', false).text('Guardar correcciones');
     });
   }
 
@@ -2444,11 +2787,31 @@
 
     $('#prod-import-preview-btn').on('click', function () {
       readSelectedFile(text => {
-        const rows = parseCsvText(text);
-        state.importRows = rows;
-        renderImportPreview(rows);
-        $('#prod-import-result').text('Filas detectadas: ' + rows.length);
-        $('#prod-import-run-btn').prop('disabled', rows.length === 0);
+        const parsed = parseCsvText(text);
+        const headerError = validateImportHeaders(parsed.headers);
+        if (headerError) {
+          state.importHeaders = [];
+          state.importRows = [];
+          $('#prod-import-preview-body').empty();
+          $('#prod-import-result').text(headerError);
+          $('#prod-import-run-btn').prop('disabled', true);
+          resetImportProgress();
+          window.alert(headerError);
+          return;
+        }
+        state.importHeaders = parsed.headers;
+        state.importRows = normalizeImportRows(parsed.headers, parsed.rows);
+        const validation = validateImportRowsBeforeRun(state.importRows);
+        renderImportPreview(state.importRows);
+        $('#prod-import-result').text(
+          'Filas detectadas: ' + state.importRows.length +
+          ' | Aptas: ' + validation.okCount +
+          ' | Para revisar: ' + validation.warnCount +
+          (state.importRows.length > 300 ? ' | Vista previa limitada a 300 filas.' : '')
+        );
+        $('#prod-import-failed').prop('hidden', true).empty();
+        $('#prod-import-run-btn').prop('disabled', validation.okCount === 0);
+        resetImportProgress();
       });
     });
 
@@ -2459,26 +2822,82 @@
       }
 
       const mode = ($('#prod-import-mode').val() || 'merge').toString();
-      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catálogo completo. ¿Deseas continuar?')) {
+      if (mode === 'replace' && !window.confirm('Vas a reemplazar el catalogo completo. Deseas continuar?')) {
         return;
       }
+      const totalRows = state.importRows.length;
+      let processedRows = 0;
+      let createdTotal = 0;
+      let updatedTotal = 0;
+      const failedRows = state.importRows
+        .filter(function (row) { return row._importStatus === 'warning'; })
+        .map(function (row) {
+          return {
+            line: row._line,
+            barcode: row.barcode || '',
+            name: row.name || '',
+            error: (row._importIssues || []).join(', '),
+            source: $.extend({}, row)
+          };
+        });
+      setImportBusy(true);
+      updateImportProgress(0, 0, totalRows);
 
-      $.ajax({
-        url: '../api/products.php',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({ action: 'import_products', mode, rows: state.importRows })
-      }).done(res => {
-        if (!res.ok) {
-          window.alert(res.error || 'No se pudo completar la importación.');
+      function runBatch(startIndex) {
+        const batchRows = state.importRows
+          .slice(startIndex, startIndex + IMPORT_BATCH_SIZE)
+          .filter(function (row) { return row._importStatus !== 'warning'; });
+        const rawBatchCount = Math.min(IMPORT_BATCH_SIZE, totalRows - startIndex);
+        if (!batchRows.length) {
+          processedRows += rawBatchCount;
+          updateImportProgress((processedRows / totalRows) * 100, Math.min(processedRows, totalRows), totalRows);
+          if (startIndex + IMPORT_BATCH_SIZE < totalRows) {
+            runBatch(startIndex + IMPORT_BATCH_SIZE);
+            return;
+          }
+          updateImportProgress(100, totalRows, totalRows);
+          $('#prod-import-result').text('Importacion completada. Creados: ' + createdTotal + ' | Actualizados: ' + updatedTotal + ' | No importados: ' + failedRows.length);
+          renderImportFailedRows(failedRows);
+          setImportBusy(false);
           return;
         }
-        const created = Number(res.data?.created || 0);
-        const updated = Number(res.data?.updated || 0);
-        $('#prod-import-result').text('Importación completada. Creados: ' + created + ' | Actualizados: ' + updated);
-      }).fail(function (xhr) {
-        window.alert(ajaxErrorMessage(xhr, 'No se pudo completar la importación.'));
-      });
+
+        const currentMode = (mode === 'replace' && startIndex === 0) ? 'replace' : 'merge';
+        const isFinalBatch = startIndex + IMPORT_BATCH_SIZE >= totalRows;
+        updateImportProgressRunning(startIndex, rawBatchCount, totalRows);
+        $.ajax({
+          url: '../api/products.php',
+          method: 'POST',
+          contentType: 'application/json',
+          data: JSON.stringify({ action: 'import_products', mode: currentMode, rows: batchRows, finalBatch: isFinalBatch })
+        }).done(function (res) {
+          if (!res.ok) {
+            setImportBusy(false);
+            failedRows.push({ line: '', barcode: '', name: 'Lote ' + (Math.floor(startIndex / IMPORT_BATCH_SIZE) + 1), error: res.error || 'No se pudo completar la importacion.' });
+            $('#prod-import-result').text('Importacion pausada. Revisa las filas con error.');
+            renderImportFailedRows(failedRows);
+            return;
+          }
+          createdTotal += Number(res.data?.created || 0);
+          updatedTotal += Number(res.data?.updated || 0);
+          (res.data?.failedRows || []).forEach(function (row) {
+            const source = batchRows.find(function (candidate) {
+              return (candidate.barcode || '').toString() === (row.barcode || '').toString();
+            }) || {};
+            failedRows.push($.extend({}, row, { source: source }));
+          });
+          processedRows += rawBatchCount;
+          updateImportProgress((processedRows / totalRows) * 100, processedRows, totalRows);
+          runBatch(startIndex + IMPORT_BATCH_SIZE);
+        }).fail(function (xhr) {
+          setImportBusy(false);
+          failedRows.push({ line: '', barcode: '', name: 'Lote ' + (Math.floor(startIndex / IMPORT_BATCH_SIZE) + 1), error: ajaxErrorMessage(xhr, 'No se pudo completar la importacion.') });
+          $('#prod-import-result').text('Importacion pausada. Revisa las filas con error.');
+          renderImportFailedRows(failedRows);
+        });
+      }
+
+      runBatch(0);
     });
   }
 
