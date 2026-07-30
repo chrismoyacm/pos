@@ -260,6 +260,7 @@
                 <th style="width:70px">Cant.</th>
                 <th>Descripción</th>
                 <th style="width:95px">Devuelto</th>
+                <th style="width:105px">Descuento</th>
                 <th style="width:110px">Importe</th>
               </tr>
             </thead>
@@ -273,6 +274,7 @@
     <footer>
       <button type="button" class="btn-secondary" id="sales-day-close">Cerrar</button>
       <button type="button" class="btn-secondary" id="sales-day-reprint-btn" disabled>Reimprimir ticket</button>
+      <button type="button" class="btn-secondary" id="sales-day-quote-btn" disabled hidden>Enviar cotización</button>
       <button type="button" class="btn-primary" id="sales-day-invoice-btn" disabled>Facturar venta</button>
       <button type="button" class="btn-secondary" id="sales-day-assign-btn" hidden>Asignar cliente</button>
       <button type="button" class="btn-primary" id="sales-day-charge-btn" hidden>Cobrar pendiente</button>
@@ -288,6 +290,9 @@
     <section>
       <label class="field">Descuento (%)
         <input type="number" id="sale-discount-pct" min="0" max="100" step="0.01" placeholder="0.00">
+      </label>
+      <label class="field">Descuento por valor
+        <input type="number" id="sale-discount-amount" min="0" step="0.01" placeholder="0.00">
       </label>
       <div class="muted">Se aplicará a todos los productos de esta venta actual.</div>
     </section>

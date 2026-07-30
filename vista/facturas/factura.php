@@ -144,18 +144,11 @@ $issueDate = date('d-m-Y');
               </tr>
             </thead>
             <tbody>
-              <tr><td>Subtotal sin impuestos:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal 15.00%:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal 5%:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal tarifa especial:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal 0%:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal no objeto de IVA:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Subtotal exento de IVA:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Total descuento:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>Valor ICE:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>IVA 15.00%:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>IVA 5%:</td><td class="catalog-money">0.00</td></tr>
-              <tr><td>IVA tarifa especial:</td><td class="catalog-money">0.00</td></tr>
+              <tr><td>Subtotal sin impuesto:</td><td class="catalog-money">0.00</td></tr>
+              <tr><td>Descuento:</td><td class="catalog-money">0.00</td></tr>
+              <tr><td>Subtotal IVA 0%:</td><td class="catalog-money">0.00</td></tr>
+              <tr><td>Subtotal IVA 15%:</td><td class="catalog-money">0.00</td></tr>
+              <tr><td>IVA 15%:</td><td class="catalog-money">0.00</td></tr>
               <tr><td>Propina 10%:</td><td class="catalog-money"></td></tr>
               <tr class="factura-total-row"><td>Valor a pagar:</td><td class="catalog-money">0.00</td></tr>
             </tbody>

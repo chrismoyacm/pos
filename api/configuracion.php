@@ -291,7 +291,7 @@ function readProductTaxesRowsFromDb(): array
     $out = [];
     foreach ($rows as $row) {
         $rate = parseTaxRate($row['PORCENTAJE'] ?? 0);
-        if ($rate <= 0) {
+        if ($rate < 0) {
             continue;
         }
         $id = trim((string)($row['ID'] ?? ''));
@@ -331,6 +331,7 @@ function readTaxesSettingsFromDb(array $fallback): array
 
     $options = [];
     $defaultRate = 0.0;
+    $hasDefaultRate = false;
     foreach ($rows as $row) {
         $options[] = [
             'id' => (string)$row['id'],
@@ -340,13 +341,14 @@ function readTaxesSettingsFromDb(array $fallback): array
         ];
         if ((bool)$row['is_default']) {
             $defaultRate = (float)$row['percentage'];
+            $hasDefaultRate = true;
         }
     }
-    if ($defaultRate <= 0 && isset($options[0]['percentage'])) {
+    if (!$hasDefaultRate && isset($options[0]['percentage'])) {
         $defaultRate = (float)$options[0]['percentage'];
     }
 
-    $taxes['default_vat'] = $defaultRate > 0 ? $defaultRate : (float)($taxes['default_vat'] ?? 0);
+    $taxes['default_vat'] = $defaultRate >= 0 ? $defaultRate : (float)($taxes['default_vat'] ?? 0);
     $taxes['iva_options'] = $options;
 
     return $taxes;
@@ -378,6 +380,7 @@ function saveTaxesSettingsToDb(array $incoming, array $current): array
 
     $merged = mergeSettingsDefaults($current, $incoming);
     $defaultRate = parseTaxRate($merged['default_vat'] ?? 0);
+    $defaultEnabled = (bool)($merged['included_new_products'] ?? false);
 
     $existingRows = readProductTaxesRowsFromDb();
     $optionsRaw = $incoming['iva_options'] ?? null;
@@ -426,7 +429,7 @@ function saveTaxesSettingsToDb(array $incoming, array $current): array
             continue;
         }
         $rate = parseTaxRate($opt['percentage'] ?? 0);
-        if ($rate <= 0) {
+        if ($rate < 0) {
             continue;
         }
         $name = trim((string)($opt['name'] ?? ''));
@@ -447,7 +450,7 @@ function saveTaxesSettingsToDb(array $incoming, array $current): array
         ];
     }
 
-    if ($defaultRate <= 0) {
+    if ($defaultRate < 0) {
         $defaultRate = (float)$normalizedOptions[0]['percentage'];
     }
 
@@ -474,7 +477,7 @@ function saveTaxesSettingsToDb(array $incoming, array $current): array
         foreach ($normalizedOptions as $opt) {
             $id = (string)$sequence;
             $rate = (float)$opt['percentage'];
-            $isDefault = (!$defaultAssigned && abs($rate - $defaultRate) < 0.0001);
+            $isDefault = ($defaultEnabled && !$defaultAssigned && abs($rate - $defaultRate) < 0.0001);
             if ($isDefault) {
                 $defaultAssigned = true;
                 $defaultId = $id;
@@ -493,7 +496,7 @@ function saveTaxesSettingsToDb(array $incoming, array $current): array
             $sequence++;
         }
 
-        if (!$defaultAssigned) {
+        if ($defaultEnabled && !$defaultAssigned) {
             $defaultId = '1';
             $pdo->exec("UPDATE IMPUESTOS SET DEFECTO = '0' WHERE ORIGEN = 'productos' AND TIPO = 'iva'");
             $stmtDefault = $pdo->prepare("UPDATE IMPUESTOS SET DEFECTO = '1' WHERE ORIGEN = 'productos' AND TIPO = 'iva' AND ID = :id");

@@ -8,7 +8,16 @@
                 <button type="button" class="btn-range active" data-range="week">Semana actual</button>
                 <button type="button" class="btn-range" data-range="month">Mes actual</button>
                 <button type="button" class="btn-range" data-range="year">Año actual</button>
+                <button type="button" class="btn-range" data-range="custom">Personalizado</button>
                 <button type="button" class="btn-range" data-range="all">Todo</button>
+            </div>
+            <div class="reportes-date-range" aria-label="Fechas personalizadas">
+                <label>Desde
+                    <input type="date" id="reportes-fecha-desde">
+                </label>
+                <label>Hasta
+                    <input type="date" id="reportes-fecha-hasta">
+                </label>
             </div>
             <label class="reportes-caja-label" for="reportes-caja">Caja:</label>
             <select id="reportes-caja" class="reportes-caja">

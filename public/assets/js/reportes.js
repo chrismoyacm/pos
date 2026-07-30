@@ -5,6 +5,8 @@
     }
 
     const rangeButtons = Array.from(root.querySelectorAll('.btn-range'));
+    const fechaDesdeInput = document.getElementById('reportes-fecha-desde');
+    const fechaHastaInput = document.getElementById('reportes-fecha-hasta');
     const cajaSelect = document.getElementById('reportes-caja');
     const kpisNode = document.getElementById('reportes-kpis');
     const metodoBody = document.querySelector('#reportes-metodo-table tbody');
@@ -23,6 +25,8 @@
 
     const state = {
         range: 'week',
+        customFrom: '',
+        customTo: '',
         caja: 'all',
         sales: [],
         products: [],
@@ -138,6 +142,15 @@
         return y + '-' + m + '-' + d;
     }
 
+    function parseDateInputValue(value) {
+        const raw = String(value || '').trim();
+        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) {
+            return null;
+        }
+        return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    }
+
     function shortDayLabel(date) {
         return date.toLocaleDateString('es-EC', { weekday: 'short', day: '2-digit' });
     }
@@ -156,6 +169,25 @@
     function applyRangeFilter(sales) {
         if (state.range === 'all') {
             return sales;
+        }
+
+        if (state.range === 'custom') {
+            const from = parseDateInputValue(state.customFrom);
+            const to = parseDateInputValue(state.customTo);
+            return sales.filter(function (sale) {
+                const dt = getSaleDate(sale);
+                if (!dt) {
+                    return false;
+                }
+                const day = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+                if (from && day < from) {
+                    return false;
+                }
+                if (to && day > to) {
+                    return false;
+                }
+                return true;
+            });
         }
 
         const now = new Date();
@@ -773,13 +805,38 @@
     }
 
     function bindEvents() {
+        function setActiveRange(range) {
+            state.range = range || 'week';
+            rangeButtons.forEach(function (candidate) {
+                candidate.classList.toggle('active', (candidate.getAttribute('data-range') || 'week') === state.range);
+            });
+        }
+
         rangeButtons.forEach(function (btn) {
             btn.addEventListener('click', function () {
                 const selected = btn.getAttribute('data-range') || 'week';
-                state.range = selected;
-                rangeButtons.forEach(function (candidate) {
-                    candidate.classList.toggle('active', candidate === btn);
-                });
+                setActiveRange(selected);
+                render();
+            });
+        });
+
+        [fechaDesdeInput, fechaHastaInput].forEach(function (input) {
+            if (!input) {
+                return;
+            }
+            input.addEventListener('change', function () {
+                state.customFrom = fechaDesdeInput ? fechaDesdeInput.value : '';
+                state.customTo = fechaHastaInput ? fechaHastaInput.value : '';
+                if (state.customFrom && state.customTo && state.customTo < state.customFrom) {
+                    if (input === fechaDesdeInput && fechaHastaInput) {
+                        fechaHastaInput.value = state.customFrom;
+                        state.customTo = state.customFrom;
+                    } else if (fechaDesdeInput) {
+                        fechaDesdeInput.value = state.customTo;
+                        state.customFrom = state.customTo;
+                    }
+                }
+                setActiveRange('custom');
                 render();
             });
         });

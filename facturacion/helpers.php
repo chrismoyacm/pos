@@ -1277,8 +1277,8 @@ function facturacionRound(float $value): float
 }
 
 /**
- * Extrae base e impuesto desde un valor que ya incluye IVA.
- * Se usa para evitar sumar nuevamente el impuesto al total del producto.
+ * Separa el valor incluido en base e impuesto con el criterio comercial del sistema.
+ * Ejemplo: 1.00 con IVA 15% se presenta como 0.85 base y 0.15 IVA.
  *
  * @return array{base: float, tax: float}
  */
@@ -1288,12 +1288,7 @@ function facturacionSplitTaxIncluded(float $gross, float $ratePercent): array
         return ['base' => facturacionRound(max(0.0, $gross)), 'tax' => 0.0];
     }
 
-    $factor = 1 + ($ratePercent / 100);
-    if ($factor <= 0) {
-        return ['base' => facturacionRound(max(0.0, $gross)), 'tax' => 0.0];
-    }
-
-    $base = facturacionRound($gross / $factor);
+    $base = facturacionRound($gross * (1 - ($ratePercent / 100)));
     $tax = facturacionRound($gross - $base);
     return ['base' => $base, 'tax' => $tax];
 }
@@ -1347,6 +1342,10 @@ function facturacionBuildInvoiceDocument(array $payload): array
     $totalDescuento = 0.0;
     $taxGroups = [];
     $subtotalByRate = ['15%' => 0.0, '12%' => 0.0, '5%' => 0.0, 'especial' => 0.0, '0%' => 0.0, 'no_objeto' => 0.0, 'exento' => 0.0];
+    $displaySubtotalSinDescuento = 0.0;
+    $displayTotalDescuento = 0.0;
+    $displaySubtotalByRate = ['15%' => 0.0, '12%' => 0.0, '0%' => 0.0];
+    $displayTaxByRate = ['15%' => 0.0, '12%' => 0.0];
 
     foreach (($payload['details'] ?? []) as $item) {
         if (!is_array($item)) {
@@ -1359,14 +1358,30 @@ function facturacionBuildInvoiceDocument(array $payload): array
             continue;
         }
 
-        $discount = max(0.0, (float)($item['descuento'] ?? 0));
-        $lineGross = facturacionRound(($qty * $inputUnitPrice) - $discount);
+        $grossBeforeDiscount = facturacionRound($qty * $inputUnitPrice);
+        $grossDiscount = min(max(0.0, (float)($item['descuento'] ?? 0)), $grossBeforeDiscount);
         $iva = trim((string)($item['iva'] ?? '0%'));
         $taxDef = facturacionTaxDefinition($iva);
-        $split = facturacionSplitTaxIncluded($lineGross, (float)($taxDef['tarifa'] ?? 0));
-        $lineBase = (float)($split['base'] ?? 0);
-        $taxValue = (float)($split['tax'] ?? 0);
-        $unitBasePrice = $qty > 0 ? round($lineBase / $qty, 6) : 0.0;
+        $displaySubtotalSinDescuento += $grossBeforeDiscount;
+        $displayTotalDescuento += $grossDiscount;
+        $displayNetGross = facturacionRound($grossBeforeDiscount - $grossDiscount);
+        if ($iva === '15%') {
+            $displayBase = facturacionRound($displayNetGross * 0.85);
+            $displaySubtotalByRate['15%'] += $displayBase;
+            $displayTaxByRate['15%'] += facturacionRound($displayNetGross - $displayBase);
+        } elseif ($iva === '12%') {
+            $displayBase = facturacionRound($displayNetGross * 0.88);
+            $displaySubtotalByRate['12%'] += $displayBase;
+            $displayTaxByRate['12%'] += facturacionRound($displayNetGross - $displayBase);
+        } else {
+            $displaySubtotalByRate['0%'] += $displayNetGross;
+        }
+        $splitBeforeDiscount = facturacionSplitTaxIncluded($grossBeforeDiscount, (float)($taxDef['tarifa'] ?? 0));
+        $splitDiscount = facturacionSplitTaxIncluded($grossDiscount, (float)($taxDef['tarifa'] ?? 0));
+        $lineBase = facturacionRound((float)($splitBeforeDiscount['base'] ?? 0) - (float)($splitDiscount['base'] ?? 0));
+        $taxValue = facturacionRound((float)($splitBeforeDiscount['tax'] ?? 0) - (float)($splitDiscount['tax'] ?? 0));
+        $baseDiscount = facturacionRound((float)($splitDiscount['base'] ?? 0));
+        $unitBasePrice = $qty > 0 ? round((float)($splitBeforeDiscount['base'] ?? 0) / $qty, 6) : 0.0;
         $service = $serviceMap[(string)($item['productId'] ?? '')] ?? null;
         $iceValue = facturacionRound((float)($item['valorICE'] ?? ($service['iceValue'] ?? 0)));
 
@@ -1378,8 +1393,11 @@ function facturacionBuildInvoiceDocument(array $payload): array
             'cantidad' => $qty,
             // SRI requiere base imponible en detalle, no precio final con IVA.
             'precioUnitario' => $unitBasePrice,
-            'descuento' => $discount,
+            'descuento' => $baseDiscount,
             'precioTotalSinImpuesto' => $lineBase,
+            'precioVenta' => facturacionRound($inputUnitPrice),
+            'descuentoVenta' => facturacionRound($grossDiscount),
+            'totalVenta' => facturacionRound($grossBeforeDiscount),
             'iva' => $iva === '' ? '0%' : $iva,
             'tax' => $taxDef,
             'taxValue' => $taxValue,
@@ -1387,7 +1405,7 @@ function facturacionBuildInvoiceDocument(array $payload): array
         ];
 
         $totalSinImpuestos += $lineBase;
-        $totalDescuento += $discount;
+        $totalDescuento += $baseDiscount;
 
         $groupKey = $taxDef['codigo'] . '-' . $taxDef['codigoPorcentaje'];
         if (!isset($taxGroups[$groupKey])) {
@@ -1413,6 +1431,83 @@ function facturacionBuildInvoiceDocument(array $payload): array
 
     if ($detailItems === []) {
         throw new RuntimeException('Debe agregar al menos un detalle a la factura.');
+    }
+
+    $detailsByTaxGroup = [];
+    foreach ($detailItems as $idx => $detail) {
+        $tax = is_array($detail['tax'] ?? null) ? $detail['tax'] : [];
+        $groupKey = (string)($tax['codigo'] ?? '2') . '-' . (string)($tax['codigoPorcentaje'] ?? '6');
+        if (!isset($detailsByTaxGroup[$groupKey])) {
+            $detailsByTaxGroup[$groupKey] = [
+                'tarifa' => (float)($tax['tarifa'] ?? 0),
+                'indexes' => [],
+                'gross' => 0.0,
+            ];
+        }
+        $detailsByTaxGroup[$groupKey]['indexes'][] = $idx;
+        $detailsByTaxGroup[$groupKey]['gross'] += facturacionRound((float)($detail['precioTotalSinImpuesto'] ?? 0) + (float)($detail['taxValue'] ?? 0));
+    }
+
+    foreach ($detailsByTaxGroup as $group) {
+        $rate = (float)($group['tarifa'] ?? 0);
+        if ($rate <= 0 || empty($group['indexes'])) {
+            continue;
+        }
+        $targetSplit = facturacionSplitTaxIncluded(facturacionRound((float)$group['gross']), $rate);
+        $currentBase = 0.0;
+        $adjustIndex = (int)$group['indexes'][0];
+        $largestBase = -1.0;
+        foreach ($group['indexes'] as $idx) {
+            $base = (float)($detailItems[$idx]['precioTotalSinImpuesto'] ?? 0);
+            $currentBase += $base;
+            if ($base > $largestBase) {
+                $largestBase = $base;
+                $adjustIndex = (int)$idx;
+            }
+        }
+        $baseDelta = facturacionRound((float)($targetSplit['base'] ?? 0) - $currentBase);
+        if (abs($baseDelta) >= 0.01) {
+            $detailItems[$adjustIndex]['precioTotalSinImpuesto'] = facturacionRound((float)$detailItems[$adjustIndex]['precioTotalSinImpuesto'] + $baseDelta);
+            $detailItems[$adjustIndex]['taxValue'] = facturacionRound((float)$detailItems[$adjustIndex]['taxValue'] - $baseDelta);
+            $detailItems[$adjustIndex]['descuento'] = facturacionRound(
+                ((float)($detailItems[$adjustIndex]['cantidad'] ?? 0) * (float)($detailItems[$adjustIndex]['precioUnitario'] ?? 0))
+                - (float)$detailItems[$adjustIndex]['precioTotalSinImpuesto']
+            );
+        }
+    }
+
+    $totalSinImpuestos = 0.0;
+    $totalDescuento = 0.0;
+    $taxGroups = [];
+    $subtotalByRate = ['15%' => 0.0, '12%' => 0.0, '5%' => 0.0, 'especial' => 0.0, '0%' => 0.0, 'no_objeto' => 0.0, 'exento' => 0.0];
+    foreach ($detailItems as $detail) {
+        $lineBase = (float)($detail['precioTotalSinImpuesto'] ?? 0);
+        $taxValue = (float)($detail['taxValue'] ?? 0);
+        $taxDef = is_array($detail['tax'] ?? null) ? $detail['tax'] : facturacionTaxDefinition((string)($detail['iva'] ?? '0%'));
+        $totalSinImpuestos += $lineBase;
+        $totalDescuento += (float)($detail['descuento'] ?? 0);
+
+        $groupKey = $taxDef['codigo'] . '-' . $taxDef['codigoPorcentaje'];
+        if (!isset($taxGroups[$groupKey])) {
+            $taxGroups[$groupKey] = [
+                'codigo' => $taxDef['codigo'],
+                'codigoPorcentaje' => $taxDef['codigoPorcentaje'],
+                'baseImponible' => 0.0,
+                'valor' => 0.0,
+                'tarifa' => $taxDef['tarifa'],
+            ];
+        }
+        $taxGroups[$groupKey]['baseImponible'] += $lineBase;
+        $taxGroups[$groupKey]['valor'] += $taxValue;
+
+        $iva = (string)($detail['iva'] ?? '0%');
+        if ($iva === '15%') {
+            $subtotalByRate['15%'] += $lineBase;
+        } elseif ($iva === '12%') {
+            $subtotalByRate['12%'] += $lineBase;
+        } else {
+            $subtotalByRate['0%'] += $lineBase;
+        }
     }
 
     $payments = [];
@@ -1445,7 +1540,8 @@ function facturacionBuildInvoiceDocument(array $payload): array
 
     $paymentsTotal = array_reduce($payments, static fn($sum, $row) => $sum + (float)$row['total'], 0.0);
     $taxTotal = array_reduce($taxGroups, static fn($sum, $row) => $sum + (float)$row['valor'], 0.0);
-    $importeTotal = facturacionRound($totalSinImpuestos + $taxTotal);
+    $propina = facturacionRound(max(0.0, (float)($payload['tip'] ?? 0)));
+    $importeTotal = facturacionRound($totalSinImpuestos + $taxTotal + $propina);
 
     if ($paymentsTotal <= 0) {
         $payments[0]['total'] = $importeTotal;
@@ -1524,13 +1620,23 @@ function facturacionBuildInvoiceDocument(array $payload): array
             'subtotalNoObjetoIva' => facturacionRound($subtotalByRate['no_objeto']),
             'subtotalExentoIva' => facturacionRound($subtotalByRate['exento']),
             'totalDescuento' => facturacionRound($totalDescuento),
+            'subtotalSinDescuento' => facturacionRound($totalSinImpuestos + $totalDescuento),
             'valorICE' => facturacionRound(array_reduce($detailItems, static fn($sum, $row) => $sum + (float)$row['valorICE'], 0.0)),
             'iva15' => facturacionRound(array_reduce($taxGroups, static fn($sum, $row) => $sum + (((float)$row['tarifa'] === 15.0) ? (float)$row['valor'] : 0.0), 0.0)),
             'iva12' => facturacionRound(array_reduce($taxGroups, static fn($sum, $row) => $sum + (((float)$row['tarifa'] === 12.0) ? (float)$row['valor'] : 0.0), 0.0)),
+            'iva0' => 0.0,
             'iva5' => 0.0,
             'ivaTarifaEspecial' => 0.0,
-            'propina' => (string)($payload['tip'] ?? ''),
+            'propina' => $propina,
             'importeTotal' => $importeTotal,
+            'displaySubtotalSinDescuento' => facturacionRound($displaySubtotalSinDescuento),
+            'displayTotalDescuento' => facturacionRound($displayTotalDescuento),
+            'displayTotalSinImpuestos' => facturacionRound($displaySubtotalByRate['15%'] + $displaySubtotalByRate['12%'] + $displaySubtotalByRate['0%']),
+            'displaySubtotal15' => facturacionRound($displaySubtotalByRate['15%']),
+            'displaySubtotal12' => facturacionRound($displaySubtotalByRate['12%']),
+            'displaySubtotal0' => facturacionRound($displaySubtotalByRate['0%']),
+            'displayIva15' => facturacionRound($displayTaxByRate['15%']),
+            'displayIva12' => facturacionRound($displayTaxByRate['12%']),
             'taxGroups' => array_values(array_map(static function ($row) {
                 $row['baseImponible'] = facturacionRound((float)$row['baseImponible']);
                 $row['valor'] = facturacionRound((float)$row['valor']);

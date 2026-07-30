@@ -42,7 +42,7 @@ $issueDate = date('d-m-Y');
       </div>
     </section>
 
-    <section class="factura-card">
+    <section class="factura-card factura-card--buyer">
       <div class="factura-section-head">
         <h3>Adquirente</h3>
       </div>
@@ -54,6 +54,7 @@ $issueDate = date('d-m-Y');
             <input type="text" id="factura-buyer-identification" value="">
             <button class="btn-secondary" type="button" id="factura-buyer-search-btn">Buscar</button>
           </div>
+          <div class="factura-buyer-suggestions" id="factura-buyer-identification-suggestions" hidden></div>
         </label>
 
         <label class="factura-field">
@@ -72,6 +73,7 @@ $issueDate = date('d-m-Y');
         <label class="factura-field factura-field--wide">
           <span>Razon social</span>
           <input type="text" id="factura-buyer-name" value="">
+          <div class="factura-buyer-suggestions" id="factura-buyer-name-suggestions" hidden></div>
         </label>
 
         <label class="factura-field factura-field--wide">
@@ -146,20 +148,11 @@ $issueDate = date('d-m-Y');
               </tr>
             </thead>
             <tbody id="factura-totals-body">
-              <tr><td>Subtotal sin impuestos:</td><td class="catalog-money" data-total="subtotalSinImpuestos">0.00</td></tr>
-              <tr><td>Subtotal 15.00%:</td><td class="catalog-money" data-total="subtotal15">0.00</td></tr>
-              <tr><td>Subtotal 12.00%:</td><td class="catalog-money" data-total="subtotal12">0.00</td></tr>
-              <tr><td>Subtotal 5%:</td><td class="catalog-money" data-total="subtotal5">0.00</td></tr>
-              <tr><td>Subtotal tarifa especial:</td><td class="catalog-money" data-total="subtotalTarifaEspecial">0.00</td></tr>
-              <tr><td>Subtotal 0%:</td><td class="catalog-money" data-total="subtotal0">0.00</td></tr>
-              <tr><td>Subtotal no objeto de IVA:</td><td class="catalog-money" data-total="subtotalNoObjetoIva">0.00</td></tr>
-              <tr><td>Subtotal exento de IVA:</td><td class="catalog-money" data-total="subtotalExentoIva">0.00</td></tr>
-              <tr><td>Total descuento:</td><td class="catalog-money" data-total="totalDescuento">0.00</td></tr>
-              <tr><td>Valor ICE:</td><td class="catalog-money" data-total="valorICE">0.00</td></tr>
-              <tr><td>IVA 15.00%:</td><td class="catalog-money" data-total="iva15">0.00</td></tr>
-              <tr><td>IVA 12.00%:</td><td class="catalog-money" data-total="iva12">0.00</td></tr>
-              <tr><td>IVA 5%:</td><td class="catalog-money" data-total="iva5">0.00</td></tr>
-              <tr><td>IVA tarifa especial:</td><td class="catalog-money" data-total="ivaTarifaEspecial">0.00</td></tr>
+              <tr><td>Subtotal sin impuesto:</td><td class="catalog-money" data-total="subtotalSinImpuestos">0.00</td></tr>
+              <tr><td>Descuento:</td><td class="catalog-money" data-total="totalDescuento">0.00</td></tr>
+              <tr><td>Subtotal IVA 0%:</td><td class="catalog-money" data-total="subtotal0">0.00</td></tr>
+              <tr><td>Subtotal IVA 15%:</td><td class="catalog-money" data-total="subtotal15">0.00</td></tr>
+              <tr><td>IVA 15%:</td><td class="catalog-money" data-total="iva15">0.00</td></tr>
               <tr><td>Propina 10%:</td><td class="catalog-money"><input type="text" id="factura-tip" value=""></td></tr>
               <tr class="factura-total-row"><td>Valor a pagar:</td><td class="catalog-money" data-total="importeTotal">0.00</td></tr>
             </tbody>

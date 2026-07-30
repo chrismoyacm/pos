@@ -77,6 +77,69 @@ function facturacionInferIdentificationType(string $identification): string
     return 'Consumidor final';
 }
 
+/**
+ * Calcula el precio normal y el descuento por linea cuando una venta se convierte en factura.
+ *
+ * En ventas el precio de la linea puede venir ya rebajado, pero en factura/SRI se debe declarar:
+ * precioUnitario normal, descuento total de la linea y precioTotalSinImpuesto despues del descuento.
+ *
+ * @return array{unitPrice: float, discount: float}
+ */
+function facturacionSaleItemInvoicePricing(array $item, array $sale): array
+{
+    $qty = max(0.0, (float)($item['qty'] ?? 0));
+    $currentUnit = max(0.0, (float)($item['price'] ?? 0));
+    $baseUnit = max(0.0, (float)($item['basePrice'] ?? 0));
+    if ($baseUnit <= 0) {
+        $baseUnit = max(0.0, (float)($item['normalPrice'] ?? 0));
+    }
+    if ($baseUnit <= 0) {
+        $baseUnit = $currentUnit;
+    }
+
+    $lineBaseGross = round($qty * $baseUnit, 2);
+    $lineCurrentGross = round($qty * $currentUnit, 2);
+
+    $discountMode = strtolower(trim((string)($sale['discountMode'] ?? 'percent')));
+    $saleDiscountAmount = max(0.0, (float)($sale['discountValue'] ?? ($sale['discountAmount'] ?? 0)));
+    if ($discountMode === 'amount' && $saleDiscountAmount > 0) {
+        $saleCurrentGross = 0.0;
+        foreach (($sale['items'] ?? []) as $saleItem) {
+            if (!is_array($saleItem)) {
+                continue;
+            }
+            $saleCurrentGross += max(0.0, (float)($saleItem['qty'] ?? 0)) * max(0.0, (float)($saleItem['price'] ?? 0));
+        }
+        $saleCurrentGross = round($saleCurrentGross, 2);
+        $lineShare = $saleCurrentGross > 0
+            ? round(min($saleDiscountAmount, $saleCurrentGross) * ($lineCurrentGross / $saleCurrentGross), 2)
+            : 0.0;
+        $lineNetGross = round(max(0.0, $lineCurrentGross - $lineShare), 2);
+
+        return [
+            'unitPrice' => $baseUnit,
+            'discount' => round(max(0.0, $lineBaseGross - $lineNetGross), 2),
+        ];
+    }
+
+    $globalPct = max(0.0, min(100.0, (float)($item['saleDiscountPct'] ?? ($sale['discountPct'] ?? 0))));
+    $invoiceUnit = max(0.0, (float)($item['invoiceUnitPrice'] ?? 0));
+    if ($invoiceUnit <= 0) {
+        $invoiceUnit = $currentUnit;
+        if ($globalPct > 0) {
+            $invoiceUnit = round($invoiceUnit * (1 - ($globalPct / 100)), 2);
+        }
+    }
+
+    $lineNetGross = round($qty * $invoiceUnit, 2);
+    $discount = round(max(0.0, $lineBaseGross - $lineNetGross), 2);
+
+    return [
+        'unitPrice' => $baseUnit,
+        'discount' => $discount,
+    ];
+}
+
 function facturacionAcquireAutoAuthLock()
 {
     $lockPath = facturacionStoragePath('autorizacion_auto.lock');
@@ -238,7 +301,13 @@ if ($method === 'GET') {
     }
 
     if ($action === 'invoice_defaults') {
-        $customers = readJsonFile(storagePath('customers.json'));
+        try {
+            $customers = function_exists('legacyReadCustomers')
+                ? legacyReadCustomers()
+                : readJsonFile(storagePath('customers.json'));
+        } catch (Throwable) {
+            $customers = readJsonFile(storagePath('customers.json'));
+        }
         $products = function_exists('legacyReadProducts')
             ? legacyReadProducts()
             : readJsonFile(storagePath('products.json'));
@@ -269,7 +338,13 @@ if ($method === 'GET') {
             errorResponse('Ticket no encontrado', 404);
         }
 
-        $customers = readJsonFile(storagePath('customers.json'));
+        try {
+            $customers = function_exists('legacyReadCustomers')
+                ? legacyReadCustomers()
+                : readJsonFile(storagePath('customers.json'));
+        } catch (Throwable) {
+            $customers = readJsonFile(storagePath('customers.json'));
+        }
         $customer = null;
         $saleCustomerId = trim((string)($sale['customerId'] ?? ''));
         if ($saleCustomerId !== '') {
@@ -286,7 +361,14 @@ if ($method === 'GET') {
             : readJsonFile(storagePath('products.json'));
         $productMap = [];
         foreach ($products as $product) {
-            $productMap[(string)($product['id'] ?? '')] = $product;
+            $idKey = trim((string)($product['id'] ?? ''));
+            $barcodeKey = trim((string)($product['barcode'] ?? ''));
+            if ($idKey !== '') {
+                $productMap[$idKey] = $product;
+            }
+            if ($barcodeKey !== '') {
+                $productMap[$barcodeKey] = $product;
+            }
         }
 
         $services = facturacionLoadProductServices();
@@ -300,23 +382,62 @@ if ($method === 'GET') {
             if (!is_array($item)) {
                 continue;
             }
-            $productId = trim((string)($item['id'] ?? ''));
+            $productId = trim((string)($item['productId'] ?? ($item['id'] ?? '')));
             if ($productId === '') {
                 continue;
             }
-            $product = $productMap[$productId] ?? [];
+            $barcode = trim((string)($item['barcode'] ?? ''));
+            $product = $productMap[$productId] ?? ($barcode !== '' ? ($productMap[$barcode] ?? []) : []);
             $service = $serviceMap[$productId] ?? [];
+            $pricing = facturacionSaleItemInvoicePricing($item, $sale);
             $detailItems[] = [
                 'productId' => $productId,
                 'codigoPrincipal' => trim((string)($service['codigoPrincipal'] ?? ($item['barcode'] ?? $product['barcode'] ?? $productId))),
                 'codigoAuxiliar' => trim((string)($service['codigoAuxiliar'] ?? ($item['barcode'] ?? $product['barcode'] ?? ''))),
                 'cantidad' => max(0.0, (float)($item['qty'] ?? 0)),
                 'descripcion' => trim((string)($item['name'] ?? $product['name'] ?? '')),
-                'precioUnitario' => max(0.0, (float)($item['price'] ?? $product['price'] ?? 0)),
+                'precioUnitario' => max(0.0, (float)($pricing['unitPrice'] ?? ($item['price'] ?? $product['price'] ?? 0))),
                 'iva' => (string)($item['iva'] ?? ($product['iva'] ?? 'No')),
-                'descuento' => 0.0,
+                'descuento' => max(0.0, (float)($pricing['discount'] ?? 0)),
                 'valorICE' => max(0.0, (float)($service['iceValue'] ?? 0)),
             ];
+        }
+
+        if (strtolower(trim((string)($sale['discountMode'] ?? ''))) === 'amount' && $detailItems !== []) {
+            $expectedDiscount = max(0.0, (float)($sale['discountValue'] ?? ($sale['discountAmount'] ?? 0)));
+            foreach (($sale['items'] ?? []) as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $qty = max(0.0, (float)($item['qty'] ?? 0));
+                $currentUnit = max(0.0, (float)($item['price'] ?? 0));
+                $baseUnit = max(0.0, (float)($item['basePrice'] ?? $currentUnit));
+                $expectedDiscount += max(0.0, round(($baseUnit - $currentUnit) * $qty, 2));
+            }
+
+            $currentDiscount = 0.0;
+            $adjustIndex = 0;
+            $largestGross = -1.0;
+            foreach ($detailItems as $idx => $detail) {
+                $currentDiscount += (float)($detail['descuento'] ?? 0);
+                $gross = (float)($detail['cantidad'] ?? 0) * (float)($detail['precioUnitario'] ?? 0);
+                if ($gross > $largestGross) {
+                    $largestGross = $gross;
+                    $adjustIndex = (int)$idx;
+                }
+            }
+
+            $delta = round($expectedDiscount - $currentDiscount, 2);
+            if (abs($delta) >= 0.01) {
+                $maxLineDiscount = round(
+                    (float)($detailItems[$adjustIndex]['cantidad'] ?? 0) * (float)($detailItems[$adjustIndex]['precioUnitario'] ?? 0),
+                    2
+                );
+                $detailItems[$adjustIndex]['descuento'] = min(
+                    $maxLineDiscount,
+                    max(0.0, round((float)($detailItems[$adjustIndex]['descuento'] ?? 0) + $delta, 2))
+                );
+            }
         }
 
         $buyerIdentification = trim((string)($customer['taxId'] ?? ''));
@@ -435,6 +556,10 @@ if ($method === 'GET') {
         $document = facturacionFindDocument($id);
         if ($document === null) {
             errorResponse('Documento no encontrado', 404);
+        }
+        if ($kind === 'pdf') {
+            $document = generarPDF($document);
+            $document = facturacionPersistDocument($document);
         }
         $payload = facturacionReadDocumentFile($document, $kind);
         if ($payload === null) {

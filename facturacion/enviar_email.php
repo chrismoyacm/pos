@@ -3,12 +3,70 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/helpers.php';
 
-function facturacionBrevoSend(array $signature, array $document, string $toEmail): array
+/**
+ * @param string|array<int, string|array<string, string>> $recipients
+ * @return array<int, array{email:string,name:string}>
+ */
+function facturacionNormalizeEmailRecipients(string|array $recipients, string $defaultName = ''): array
+{
+    $rawRows = is_array($recipients) ? $recipients : [$recipients];
+    $out = [];
+    $seen = [];
+
+    foreach ($rawRows as $row) {
+        $email = '';
+        $name = '';
+        if (is_array($row)) {
+            $email = trim((string)($row['email'] ?? ''));
+            $name = trim((string)($row['name'] ?? ''));
+        } else {
+            $email = trim((string)$row);
+        }
+
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
+
+        $key = strtolower($email);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $out[] = [
+            'email' => $email,
+            'name' => $name !== '' ? $name : ($defaultName !== '' ? $defaultName : $email),
+        ];
+    }
+
+    return $out;
+}
+
+function facturacionDocumentEmailRecipients(array $signature, array $document): array
+{
+    $buyer = is_array($document['buyer'] ?? null) ? $document['buyer'] : [];
+    $emitter = is_array($document['emitter'] ?? null) ? $document['emitter'] : facturacionLoadEmitter();
+
+    $buyerEmail = trim((string)($buyer['email'] ?? ''));
+    $buyerName = trim((string)(($buyer['razonSocial'] ?? '') ?: $buyerEmail));
+    $ownerEmail = trim((string)($emitter['email'] ?? ''));
+    if ($ownerEmail === '') {
+        $ownerEmail = trim((string)($signature['fromEmail'] ?? ''));
+    }
+    $ownerName = trim((string)(($emitter['nombreComercial'] ?? '') ?: ($emitter['razonSocial'] ?? '')));
+
+    return facturacionNormalizeEmailRecipients([
+        ['email' => $buyerEmail, 'name' => $buyerName],
+        ['email' => $ownerEmail, 'name' => $ownerName],
+    ]);
+}
+
+function facturacionBrevoSend(array $signature, array $document, string|array $recipients): array
 {
     $apiKey = trim((string)($signature['brevoApiKey'] ?? ''));
     $endpoint = trim((string)($signature['brevoEndpoint'] ?? 'https://api.brevo.com/v3/smtp/email'));
     $fromEmail = trim((string)($signature['fromEmail'] ?? ''));
     $fromName = trim((string)($signature['fromName'] ?? 'POS Facturacion'));
+    $to = facturacionNormalizeEmailRecipients($recipients);
 
     if ($apiKey === '') {
         throw new RuntimeException('No se puede enviar por Brevo: falta API Key.');
@@ -18,6 +76,9 @@ function facturacionBrevoSend(array $signature, array $document, string $toEmail
     }
     if ($endpoint === '') {
         $endpoint = 'https://api.brevo.com/v3/smtp/email';
+    }
+    if ($to === []) {
+        throw new RuntimeException('No se puede enviar por Brevo: no hay destinatarios validos.');
     }
 
     $attachments = [];
@@ -45,10 +106,7 @@ function facturacionBrevoSend(array $signature, array $document, string $toEmail
             'name' => $fromName !== '' ? $fromName : $fromEmail,
             'email' => $fromEmail,
         ],
-        'to' => [[
-            'email' => $toEmail,
-            'name' => (string)(($document['buyer']['razonSocial'] ?? '') ?: $toEmail),
-        ]],
+        'to' => $to,
         'subject' => $subject,
         'htmlContent' => $html,
     ];
@@ -104,19 +162,20 @@ function facturacionBrevoSend(array $signature, array $document, string $toEmail
 function enviarEmailCliente(array $document): array
 {
     $signature = facturacionLoadSignature();
-    $buyer = $document['buyer'] ?? [];
-    $email = trim((string)($buyer['email'] ?? ''));
-    if ($email === '') {
-        facturacionAppendLog('warning', 'No se envio correo porque el cliente no tiene email', ['documentId' => $document['id'] ?? null]);
+    $recipients = facturacionDocumentEmailRecipients($signature, $document);
+    if ($recipients === []) {
+        facturacionAppendLog('warning', 'No se envio correo porque no hay destinatarios validos', ['documentId' => $document['id'] ?? null]);
         return $document;
     }
+    $recipientEmails = array_map(static fn(array $row): string => (string)$row['email'], $recipients);
 
     $mode = (string)($signature['emailMode'] ?? 'mock');
     $jobs = facturacionReadJson('emails.json', []);
     $job = [
         'id' => 'mail-' . str_pad((string)(count($jobs) + 1), 6, '0', STR_PAD_LEFT),
         'documentId' => $document['id'] ?? null,
-        'to' => $email,
+        'to' => $recipientEmails[0] ?? '',
+        'recipients' => $recipientEmails,
         'mode' => $mode,
         'xml' => $document['files']['authorizedXml'] ?? null,
         'pdf' => $document['files']['pdf'] ?? null,
@@ -128,19 +187,19 @@ function enviarEmailCliente(array $document): array
         $job['status'] = 'queued_mock';
         $jobs[] = $job;
         facturacionWriteJson('emails.json', $jobs);
-        facturacionAppendLog('info', 'Correo de comprobante registrado', ['documentId' => $document['id'] ?? null, 'to' => $email]);
+        facturacionAppendLog('info', 'Correo de comprobante registrado', ['documentId' => $document['id'] ?? null, 'recipients' => $recipientEmails]);
         return $document;
     }
 
     if ($mode === 'brevo_api') {
-        $response = facturacionBrevoSend($signature, $document, $email);
+        $response = facturacionBrevoSend($signature, $document, $recipients);
         $job['status'] = 'sent_brevo';
         $job['response'] = $response;
         $jobs[] = $job;
         facturacionWriteJson('emails.json', $jobs);
         facturacionAppendLog('info', 'Correo enviado por Brevo API', [
             'documentId' => $document['id'] ?? null,
-            'to' => $email,
+            'recipients' => $recipientEmails,
             'response' => $response,
         ]);
         return $document;

@@ -130,7 +130,9 @@ switch ($mod) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>POS Minimarket</title>
     <link rel="stylesheet" href="assets/css/pos.css?v=<?php echo urlencode(assetVersion('assets/css/pos.css')); ?>">
+    <link rel="stylesheet" href="assets/css/sweetalert2.min.css?v=<?php echo urlencode(assetVersion('assets/css/sweetalert2.min.css')); ?>">
     <script src="assets/js/vendor/jquery-3.7.1.min.js?v=<?php echo urlencode(assetVersion('assets/js/vendor/jquery-3.7.1.min.js')); ?>"></script>
+    <script src="assets/js/vendor/sweetalert2.all.min.js?v=<?php echo urlencode(assetVersion('assets/js/vendor/sweetalert2.all.min.js')); ?>"></script>
     <script src="assets/js/pos.js?v=<?php echo urlencode(assetVersion('assets/js/pos.js')); ?>" defer></script>
     <script src="assets/js/clientes.js?v=<?php echo urlencode(assetVersion('assets/js/clientes.js')); ?>" defer></script>
     <script src="assets/js/creditos.js?v=<?php echo urlencode(assetVersion('assets/js/creditos.js')); ?>" defer></script>

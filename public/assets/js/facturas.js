@@ -182,24 +182,30 @@
   function calcLineTotals(item) {
     var qty = Number(item && item.cantidad ? item.cantidad : 0);
     var unitInput = Number(item && item.precioUnitario ? item.precioUnitario : 0);
-    var discount = Number(item && item.descuento ? item.descuento : 0);
-    var gross = round2((qty * unitInput) - discount);
+    var grossBeforeDiscount = round2(qty * unitInput);
+    var discount = Math.min(Math.max(0, Number(item && item.descuento ? item.descuento : 0)), grossBeforeDiscount);
     var rate = taxRateFromIva(item && item.iva ? item.iva : '0%');
 
-    if (gross <= 0 || rate <= 0) {
+    if (grossBeforeDiscount <= 0 || rate <= 0) {
       return {
-        gross: Math.max(0, gross),
-        base: Math.max(0, gross),
-        tax: 0
+        gross: Math.max(0, round2(grossBeforeDiscount - discount)),
+        base: Math.max(0, round2(grossBeforeDiscount - discount)),
+        tax: 0,
+        discountBase: discount
       };
     }
 
-    var base = round2(gross / (1 + rate));
-    var tax = round2(gross - base);
+    var baseBeforeDiscount = round2(grossBeforeDiscount * (1 - rate));
+    var taxBeforeDiscount = round2(grossBeforeDiscount - baseBeforeDiscount);
+    var discountBase = round2(discount * (1 - rate));
+    var discountTax = round2(discount - discountBase);
+    var base = round2(baseBeforeDiscount - discountBase);
+    var tax = round2(taxBeforeDiscount - discountTax);
     return {
-      gross: gross,
+      gross: round2(grossBeforeDiscount - discount),
       base: base,
-      tax: tax
+      tax: tax,
+      discountBase: discountBase
     };
   }
 
@@ -280,7 +286,32 @@
   function setInvoiceSubmitting(isSubmitting) {
     var busy = Boolean(isSubmitting);
     state.invoiceSubmitting = busy;
-    $('#factura-issue-btn').prop('disabled', busy);
+    $('#factura-issue-btn')
+      .prop('disabled', busy)
+      .text(busy ? 'Firmando y enviando...' : 'Firmar y enviar');
+  }
+
+  function facturaAlert(options) {
+    var opts = options || {};
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+      return window.Swal.fire({
+        icon: opts.icon || 'info',
+        title: opts.title || '',
+        text: opts.text || '',
+        html: opts.html || undefined,
+        confirmButtonText: opts.confirmButtonText || 'Aceptar',
+        allowOutsideClick: opts.allowOutsideClick !== false,
+        allowEscapeKey: opts.allowEscapeKey !== false
+      });
+    }
+    if (opts.icon === 'success') {
+      showNotice((opts.title || 'Correcto') + (opts.text ? ': ' + opts.text : ''), 'success');
+    } else if (opts.icon === 'error') {
+      showNotice((opts.title || 'Error') + (opts.text ? ': ' + opts.text : ''), 'error');
+    } else {
+      showNotice((opts.title || '') + (opts.text ? ': ' + opts.text : ''), opts.icon || 'info');
+    }
+    return $.Deferred().resolve().promise();
   }
 
   function currentBuyerIdentificationType() {
@@ -305,6 +336,39 @@
       && currentBuyerName() !== ''
       && currentBuyerIdentification() !== '';
     $('#factura-save-buyer-id-btn').prop('hidden', !shouldShow).toggle(shouldShow);
+  }
+
+  function resetFacturaIssueForm() {
+    state.details = [];
+    state.payments = [];
+    state.additionalFields = [];
+    state.pendingPosSale = null;
+    state.originSaleId = '';
+    state.buyerCustomerId = '';
+    state.paymentMethodDraft = 'cash';
+
+    $('#factura-buyer-id-type').val('Consumidor final');
+    $('#factura-buyer-identification').val('');
+    $('#factura-buyer-name').val('');
+    $('#factura-buyer-address').val('');
+    $('#factura-buyer-phone').val('');
+    $('#factura-buyer-email').val('');
+    $('#factura-product-search').val('');
+    $('#factura-tip').val('');
+    $('#factura-pay-cash-value,#factura-pay-transfer-value,#factura-pay-credit-value,#factura-pay-mixed-cash,#factura-pay-mixed-transfer,#factura-pay-mixed-credit,#factura-pay-credit-interest,#factura-pay-mixed-interest').val('');
+    $('#factura-pay-credit-due-date,#factura-pay-mixed-due-date').val('');
+    $('#factura-pay-credit-period,#factura-pay-mixed-period').val('monthly');
+    $('#factura-payment-modal').removeClass('active');
+    $('#factura-payment-actions').prop('hidden', false).show();
+    $('#factura-payment-origin-note').prop('hidden', true).hide();
+    $('.factura-buyer-suggestions').prop('hidden', true).empty();
+    clearPendingPosSale();
+
+    renderFacturaDetails();
+    renderFacturaPayments();
+    renderFacturaAdditionalFields();
+    recalcFacturaTotals();
+    updateSaveBuyerIdButton();
   }
 
   function currentSection() {
@@ -772,6 +836,50 @@
     }, 0);
   }
 
+  function facturaTicketTotalValue(totals, key) {
+    var value = totals && totals[key] !== undefined && totals[key] !== null ? totals[key] : 0;
+    if (value === '') return 0;
+    return Number(value || 0);
+  }
+
+  function saleItemInvoicePricing(item, salePayload) {
+    var qty = parseFloat(item && item.qty ? item.qty : 0) || 0;
+    var currentUnit = parseFloat(item && item.price ? item.price : 0) || 0;
+    var baseUnit = parseFloat(item && item.basePrice ? item.basePrice : 0) || 0;
+    if (!(baseUnit > 0)) {
+      baseUnit = parseFloat(item && item.normalPrice ? item.normalPrice : 0) || 0;
+    }
+    if (!(baseUnit > 0)) {
+      baseUnit = currentUnit;
+    }
+
+    var globalPct = parseFloat(
+      item && item.saleDiscountPct !== undefined && item.saleDiscountPct !== null
+        ? item.saleDiscountPct
+        : (salePayload && salePayload.discountPct ? salePayload.discountPct : 0)
+    ) || 0;
+    globalPct = Math.max(0, Math.min(100, globalPct));
+
+    var invoiceUnit = parseFloat(
+      item && item.invoiceUnitPrice !== undefined && item.invoiceUnitPrice !== null
+        ? item.invoiceUnitPrice
+        : 0
+    ) || 0;
+    if (!(invoiceUnit > 0)) {
+      invoiceUnit = currentUnit;
+      if (globalPct > 0) {
+        invoiceUnit = round2(invoiceUnit * (1 - (globalPct / 100)));
+      }
+    }
+
+    var lineBaseGross = round2(qty * baseUnit);
+    var lineNetGross = round2(qty * invoiceUnit);
+    return {
+      unitPrice: baseUnit,
+      discount: round2(Math.max(0, lineBaseGross - lineNetGross))
+    };
+  }
+
   function printFacturaTicket(documentData) {
     var doc = documentData || {};
     var emitter = doc.emitter || state.emitter || {};
@@ -780,7 +888,6 @@
     var details = Array.isArray(doc.details) ? doc.details : [];
     var totals = doc.totals || {};
     var payments = Array.isArray(doc.payments) ? doc.payments : [];
-    var additional = Array.isArray(doc.additionalFields) ? doc.additionalFields : [];
     var paperMm = facturaThermalPaperWidthMm();
     var facturaNumero = [doc.estab || point.estab || '', doc.ptoEmi || point.ptoEmi || '', doc.secuencial || ''].join('-');
     var authorizationDate = ((doc.sri || {}).authorizationDate || (doc.sri || {}).authorizedAt || '').toString();
@@ -788,6 +895,15 @@
     var total = Number(totals.importeTotal || 0);
     var change = Math.max(0, received - total);
     var qtyTotal = details.reduce(function (sum, item) { return sum + Number(item.cantidad || 0); }, 0);
+    var subtotalSinImpuestos = facturaTicketTotalValue(totals, 'subtotalSinImpuestos');
+    var totalDescuento = facturaTicketTotalValue(totals, 'displayTotalDescuento');
+    if (!(totalDescuento > 0)) {
+      totalDescuento = facturaTicketTotalValue(totals, 'totalDescuento');
+    }
+    var subtotalIva15 = facturaTicketTotalValue(totals, 'subtotal15');
+    var iva15 = facturaTicketTotalValue(totals, 'iva15');
+    var subtotalIva0 = facturaTicketTotalValue(totals, 'subtotal0');
+    var propina = facturaTicketTotalValue(totals, 'propina');
 
     function line(label, value) {
       var cleanValue = value === undefined || value === null ? '' : value.toString();
@@ -797,28 +913,30 @@
 
     var rows = details.map(function (item) {
       var qty = Number(item.cantidad || 0);
-      var unit = Number(item.precioUnitario || 0);
-      var discount = Number(item.descuento || 0);
-      var amount = Number(item.precioTotalSinImpuesto || 0) + Number(item.taxValue || 0);
+      var unit = Number(item.precioVenta !== undefined ? item.precioVenta : item.precioUnitario || 0);
+      var discount = Number(item.descuentoVenta !== undefined ? item.descuentoVenta : item.descuento || 0);
+      var amount = Number(item.totalVenta !== undefined ? item.totalVenta : 0);
       if (!(amount > 0)) {
-        amount = Math.max(0, (qty * unit) - discount);
+        amount = Math.max(0, qty * unit);
       }
+      amount = Math.max(0, amount - discount);
+      var displayUnit = unit;
+      if (discount > 0 && qty > 0) {
+        displayUnit = round2(amount / qty);
+      }
+      var taxableMark = taxRateFromIva(item.iva || '0%') > 0 ? '*' : '';
       return (
         '<tr>' +
           '<td class="qty">' + escapeHtml(money(qty)) + '</td>' +
           '<td class="desc">' + escapeHtml((item.descripcion || '').toString()) + '</td>' +
-          '<td class="unit">' + escapeHtml(money(unit)) + '</td>' +
-          '<td class="amt">' + escapeHtml(money(amount)) + '</td>' +
+          '<td class="unit">' + escapeHtml(money(displayUnit)) + '</td>' +
+          '<td class="amt">' + escapeHtml(money(amount) + taxableMark) + '</td>' +
         '</tr>'
       );
     }).join('');
 
     var paymentRows = payments.map(function (payment) {
       return '<div class="line"><span>' + escapeHtml((payment.label || payment.formaPago || 'Pago').toString().toUpperCase()) + '</span><strong>' + money(Number(payment.total || payment.value || 0)) + '</strong></div>';
-    }).join('');
-
-    var additionalRows = additional.map(function (field) {
-      return '<div>' + escapeHtml((field.name || '').toString().toUpperCase()) + ': ' + escapeHtml((field.value || '').toString()) + '</div>';
     }).join('');
 
     var html = [
@@ -834,6 +952,7 @@
       'table{width:100%;border-collapse:collapse;font-size:9px}th,td{padding:2px 1px;vertical-align:top}thead th{border-bottom:1px dashed #000}',
       '.qty{width:15%;text-align:right}.desc{width:45%;word-break:break-word}.unit{width:20%;text-align:right}.amt{width:20%;text-align:right}',
       '.line{display:flex;justify-content:space-between;gap:6px}.line strong{font-weight:700}.total{font-size:12px;font-weight:700}',
+      '.signature{margin-top:14px;text-align:center}.signature-line{border-top:1px solid #000;margin:18px auto 3px;width:80%}',
       '.legal{font-size:8px;text-align:center;margin-top:7px}.thanks{text-align:center;margin-top:10px;font-size:9px}',
       '</style></head><body><div class="ticket">',
       '<div class="center title">FACTURA ELECTRONICA</div>',
@@ -842,8 +961,8 @@
       line('RUC: ', emitter.ruc),
       line('MATRIZ: ', emitter.dirMatriz),
       line('TELEFONO: ', emitter.telefono),
-      '<div class="center">AMBIENTE: ' + escapeHtml(facturaEnvLabel(doc.environment || emitter.ambiente)) + '</div>',
-      '<div class="center">EMISION: ' + escapeHtml(facturaTipoEmisionLabel(emitter.tipoEmision)) + '</div>',
+      '<div>AMBIENTE: ' + escapeHtml(facturaEnvLabel(doc.environment || emitter.ambiente)) + '</div>',
+      '<div>EMISION: ' + escapeHtml(facturaTipoEmisionLabel(emitter.tipoEmision)) + '</div>',
       '<div class="center">OBLIGADO A LLEVAR CONTABILIDAD: ' + escapeHtml((emitter.obligadoContabilidad || 'NO').toString().toUpperCase()) + '</div>',
       '<div class="center">*** CLAVE DE ACCESO ***</div>',
       '<div class="key">' + escapeHtml((doc.accessKey || '').toString()) + '</div>',
@@ -863,21 +982,22 @@
       rows,
       '</tbody></table>',
       '<div class="sep"></div>',
-      '<div class="line total"><span>' + money(qtyTotal) + '</span><span>SUB-TOTAL:</span><strong>' + money(Number(totals.subtotalSinImpuestos || 0)) + '</strong></div>',
-      '<div class="line"><span></span><span>DESCUENTO:</span><strong>' + money(Number(totals.totalDescuento || 0)) + '</strong></div>',
-      '<div class="line"><span></span><span>IVA 15%:</span><strong>' + money(Number(totals.iva15 || 0)) + '</strong></div>',
-      '<div class="line"><span></span><span>IVA 12%:</span><strong>' + money(Number(totals.iva12 || 0)) + '</strong></div>',
-      '<div class="line"><span></span><span>SUB-TOTAL:</span><strong>' + money(Number(totals.subtotalSinImpuestos || 0)) + '</strong></div>',
-      '<div class="line total"><span></span><span>TOTAL:</span><strong>' + money(total) + '</strong></div>',
+      '<div class="line"><span>SUBTOTAL SIN IMPUESTO:</span><strong>' + money(subtotalSinImpuestos) + '</strong></div>',
+      '<div class="line"><span>DESCUENTO:</span><strong>' + money(totalDescuento) + '</strong></div>',
+      '<div class="line"><span>SUBTOTAL IVA 0%:</span><strong>' + money(subtotalIva0) + '</strong></div>',
+      subtotalIva15 > 0 ? '<div class="line"><span>SUBTOTAL IVA 15%:</span><strong>' + money(subtotalIva15) + '</strong></div>' : '',
+      iva15 > 0 ? '<div class="line"><span>IVA 15%:</span><strong>' + money(iva15) + '</strong></div>' : '',
+      '<div class="line"><span>PROPINA:</span><strong>' + money(propina) + '</strong></div>',
+      '<div class="line total"><span>VALOR TOTAL:</span><strong>' + money(total) + '</strong></div>',
       '<div class="sep2"></div>',
       '<div class="center title">F O R M A S  D E  P A G O</div>',
       paymentRows || '<div class="line"><span>EFECTIVO</span><strong>' + money(total) + '</strong></div>',
       '<div class="sep2"></div>',
       '<div class="line"><span>MONTO RECIBIDO</span><strong>' + money(received || total) + '</strong></div>',
       '<div class="line"><span>CAMBIO</span><strong>' + money(change) + '</strong></div>',
-      additionalRows ? '<div class="sep"></div><div class="center title">INFORMACION ADICIONAL</div>' + additionalRows : '',
       '<div class="legal">DESCARGUE SU FACTURA ELECTRONICA EN:<br>https://srienlinea.sri.gob.ec/<br>DOCUMENTO SIN SUSTENTO TRIBUTARIO</div>',
       '<div class="legal">1 REALIZADA LA COMPRA NO HAY DEVOLUCIONES<br>2 LOS CAMBIOS SE REALIZARAN SEGUN POLITICAS DEL LOCAL</div>',
+      '<div class="signature"><div class="signature-line"></div><div>FIRMA DEL CLIENTE</div></div>',
       '<div class="center title">*** ORIGINAL ***</div>',
       '<div class="thanks">Muchas gracias por su compra</div>',
       '</div></body></html>'
@@ -989,7 +1109,7 @@
         id: (item.productId || item.codigoPrincipal || item.codigoAuxiliar || '').toString(),
         barcode: (item.codigoPrincipal || item.codigoAuxiliar || item.productId || '').toString(),
         name: (item.descripcion || '').toString(),
-        iva: normalizedIva === '0%' ? 'No' : normalizedIva,
+        iva: normalizedIva,
         price: round2(netUnitPrice),
         qty: qty
       };
@@ -1129,26 +1249,64 @@
       importeTotal: 0
     };
 
+    var grossByRate = {
+      '15%': 0,
+      '12%': 0,
+      '0%': 0
+    };
+    var displayTaxByRate = {
+      '15%': 0,
+      '12%': 0
+    };
+
     state.details.forEach(function (item) {
-      var line = calcLineTotals(item);
-      var base = line.base;
-      var tax = line.tax;
       var iva = normalizeIva(item.iva);
-      totals.subtotalSinImpuestos += base;
-      totals.totalDescuento += item.descuento || 0;
+      var qty = Number(item.cantidad || 0);
+      var unit = Number(item.precioUnitario || 0);
+      var grossBeforeDiscount = round2(qty * unit);
+      var discount = Math.min(Math.max(0, Number(item.descuento || 0)), grossBeforeDiscount);
+      var netGross = round2(grossBeforeDiscount - discount);
+      totals.subtotalSinDescuento += grossBeforeDiscount;
+      totals.totalDescuento += discount;
       totals.valorICE += item.valorICE || 0;
       if (iva === '15%') {
-        totals.subtotal15 += base;
-        totals.iva15 += tax;
+        var displayBase15 = round2(netGross * 0.85);
+        totals.subtotal15 += displayBase15;
+        displayTaxByRate['15%'] += round2(netGross - displayBase15);
+        grossByRate['15%'] += netGross;
       } else if (iva === '12%') {
-        totals.subtotal12 += base;
-        totals.iva12 += tax;
+        var displayBase12 = round2(netGross * 0.88);
+        totals.subtotal12 += displayBase12;
+        displayTaxByRate['12%'] += round2(netGross - displayBase12);
+        grossByRate['12%'] += netGross;
       } else {
-        totals.subtotal0 += base;
+        totals.subtotal0 += netGross;
+        grossByRate['0%'] += netGross;
       }
     });
 
-    totals.importeTotal = totals.subtotalSinImpuestos + totals.iva15 + totals.iva12 + totals.iva5 + totals.ivaTarifaEspecial;
+    totals.subtotal15 = round2(totals.subtotal15);
+    totals.iva15 = round2(grossByRate['15%'] - totals.subtotal15);
+    totals.subtotal12 = round2(totals.subtotal12);
+    totals.iva12 = round2(grossByRate['12%'] - totals.subtotal12);
+    totals.subtotal0 = round2(totals.subtotal0);
+    totals.subtotalSinImpuestos = round2(totals.subtotal15 + totals.subtotal12 + totals.subtotal0);
+    totals.totalDescuento = round2(totals.totalDescuento);
+
+    var propina = parseFloat(($('#factura-tip').val() || '0').toString().replace(',', '.')) || 0;
+    totals.propina = Math.max(0, propina);
+    totals.iva0 = 0;
+    totals.subtotalSinDescuento = round2(totals.subtotalSinDescuento);
+    totals.importeTotal = round2(Object.keys(grossByRate).reduce(function (sum, key) {
+      return sum + grossByRate[key];
+    }, 0) + totals.propina);
+    totals.displaySubtotalSinDescuento = totals.subtotalSinDescuento;
+    totals.displayTotalDescuento = totals.totalDescuento;
+    totals.displayTotalSinImpuestos = totals.subtotalSinImpuestos;
+    totals.displaySubtotal15 = totals.subtotal15;
+    totals.displaySubtotal0 = totals.subtotal0;
+    totals.displayIva15 = round2(displayTaxByRate['15%']);
+    totals.displayIva12 = round2(displayTaxByRate['12%']);
 
     Object.keys(totals).forEach(function (key) {
       $('[data-total="' + key + '"]').text(money(totals[key]));
@@ -1159,8 +1317,8 @@
   function renderFacturaDetails() {
     var $tbody = $('#factura-detail-body').empty();
     state.details.forEach(function (item, index) {
-      var line = calcLineTotals(item);
-      var base = line.base;
+      var qty = Number(item.cantidad || 0);
+      var lineTotal = round2(qty * Number(item.precioUnitario || 0));
       var $tr = $(
         '<tr>' +
           '<td>' + escapeHtml(item.codigoPrincipal || '') + '</td>' +
@@ -1170,7 +1328,7 @@
           '<td class="catalog-money">' + money(item.precioUnitario || 0) + '</td>' +
           '<td class="catalog-center">' + escapeHtml(item.iva || '0%') + '</td>' +
           '<td class="catalog-money">' + money(item.descuento || 0) + '</td>' +
-          '<td class="catalog-money">' + money(base) + '</td>' +
+          '<td class="catalog-money">' + money(lineTotal) + '</td>' +
           '<td class="catalog-money">' + money(item.valorICE || 0) + '</td>' +
           '<td><button class="btn-secondary" type="button">Quitar</button></td>' +
         '</tr>'
@@ -1577,9 +1735,21 @@
         customer.documentNumber,
         customer.ruc,
         customer.cedula,
-        customer.idNumber,
-        customer.id
+        customer.idNumber
       ].filter(Boolean).map(function (v) { return v.toString(); });
+    }
+
+    function customerDisplayName(customer) {
+      return (customer && (customer.name || customer.razonSocial || ((customer.firstName || '') + ' ' + (customer.lastName || '')).trim()) || '').toString().trim();
+    }
+
+    function customerPrimaryIdentification(customer) {
+      var candidates = customerIdentityCandidates(customer);
+      return (candidates[0] || '').toString().trim();
+    }
+
+    function customerSearchText(value) {
+      return (value || '').toString().trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     }
 
     function findCustomerByIdentification(rawIdentification) {
@@ -1596,20 +1766,124 @@
       });
       if (exact) return exact;
 
+      return null;
+    }
+
+    function findCustomerByName(rawName) {
+      var q = customerSearchText(rawName);
+      if (!q) return null;
+      var customers = Array.isArray(state.customers) ? state.customers : [];
       return customers.find(function (customer) {
-        var text = (
-          (customer.id || '') + ' ' +
-          (customer.name || '') + ' ' +
-          (customer.email || '') + ' ' +
-          (customer.taxId || '') + ' ' +
-          (customer.identification || '')
-        ).toLowerCase();
-        return text.indexOf(q.toLowerCase()) >= 0;
+        return customerSearchText(customerDisplayName(customer)) === q;
       }) || null;
     }
 
+    function customerMatchesIdentification(customer, query) {
+      var q = normalizeDigits(query);
+      if (!q) return false;
+      return customerIdentityCandidates(customer).some(function (idv) {
+        var digits = normalizeDigits(idv);
+        return digits && (digits.indexOf(q) === 0 || digits.indexOf(q) >= 0);
+      });
+    }
+
+    function customerMatchesName(customer, query) {
+      var q = customerSearchText(query);
+      if (!q) return false;
+      return customerSearchText(customerDisplayName(customer)).indexOf(q) >= 0;
+    }
+
+    function buyerSuggestionRank(type, customer, query) {
+      if (type === 'identification') {
+        var qDigits = normalizeDigits(query);
+        var best = 10;
+        customerIdentityCandidates(customer).forEach(function (idv) {
+          var digits = normalizeDigits(idv);
+          if (!digits || !qDigits) return;
+          if (digits === qDigits) best = Math.min(best, 0);
+          else if (digits.indexOf(qDigits) === 0) best = Math.min(best, 1);
+          else if (digits.indexOf(qDigits) >= 0) best = Math.min(best, 2);
+        });
+        return best;
+      }
+
+      var q = customerSearchText(query);
+      var name = customerSearchText(customerDisplayName(customer));
+      if (name === q) return 0;
+      if (name.indexOf(q) === 0) return 1;
+      if (name.indexOf(' ' + q) >= 0) return 2;
+      if (name.indexOf(q) >= 0) return 3;
+      return 10;
+    }
+
+    function buyerSuggestionRows(type, query) {
+      var customers = Array.isArray(state.customers) ? state.customers : [];
+      var matcher = type === 'identification' ? customerMatchesIdentification : customerMatchesName;
+      return customers.filter(function (customer) {
+        if (!customer || (customer.id || '').toString() === 'c-001') return false;
+        return matcher(customer, query);
+      }).sort(function (a, b) {
+        var rankA = buyerSuggestionRank(type, a, query);
+        var rankB = buyerSuggestionRank(type, b, query);
+        if (rankA !== rankB) return rankA - rankB;
+        return customerDisplayName(a).localeCompare(customerDisplayName(b), 'es');
+      }).slice(0, 50);
+    }
+
+    function hideBuyerSuggestions(type) {
+      var selector = type === 'identification'
+        ? '#factura-buyer-identification-suggestions'
+        : '#factura-buyer-name-suggestions';
+      $(selector).prop('hidden', true).empty();
+    }
+
+    function hideAllBuyerSuggestions() {
+      hideBuyerSuggestions('identification');
+      hideBuyerSuggestions('name');
+    }
+
+    function renderBuyerSuggestions(type, query) {
+      var $box = type === 'identification'
+        ? $('#factura-buyer-identification-suggestions')
+        : $('#factura-buyer-name-suggestions');
+      var q = (query || '').toString().trim();
+      if (type === 'identification') {
+        q = normalizeDigits(q);
+      }
+      if (q.length < 2) {
+        $box.prop('hidden', true).empty();
+        return;
+      }
+      var rows = buyerSuggestionRows(type, query);
+      if (!rows.length) {
+        $box.prop('hidden', false).html('<div class="factura-buyer-suggestion factura-buyer-suggestion--empty">Sin coincidencias</div>');
+        return;
+      }
+      $box.prop('hidden', false).empty();
+      rows.forEach(function (customer) {
+        var idText = customerPrimaryIdentification(customer);
+        var name = customerDisplayName(customer);
+        var $row = $(
+          '<button type="button" class="factura-buyer-suggestion">' +
+            '<strong>' + escapeHtml(name || 'Cliente') + '</strong>' +
+            '<span>' + escapeHtml(idText || 'Sin identificacion') + (customer.phone ? ' | ' + escapeHtml(customer.phone) : '') + '</span>' +
+          '</button>'
+        );
+        $row.on('mousedown', function (event) {
+          event.preventDefault();
+          fillBuyerFromCustomer(customer);
+          hideAllBuyerSuggestions();
+          setStatus('#factura-issue-status', 'Cliente cargado desde coincidencias.');
+        });
+        $box.append($row);
+      });
+    }
+
     function fillBuyerFromCustomer(customer) {
-      $('#factura-buyer-name').val(customer.name || customer.razonSocial || '');
+      var identification = customerPrimaryIdentification(customer);
+      $('#factura-buyer-identification').val(identification || '');
+      $('#factura-buyer-id-type').val(identification ? (inferBuyerIdentificationType(identification) || '') : '');
+      $('#factura-buyer-name').val(customerDisplayName(customer));
       $('#factura-buyer-address').val(customer.address1 || customer.address || '');
       $('#factura-buyer-phone').val(customer.phone || '');
       $('#factura-buyer-email').val(customer.email || '');
@@ -1679,20 +1953,16 @@
 
       state.details = (salePayload.items || []).map(function (item) {
         var code = (item.barcode || item.id || '').toString();
-        var preferredUnitPrice = parseFloat(
-          item.invoiceUnitPrice !== undefined && item.invoiceUnitPrice !== null
-            ? item.invoiceUnitPrice
-            : item.price
-        ) || 0;
+        var pricing = saleItemInvoicePricing(item, salePayload);
         return {
           productId: (item.id || '').toString(),
           codigoPrincipal: code,
           codigoAuxiliar: code,
           cantidad: parseFloat(item.qty || 0) || 0,
           descripcion: (item.name || '').toString(),
-          precioUnitario: preferredUnitPrice,
+          precioUnitario: pricing.unitPrice,
           iva: normalizeIva(item.iva),
-          descuento: 0,
+          descuento: pricing.discount,
           valorICE: 0
         };
       }).filter(function (item) { return item.cantidad > 0; });
@@ -1817,6 +2087,18 @@
       setStatus('#factura-issue-status', 'Cliente cargado desde el catalogo.');
     }
 
+    function searchAndFillBuyerByName() {
+      var q = ($('#factura-buyer-name').val() || '').toString().trim();
+      var match = findCustomerByName(q);
+      if (!match) {
+        setStatus('#factura-issue-status', 'Seleccione una coincidencia de razon social para cargar los datos del adquirente.', true);
+        return;
+      }
+      fillBuyerFromCustomer(match);
+      hideAllBuyerSuggestions();
+      setStatus('#factura-issue-status', 'Cliente cargado desde el catalogo.');
+    }
+
     $('#factura-buyer-search-btn').on('click', searchAndFillBuyer);
     $('#factura-save-buyer-id-btn').on('click', saveBuyerAsCustomer);
     $('#factura-point-id, #factura-point-establishment').on('change', function () {
@@ -1831,12 +2113,32 @@
         updateSaveBuyerIdButton();
       }
     });
-    $('#factura-buyer-identification').on('input', syncBuyerIdentificationType);
+    $('#factura-buyer-identification').on('input', function () {
+      syncBuyerIdentificationType();
+      renderBuyerSuggestions('identification', $(this).val());
+    });
     $('#factura-buyer-identification').on('change blur', function () {
+      window.setTimeout(function () { hideBuyerSuggestions('identification'); }, 120);
       if (!($(this).val() || '').toString().trim()) return;
       searchAndFillBuyer();
     });
-    $('#factura-buyer-name').on('input', updateSaveBuyerIdButton);
+    $('#factura-buyer-identification').on('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      searchAndFillBuyer();
+    });
+    $('#factura-buyer-name').on('input', function () {
+      updateSaveBuyerIdButton();
+      renderBuyerSuggestions('name', $(this).val());
+    });
+    $('#factura-buyer-name').on('blur', function () {
+      window.setTimeout(function () { hideBuyerSuggestions('name'); }, 120);
+    });
+    $('#factura-buyer-name').on('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      searchAndFillBuyerByName();
+    });
 
     $('#factura-product-search-btn').on('click', openFacturaProductSearchModal);
     $('#factura-product-search').on('keydown', function (e) {
@@ -1917,6 +2219,11 @@
       apiPost($.extend({ action: 'issue_invoice' }, buildFacturaPayload())).done(function (res) {
         if (!res.ok) {
           setStatus('#factura-issue-status', res.error || 'No se pudo emitir la factura.', true);
+          facturaAlert({
+            icon: 'error',
+            title: 'No se pudo emitir la factura',
+            text: res.error || 'Revise los datos e intente nuevamente.'
+          });
           setInvoiceSubmitting(false);
           return;
         }
@@ -1944,13 +2251,32 @@
           if (printFacturaTicket(res.data || {})) {
             showNotice('Ticket de factura enviado a impresion.', 'success');
           }
+          facturaAlert({
+            icon: 'success',
+            title: 'Factura emitida correctamente',
+            html: 'Estado: <strong>' + escapeHtml(((res.data || {}).status || 'Procesada').toString()) + '</strong>' +
+              (saleTicketId ? '<br>Venta registrada: <strong>#' + escapeHtml(saleTicketId) + '</strong>' : '') +
+              '<br>El formulario quedo listo para una nueva factura.',
+            confirmButtonText: 'Aceptar'
+          });
+          resetFacturaIssueForm();
           setInvoiceSubmitting(false);
         }).fail(function (xhr) {
           setStatus('#factura-issue-status', 'Factura emitida, pero no se pudo registrar la venta en caja: ' + responseErrorMessage(xhr, 'Error desconocido.'), true);
+          facturaAlert({
+            icon: 'warning',
+            title: 'Factura emitida con advertencia',
+            text: 'No se pudo registrar la venta en caja: ' + responseErrorMessage(xhr, 'Error desconocido.')
+          });
           setInvoiceSubmitting(false);
         });
       }).fail(function (xhr) {
         setStatus('#factura-issue-status', responseErrorMessage(xhr, 'No se pudo emitir la factura.'), true);
+        facturaAlert({
+          icon: 'error',
+          title: 'No se pudo emitir la factura',
+          text: responseErrorMessage(xhr, 'Revise los datos e intente nuevamente.')
+        });
         setInvoiceSubmitting(false);
       });
     });
@@ -1993,6 +2319,8 @@
   }
 
   function bindDocumentsPage() {
+    var documentRowsCache = [];
+
     function setDocumentStatus(message, isError) {
       setStatus('#facturacion-document-status', message, isError);
     }
@@ -2004,13 +2332,101 @@
       return '';
     }
 
+    function parseDocumentDate(row) {
+      var raw = (row && (row.issueDate || row.createdAt) || '').toString().trim();
+      if (!raw) return null;
+      var match = raw.match(/^(\d{2})-(\d{2})-(\d{4})/);
+      if (match) {
+        return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+      }
+      match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+      }
+      var parsed = new Date(raw);
+      return Number.isNaN(parsed.getTime()) ? null : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    }
+
+    function parseDateInputValue(selector) {
+      var value = ($(selector).val() || '').toString().trim();
+      if (!value) return null;
+      var match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) return null;
+      return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    }
+
+    function documentIsInvoice(row) {
+      var type = (row && row.docType || '').toString();
+      var name = (row && row.docName || '').toString().toLowerCase();
+      return type === '01' || name.indexOf('factura') >= 0;
+    }
+
+    function documentTotalValue(row, key) {
+      var totals = row && typeof row.totals === 'object' ? row.totals : {};
+      return Number(totals[key] || 0);
+    }
+
+    function documentMatchesReportFilters(row) {
+      var from = parseDateInputValue('#facturacion-report-date-from');
+      var to = parseDateInputValue('#facturacion-report-date-to');
+      var status = ($('#facturacion-report-status').val() || '').toString().trim().toLowerCase();
+      if (status && (row.status || '').toString().trim().toLowerCase() !== status) return false;
+      if (!from && !to) return true;
+      var date = parseDocumentDate(row);
+      if (!date) return false;
+      if (from && date < from) return false;
+      if (to && date > to) return false;
+      return true;
+    }
+
+    function invoiceRowsForReport(rows) {
+      return (Array.isArray(rows) ? rows : []).filter(function (row) {
+        if (!documentIsInvoice(row)) return false;
+        return documentMatchesReportFilters(row);
+      });
+    }
+
+    function renderInvoiceReport(rows) {
+      if (!$('#facturacion-report-panel').length) return;
+      var reportRows = invoiceRowsForReport(rows);
+      var summary = reportRows.reduce(function (acc, row) {
+        var subtotal0 = documentTotalValue(row, 'subtotal0');
+        var subtotal15 = documentTotalValue(row, 'subtotal15');
+        var iva15 = documentTotalValue(row, 'iva15');
+        acc.count += 1;
+        acc.total += documentTotalValue(row, 'importeTotal');
+        acc.subtotal0 += subtotal0;
+        acc.total0 += subtotal0 + documentTotalValue(row, 'iva0');
+        acc.subtotal15 += subtotal15;
+        acc.total15 += subtotal15 + iva15;
+        return acc;
+      }, {
+        count: 0,
+        total: 0,
+        total0: 0,
+        subtotal0: 0,
+        total15: 0,
+        subtotal15: 0
+      });
+
+      $('[data-invoice-report="count"]').text(String(summary.count));
+      $('[data-invoice-report="total"]').text(money(summary.total));
+      $('[data-invoice-report="total0"]').text(money(summary.total0));
+      $('[data-invoice-report="subtotal0"]').text(money(summary.subtotal0));
+      $('[data-invoice-report="total15"]').text(money(summary.total15));
+      $('[data-invoice-report="subtotal15"]').text(money(summary.subtotal15));
+    }
+
     function renderRows(rows) {
       var q = ($('#facturacion-document-search').val() || '').toString().trim().toLowerCase();
       var $tbody = $('#facturacion-document-body').empty();
+      renderInvoiceReport(rows);
       function envLabel(value) {
         return (value || '').toString() === '2' ? 'Produccion' : 'Pruebas';
       }
       rows.filter(function (row) {
+        return documentMatchesReportFilters(row);
+      }).filter(function (row) {
         var haystack = ((row.accessKey || '') + ' ' + (row.secuencial || '') + ' ' + ((row.buyer || {}).razonSocial || '') + ' ' + (row.adminTag || '')).toLowerCase();
         return !q || haystack.indexOf(q) >= 0;
       }).forEach(function (row) {
@@ -2109,7 +2525,8 @@
           setDocumentStatus(res.error || 'No se pudieron cargar los comprobantes.', true);
           return;
         }
-        renderRows(Array.isArray(res.data) ? res.data : []);
+        documentRowsCache = Array.isArray(res.data) ? res.data : [];
+        renderRows(documentRowsCache);
       }).fail(function (xhr) {
         setDocumentStatus(responseErrorMessage(xhr, 'No se pudieron cargar los comprobantes.'), true);
       });
@@ -2117,6 +2534,14 @@
 
     $('#facturacion-document-search').on('input', loadDocuments);
     $('#facturacion-document-refresh').on('click', loadDocuments);
+    $('#facturacion-report-date-from,#facturacion-report-date-to,#facturacion-report-status').on('change', function () {
+      renderRows(documentRowsCache);
+    });
+    $('#facturacion-report-clear').on('click', function () {
+      $('#facturacion-report-date-from,#facturacion-report-date-to').val('');
+      $('#facturacion-report-status').val('');
+      renderRows(documentRowsCache);
+    });
     loadDocuments();
   }
 

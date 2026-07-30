@@ -43,7 +43,9 @@ declare(strict_types=1);
       <button type="button" class="btn" id="btn-cobrar"><span class="kbd">F12</span> Cobrar</button>
     </div>
     <div class="totales">
-      <div class="field"><span class="muted">Subtotal:</span> <span id="subtotal" class="cifra">$0.00</span></div>
+      <div class="field"><span class="muted">Subtotal sin descuento:</span> <span id="subtotal" class="cifra">$0.00</span></div>
+      <div class="field"><span class="muted">Descuento:</span> <span id="venta-descuento-total" class="cifra cifra-small">$0.00</span></div>
+      <div class="field"><span class="muted">Base 15%:</span> <span id="venta-base-15" class="cifra cifra-small">$0.00</span></div>
       <div class="field"><span class="muted">Total:</span> <span id="total" class="cifra">$0.00</span></div>
       <div class="field"><span class="muted">Pagó con:</span> <input id="pagoConInline" type="text" readonly value=""></div>
       <div class="field"><span class="muted">Cambio:</span> <input id="cambioInline" type="text" readonly value=""></div>

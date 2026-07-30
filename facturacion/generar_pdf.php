@@ -44,19 +44,11 @@ function facturacionPdfAccessKeyLabel(array $document): string
 function facturacionPdfBuildTotalsRows(array $totals): string
 {
     $rows = [
-        ['SUBTOTAL SIN DESCUENTO', (float)($totals['subtotalSinImpuestos'] ?? 0) + (float)($totals['totalDescuento'] ?? 0)],
-        ['DESCUENTO', (float)($totals['totalDescuento'] ?? 0)],
-        ['SUBTOTAL IVA 15%', (float)($totals['subtotal15'] ?? 0)],
-        ['SUBTOTAL IVA 12%', (float)($totals['subtotal12'] ?? 0)],
+        ['SUBTOTAL SIN IMPUESTO', (float)($totals['subtotalSinImpuestos'] ?? 0)],
+        ['DESCUENTO', (float)($totals['displayTotalDescuento'] ?? $totals['totalDescuento'] ?? 0)],
         ['SUBTOTAL IVA 0%', (float)($totals['subtotal0'] ?? 0)],
-        ['SUBTOTAL 0%', 0.0],
-        ['SUBTOTAL EXENTO DE IVA', (float)($totals['subtotalExentoIva'] ?? 0)],
-        ['SUBTOTAL SIN IMPUESTOS', (float)($totals['subtotalSinImpuestos'] ?? 0)],
-        ['IVA 15 %', (float)($totals['iva15'] ?? 0)],
-        ['IVA 12 %', (float)($totals['iva12'] ?? 0)],
-        ['IVA 0 %', (float)($totals['iva0'] ?? 0)],
-        ['ICE', (float)($totals['valorICE'] ?? 0)],
-        ['IRBPNR', 0.0],
+        ['SUBTOTAL IVA 15%', (float)($totals['subtotal15'] ?? 0)],
+        ['IVA 15%', (float)($totals['iva15'] ?? 0)],
         ['PROPINA', (($totals['propina'] ?? '') !== '' ? (float)$totals['propina'] : 0.0)],
         ['VALOR TOTAL', (float)($totals['importeTotal'] ?? 0), true],
     ];
@@ -99,17 +91,20 @@ function facturacionPdfBuildHtml(array $document): string
         if (!is_array($detail)) {
             continue;
         }
+        $qty = (float)($detail['cantidad'] ?? 0);
+        $displayUnit = (float)($detail['precioVenta'] ?? $detail['precioUnitario'] ?? 0);
+        $displayDiscount = (float)($detail['descuentoVenta'] ?? $detail['descuento'] ?? 0);
+        $displayTotal = max(0.0, (float)($detail['totalVenta'] ?? ($qty * $displayUnit)) - $displayDiscount);
         $detailRows .= '<tr>'
-            . '<td>' . facturacionPdfEscape((string)($detail['codigoPrincipal'] ?? '')) . '</td>'
-            . '<td class="num">' . facturacionPdfEscape(facturacionFormatDecimal((float)($detail['cantidad'] ?? 0), 2)) . '</td>'
+            . '<td class="num">' . facturacionPdfEscape(facturacionFormatDecimal($qty, 2)) . '</td>'
             . '<td>' . facturacionPdfEscape((string)($detail['descripcion'] ?? '')) . '</td>'
-            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal((float)($detail['precioUnitario'] ?? 0))) . '</td>'
-            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal((float)($detail['descuento'] ?? 0))) . '</td>'
-            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal((float)($detail['precioTotalSinImpuesto'] ?? 0))) . '</td>'
+            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal($displayUnit)) . '</td>'
+            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal($displayDiscount)) . '</td>'
+            . '<td class="num">$' . facturacionPdfEscape(facturacionFormatDecimal($displayTotal)) . '</td>'
             . '</tr>';
     }
     if ($detailRows === '') {
-        $detailRows = '<tr><td colspan="6" class="empty">Sin detalles</td></tr>';
+        $detailRows = '<tr><td colspan="5" class="empty">Sin detalles</td></tr>';
     }
 
     $paymentRows = '';
@@ -212,7 +207,7 @@ function facturacionPdfBuildHtml(array $document): string
         . '<tr><td class="label">RAZON SOCIAL:</td><td>' . facturacionPdfEscape((string)($buyer['razonSocial'] ?? '')) . '</td><td class="label">IDENTIFICACION:</td><td>' . facturacionPdfEscape((string)($buyer['identification'] ?? '')) . '</td></tr>'
         . '<tr><td class="label">DIRECCION:</td><td>' . facturacionPdfEscape((string)($buyer['address'] ?? '')) . '</td><td class="label">TIPO IDENTIFICACION:</td><td>' . facturacionPdfEscape($identificationCode . ' ' . $identificationType) . '</td></tr>'
         . '</table>'
-        . '<table class="grid"><thead><tr><th>COD. PRINC.</th><th class="num">CANT.</th><th>DESCRIPCION</th><th class="num">P. UNIT</th><th class="num">DESC.</th><th class="num">TOTAL</th></tr></thead><tbody>'
+        . '<table class="grid"><thead><tr><th class="num">CANT.</th><th>DESCRIPCION</th><th class="num">P. UNIT</th><th class="num">DESC.</th><th class="num">TOTAL</th></tr></thead><tbody>'
         . $detailRows
         . '</tbody></table>'
         . '<table class="bottom"><tr>'

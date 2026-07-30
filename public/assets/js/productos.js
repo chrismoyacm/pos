@@ -175,7 +175,7 @@
 
   function formatIvaPercent(value) {
     const rate = Number(value || 0);
-    if (!(rate > 0)) return '';
+    if (!Number.isFinite(rate) || rate < 0) return '';
     return (Number.isInteger(rate) ? String(rate) : String(rate.toFixed(2)).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1')) + '%';
   }
 
@@ -188,7 +188,7 @@
           active: row && row.active !== false
         };
       })
-      .filter(function (row) { return row.active && row.percentage > 0; });
+      .filter(function (row) { return row.active && row.percentage >= 0; });
   }
 
   function findTaxById(id) {
@@ -224,10 +224,11 @@
 
   function normalizeIvaLabel(iva) {
     const raw = (iva || '').toString().trim().toLowerCase();
-    if (!raw || raw === 'no' || raw === '0' || raw === 'false') return 'No';
+    if (!raw || raw === 'no' || raw === 'false') return 'No';
     const byId = findTaxById(raw);
     if (byId) return formatIvaPercent(byId.percentage) || 'No';
     const numeric = Number(raw.replace('iva', '').replace('%', '').trim());
+    if (numeric === 0 && raw.indexOf('%') >= 0) return '0%';
     if (numeric > 0) return formatIvaPercent(numeric) || 'No';
     if (raw === 'si' || raw === 'sÃ¯Â¿Â½' || raw === 'yes' || raw === 'true') {
       const labels = availableIvaLabels().filter(function (label) { return label !== 'No'; });

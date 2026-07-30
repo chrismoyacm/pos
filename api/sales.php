@@ -3,8 +3,14 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../utils/json_store.php';
 require_once __DIR__ . '/../utils/persistence.php';
+require_once __DIR__ . '/../facturacion/helpers.php';
 
 session_start();
+
+$autoload = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'autoload.php';
+if (file_exists($autoload)) {
+    require_once $autoload;
+}
 
 $salesPath = storagePath('sales.json');
 $productsPath = storagePath('products.json');
@@ -36,6 +42,16 @@ function salesToFloat(mixed $value): float
 function salesToInt(mixed $value): int
 {
     return (int)round((float)$value);
+}
+
+function salesHtmlEscape(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function salesMoney(mixed $value): string
+{
+    return '$' . number_format(round((float)$value, 2), 2, '.', ',');
 }
 
 function salesStatus(array $sale): string
@@ -168,6 +184,10 @@ function salesFooterMeta(array $sale): string
     $payload = [
         'discountPct' => salesToFloat($sale['discountPct'] ?? 0),
         'discountAmount' => salesToFloat($sale['discountAmount'] ?? 0),
+        'discountMode' => trim((string)($sale['discountMode'] ?? 'percent')),
+        'discountValue' => salesToFloat($sale['discountValue'] ?? ($sale['discountPct'] ?? 0)),
+        'quoteEmail' => trim((string)($sale['quoteEmail'] ?? '')),
+        'quoteSentAt' => trim((string)($sale['quoteSentAt'] ?? '')),
         'transferMeta' => is_array($sale['transferMeta'] ?? null) ? $sale['transferMeta'] : ['reference' => '', 'phone' => ''],
         'mixedPayments' => is_array($sale['mixedPayments'] ?? null) ? $sale['mixedPayments'] : null,
         'creditDueDate' => trim((string)($sale['creditDueDate'] ?? '')),
@@ -217,6 +237,245 @@ function salesFindDbSaleByTicketId(string $ticketId): ?array
         }
     }
     return null;
+}
+
+function salesFindSaleByTicketId(string $ticketId): ?array
+{
+    if ($ticketId === '') {
+        return null;
+    }
+
+    if (salesCanUseTicketsDb()) {
+        $sale = salesFindDbSaleByTicketId($ticketId);
+        if (is_array($sale)) {
+            return $sale;
+        }
+    }
+
+    foreach (salesReadBackupRows(storagePath('sales.json')) as $sale) {
+        if (is_array($sale) && (string)($sale['ticketId'] ?? '') === $ticketId) {
+            return $sale;
+        }
+    }
+
+    return null;
+}
+
+function salesUpdatePendingQuoteMeta(string $ticketId, string $email, string $sentAt): void
+{
+    $email = trim($email);
+    if ($ticketId === '' || $email === '') {
+        return;
+    }
+
+    if (salesCanUseTicketsDb()) {
+        $pdo = db();
+        $stmt = $pdo->prepare('SELECT NOTAS_AL_PIE FROM VENTATICKETS WHERE ID = :id OR FOLIO = :folio LIMIT 1');
+        $stmt->execute([':id' => $ticketId, ':folio' => $ticketId]);
+        $raw = (string)($stmt->fetchColumn() ?: '');
+        $meta = [];
+        if (trim($raw) !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $meta = $decoded;
+            }
+        }
+        $meta['quoteEmail'] = $email;
+        $meta['quoteSentAt'] = $sentAt;
+        $update = $pdo->prepare('UPDATE VENTATICKETS SET NOTAS_AL_PIE = :meta WHERE ID = :id OR FOLIO = :folio');
+        $update->execute([
+            ':meta' => json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':id' => $ticketId,
+            ':folio' => $ticketId,
+        ]);
+        return;
+    }
+
+    $path = storagePath('sales.json');
+    $sales = salesReadBackupRows($path);
+    $updated = false;
+    foreach ($sales as &$sale) {
+        if (!is_array($sale) || (string)($sale['ticketId'] ?? '') !== $ticketId) {
+            continue;
+        }
+        $sale['quoteEmail'] = $email;
+        $sale['quoteSentAt'] = $sentAt;
+        $updated = true;
+        break;
+    }
+    unset($sale);
+
+    if ($updated) {
+        writeJsonBackupFile($path, $sales);
+    }
+}
+
+function salesBuildQuotePdf(array $sale, array $emitter): string
+{
+    if (!class_exists(\Dompdf\Dompdf::class)) {
+        throw new RuntimeException('No se encontro Dompdf para generar la cotizacion.');
+    }
+
+    $items = is_array($sale['items'] ?? null) ? $sale['items'] : [];
+    $rows = '';
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $qty = (float)($item['qty'] ?? 0);
+        $price = (float)($item['price'] ?? 0);
+        $amount = round($qty * $price, 2);
+        $rows .= '<tr>'
+            . '<td>' . salesHtmlEscape((string)($item['name'] ?? 'Producto')) . '</td>'
+            . '<td class="num">' . salesHtmlEscape(rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.')) . '</td>'
+            . '<td class="num">' . salesMoney($price) . '</td>'
+            . '<td class="num">' . salesMoney($amount) . '</td>'
+            . '</tr>';
+    }
+
+    if ($rows === '') {
+        $rows = '<tr><td colspan="4" class="muted">Sin articulos</td></tr>';
+    }
+
+    $createdAt = trim((string)($sale['createdAt'] ?? date('c')));
+    $dateLabel = $createdAt !== '' ? str_replace('T', ' ', substr($createdAt, 0, 19)) : date('Y-m-d H:i:s');
+    $businessName = trim((string)(($emitter['nombreComercial'] ?? '') ?: ($emitter['razonSocial'] ?? '')));
+    if ($businessName === '') {
+        $businessName = 'Cotizacion';
+    }
+
+    $html = '<!doctype html><html><head><meta charset="utf-8"><style>'
+        . '@page{margin:22px 24px}body{font-family:DejaVu Sans,Arial,sans-serif;color:#1f2933;font-size:12px}'
+        . '.top{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #1f2933;padding-bottom:12px;margin-bottom:14px}'
+        . '.brand{font-size:20px;font-weight:700}.muted{color:#64748b}.box{border:1px solid #d7dde5;border-radius:8px;padding:10px;margin-bottom:12px}'
+        . 'table{width:100%;border-collapse:collapse}th{background:#eef2f7;text-align:left}th,td{border:1px solid #d7dde5;padding:7px 8px}'
+        . '.num{text-align:right;white-space:nowrap}.totals{width:260px;margin-left:auto;margin-top:12px}.totals td{border:none;border-bottom:1px solid #e5e7eb}.total{font-weight:700;font-size:14px}'
+        . '</style></head><body>'
+        . '<div class="top"><div><div class="brand">' . salesHtmlEscape($businessName) . '</div>'
+        . '<div>' . salesHtmlEscape((string)($emitter['razonSocial'] ?? '')) . '</div>'
+        . '<div>RUC: ' . salesHtmlEscape((string)($emitter['ruc'] ?? '')) . '</div>'
+        . '<div>' . salesHtmlEscape((string)($emitter['dirMatriz'] ?? '')) . '</div></div>'
+        . '<div><h2 style="margin:0 0 8px">COTIZACION</h2>'
+        . '<div><strong>Ticket:</strong> #' . salesHtmlEscape((string)($sale['ticketId'] ?? '')) . '</div>'
+        . '<div><strong>Fecha:</strong> ' . salesHtmlEscape($dateLabel) . '</div>'
+        . '<div><strong>Estado:</strong> Pendiente</div></div></div>'
+        . '<div class="box"><strong>Cliente:</strong> ' . salesHtmlEscape((string)($sale['customerName'] ?? 'Publico en general')) . '</div>'
+        . '<table><thead><tr><th>Descripcion</th><th class="num">Cant.</th><th class="num">P. Unit.</th><th class="num">Importe</th></tr></thead><tbody>'
+        . $rows
+        . '</tbody></table>'
+        . '<table class="totals"><tr><td>Subtotal</td><td class="num">' . salesMoney($sale['subtotal'] ?? 0) . '</td></tr>'
+        . '<tr class="total"><td>Total</td><td class="num">' . salesMoney($sale['total'] ?? 0) . '</td></tr></table>'
+        . '<p class="muted">Esta cotizacion corresponde a una venta pendiente y no reemplaza factura ni comprobante electronico.</p>'
+        . '</body></html>';
+
+    $options = new \Dompdf\Options();
+    $options->set('isRemoteEnabled', true);
+    $options->set('defaultFont', 'DejaVu Sans');
+    $dompdf = new \Dompdf\Dompdf($options);
+    $dompdf->loadHtml($html, 'UTF-8');
+    $dompdf->setPaper('A4', 'portrait');
+    $dompdf->render();
+    $pdf = $dompdf->output();
+    if (!is_string($pdf) || $pdf === '') {
+        throw new RuntimeException('No se pudo generar el PDF de cotizacion.');
+    }
+    return $pdf;
+}
+
+function salesSendQuoteByBrevo(array $signature, array $emitter, array $sale, string $recipientEmail, string $pdfBinary): array
+{
+    $apiKey = trim((string)($signature['brevoApiKey'] ?? ''));
+    $endpoint = trim((string)($signature['brevoEndpoint'] ?? 'https://api.brevo.com/v3/smtp/email'));
+    $fromEmail = trim((string)($signature['fromEmail'] ?? ''));
+    $fromName = trim((string)($signature['fromName'] ?? 'POS'));
+    $ownerEmail = trim((string)($emitter['email'] ?? ''));
+    if ($ownerEmail === '') {
+        $ownerEmail = $fromEmail;
+    }
+
+    if ($apiKey === '') {
+        throw new RuntimeException('No se puede enviar la cotizacion: falta API Key de Brevo.');
+    }
+    if ($fromEmail === '') {
+        throw new RuntimeException('No se puede enviar la cotizacion: falta correo remitente.');
+    }
+    if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+        throw new RuntimeException('Ingrese un correo receptor valido.');
+    }
+
+    $recipients = [];
+    foreach ([$recipientEmail, $ownerEmail] as $email) {
+        $email = trim((string)$email);
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
+        $key = strtolower($email);
+        if (isset($recipients[$key])) {
+            continue;
+        }
+        $recipients[$key] = ['email' => $email, 'name' => $email];
+    }
+    if ($recipients === []) {
+        throw new RuntimeException('No hay destinatarios validos para la cotizacion.');
+    }
+
+    $ticketId = trim((string)($sale['ticketId'] ?? ''));
+    $payload = [
+        'sender' => [
+            'name' => $fromName !== '' ? $fromName : $fromEmail,
+            'email' => $fromEmail,
+        ],
+        'to' => array_values($recipients),
+        'subject' => 'Cotizacion ticket #' . ($ticketId !== '' ? $ticketId : 'pendiente'),
+        'htmlContent' => '<p>Adjuntamos la cotizacion solicitada.</p><p><strong>Ticket:</strong> #' . salesHtmlEscape($ticketId) . '</p>',
+        'attachment' => [[
+            'name' => 'cotizacion-' . preg_replace('/[^A-Za-z0-9._-]+/', '-', $ticketId !== '' ? $ticketId : 'pendiente') . '.pdf',
+            'content' => base64_encode($pdfBinary),
+        ]],
+    ];
+
+    if (!function_exists('curl_init')) {
+        throw new RuntimeException('No se puede enviar por Brevo: extension curl no disponible.');
+    }
+
+    $ch = curl_init($endpoint !== '' ? $endpoint : 'https://api.brevo.com/v3/smtp/email');
+    if ($ch === false) {
+        throw new RuntimeException('No se pudo inicializar cURL para Brevo.');
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'accept: application/json',
+            'content-type: application/json',
+            'api-key: ' . $apiKey,
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => 25,
+    ]);
+    if (defined('CURLSSLOPT_NATIVE_CA')) {
+        curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+    }
+
+    $rawResponse = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($rawResponse === false || $curlError !== '') {
+        throw new RuntimeException('Error de red al enviar con Brevo: ' . $curlError);
+    }
+
+    $decoded = json_decode((string)$rawResponse, true);
+    if ($httpCode < 200 || $httpCode >= 300) {
+        $message = is_array($decoded) ? json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : (string)$rawResponse;
+        throw new RuntimeException('Brevo respondio HTTP ' . $httpCode . ': ' . $message);
+    }
+
+    return [
+        'response' => is_array($decoded) ? $decoded : ['raw' => (string)$rawResponse],
+        'recipients' => array_keys($recipients),
+    ];
 }
 
 /**
@@ -338,7 +597,14 @@ function salesReplaceTicketInDb(PDO $pdo, string $ticketId, array $sale, string 
     foreach ($items as $index => $item) {
         $qty = max(0, salesToFloat($item['qty'] ?? 0));
         $price = salesToFloat($item['price'] ?? 0);
-        $discountPct = salesToFloat($item['discountPct'] ?? 0);
+        $basePrice = salesToFloat($item['basePrice'] ?? $item['normalPrice'] ?? $item['originalPrice'] ?? $price);
+        if ($basePrice <= 0) {
+            $basePrice = $price;
+        }
+        $discountPct = salesToFloat($item['manualDiscountPct'] ?? $item['discountPct'] ?? 0);
+        if ($discountPct <= 0 && $basePrice > 0 && $price < $basePrice) {
+            $discountPct = round((($basePrice - $price) / $basePrice) * 100, 2);
+        }
         $itemStmt->execute([
             ':id' => $ticketId . '-' . ($index + 1),
             ':ticket_id' => $ticketId,
@@ -347,7 +613,7 @@ function salesReplaceTicketInDb(PDO $pdo, string $ticketId, array $sale, string 
             ':cantidad' => (string)$qty,
             ':ganancia' => '0',
             ':departamento_id' => '',
-            ':pagado_en' => (string)$price,
+            ':pagado_en' => (string)$basePrice,
             ':usa_mayoreo' => !empty($item['wholesaleEnabled']) ? '1' : '0',
             ':porcentaje_descuento' => (string)$discountPct,
             ':componentes' => '',
@@ -522,6 +788,46 @@ if (!is_array($body)) {
 
 $action = strtolower(trim((string)($body['action'] ?? 'create')));
 
+if ($action === 'send_quote') {
+    $ticketId = trim((string)($body['ticketId'] ?? ''));
+    $recipientEmail = trim((string)($body['recipientEmail'] ?? ''));
+    if ($ticketId === '') {
+        errorResponse('Ticket pendiente invalido', 400);
+    }
+    if ($recipientEmail === '' || !filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+        errorResponse('Ingrese un correo receptor valido.', 400);
+    }
+
+    $sale = salesFindSaleByTicketId($ticketId);
+    if (!is_array($sale) || salesStatus($sale) !== 'pending') {
+        errorResponse('Venta pendiente no encontrada', 404);
+    }
+    if (!is_array($sale['items'] ?? null) || count($sale['items']) === 0) {
+        errorResponse('La venta pendiente no tiene articulos para cotizar.', 400);
+    }
+
+    try {
+        $signature = facturacionLoadSignature();
+        $emitter = facturacionLoadEmitter();
+        if ((string)($signature['emailMode'] ?? 'mock') !== 'brevo_api') {
+            errorResponse('El correo de facturacion no esta configurado en modo Brevo API.', 400);
+        }
+        $pdf = salesBuildQuotePdf($sale, $emitter);
+        $result = salesSendQuoteByBrevo($signature, $emitter, $sale, $recipientEmail, $pdf);
+        $sentAt = date('c');
+        salesUpdatePendingQuoteMeta($ticketId, $recipientEmail, $sentAt);
+        ok([
+            'ticketId' => $ticketId,
+            'quoteEmail' => $recipientEmail,
+            'quoteSentAt' => $sentAt,
+            'recipients' => $result['recipients'] ?? [$recipientEmail],
+            'response' => $result['response'] ?? null,
+        ]);
+    } catch (Throwable $e) {
+        errorResponse($e->getMessage(), 500);
+    }
+}
+
 if ($action === 'create_pending' || $action === 'update_pending') {
     $items = $body['items'] ?? null;
     if (!is_array($items) || count($items) === 0) {
@@ -543,6 +849,11 @@ if ($action === 'create_pending' || $action === 'update_pending') {
     $amountPending = round((float)($body['amountPending'] ?? 0), 2);
     $discountPct = round((float)($body['discountPct'] ?? 0), 2);
     $discountAmount = round((float)($body['discountAmount'] ?? 0), 2);
+    $discountMode = strtolower(trim((string)($body['discountMode'] ?? 'percent')));
+    if (!in_array($discountMode, ['percent', 'amount'], true)) {
+        $discountMode = 'percent';
+    }
+    $discountValue = round((float)($body['discountValue'] ?? ($discountMode === 'amount' ? $discountAmount : $discountPct)), 2);
     $cashier = trim((string)($_SESSION['name'] ?? $_SESSION['username'] ?? 'Cajero'));
     $mixedPaymentsBody = $body['mixedPayments'] ?? null;
     $transferMetaBody = $body['transferMeta'] ?? null;
@@ -594,6 +905,8 @@ if ($action === 'create_pending' || $action === 'update_pending') {
                 'cashier' => $cashier !== '' ? $cashier : 'Cajero',
                 'discountPct' => $discountPct,
                 'discountAmount' => $discountAmount,
+                'discountMode' => $discountMode,
+                'discountValue' => $discountValue,
                 'transferMeta' => $transferMeta,
                 'returns' => [],
             ];
@@ -657,6 +970,8 @@ if ($action === 'create_pending' || $action === 'update_pending') {
                 'cashier' => $cashier !== '' ? $cashier : 'Cajero',
                 'discountPct' => $discountPct,
                 'discountAmount' => $discountAmount,
+                'discountMode' => $discountMode,
+                'discountValue' => $discountValue,
                 'transferMeta' => $transferMeta,
             ]);
             $updated = true;
@@ -695,6 +1010,8 @@ if ($action === 'create_pending' || $action === 'update_pending') {
         'cashier' => $cashier !== '' ? $cashier : 'Cajero',
         'discountPct' => $discountPct,
         'discountAmount' => $discountAmount,
+        'discountMode' => $discountMode,
+        'discountValue' => $discountValue,
         'transferMeta' => $transferMeta,
         'returns' => [],
     ];
@@ -1363,6 +1680,8 @@ $sale = [
     'clientRequestId' => $clientRequestId,
     'discountPct' => salesToFloat($body['discountPct'] ?? 0),
     'discountAmount' => salesToFloat($body['discountAmount'] ?? 0),
+    'discountMode' => strtolower(trim((string)($body['discountMode'] ?? 'percent'))) === 'amount' ? 'amount' : 'percent',
+    'discountValue' => salesToFloat($body['discountValue'] ?? ($body['discountAmount'] ?? $body['discountPct'] ?? 0)),
     'transferMeta' => is_array($body['transferMeta'] ?? null) ? $body['transferMeta'] : ['reference' => '', 'phone' => ''],
     'returns' => [],
 ];

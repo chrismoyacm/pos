@@ -67,7 +67,7 @@ function readIvaOptionsFromDb(): array
             continue;
         }
         $rate = (float)$rateRaw;
-        if ($rate <= 0) {
+        if ($rate < 0) {
             continue;
         }
         $id = trim((string)($row['ID'] ?? ''));
@@ -146,7 +146,7 @@ function resolveTaxIdForIvaValue(string $ivaValue): string
         $rate = (float)$rateRaw;
         foreach ($options as $opt) {
             $optRate = (float)($opt['percentage'] ?? 0);
-            if ($optRate > 0 && abs($optRate - $rate) < 0.0001) {
+            if ($optRate >= 0 && abs($optRate - $rate) < 0.0001) {
                 return (string)$opt['id'];
             }
         }
@@ -221,7 +221,7 @@ function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
     foreach ($taxOptions as $opt) {
         $id = trim((string)($opt['id'] ?? ''));
         $rate = (float)($opt['percentage'] ?? 0);
-        if ($id !== '' && $rate > 0) {
+        if ($id !== '' && $rate >= 0) {
             $mapById[$id] = rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
         }
     }
@@ -232,6 +232,9 @@ function normalizeIvaValue(mixed $raw, ?string $fallback = null): string
     $rawRate = str_replace(['iva', '%', ' '], '', $normalized);
     if (is_numeric($rawRate)) {
         $rate = (float)$rawRate;
+        if ($rate >= 0 && str_contains($normalized, '%')) {
+            return rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
+        }
         if ($rate > 0) {
             return rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.') . '%';
         }
@@ -316,6 +319,8 @@ function importHeaderAliasMap(): array
         'unittype' => 'saleType',
         'dept' => 'departmentId',
         'department' => 'departmentId',
+        'departmentid' => 'departmentId',
+        'department_id' => 'departmentId',
         'provid' => 'providerCode',
         'provider' => 'providerCode',
         'mayoreo' => 'wholesalePrice',

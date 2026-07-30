@@ -25,7 +25,7 @@ function legacyMappedRead(string $fileName): ?array
             'promotions.json' => legacyReadEntityWithOverlay($base, 'legacyReadPromotions'),
             'inventory_movements.json' => legacyReadInventoryMovements(),
             'cash_movements.json' => legacyReadEntityWithOverlay($base, 'legacyReadCashMovements'),
-            'credit_payments.json' => legacyReadEntityWithOverlay($base, 'legacyReadCreditPayments'),
+            'credit_payments.json' => legacyReadCreditPayments(),
             'providers.json' => legacyReadProviders(),
             'purchase_list.json' => legacyReadPurchaseList(),
             'purchase_orders.json' => legacyReadPurchaseOrders(),
@@ -221,6 +221,11 @@ function legacyReadSalesFromTickets(): array
             $qty = safeFloat($detail['CANTIDAD'] ?? 0);
             $returnedQty = safeFloat($detail['CANTIDAD_DEVUELTA'] ?? 0);
             $price = safeFloat($detail['PRECIO_USADO'] ?? $detail['PAGADO_EN'] ?? 0);
+            $basePrice = safeFloat($detail['PAGADO_EN'] ?? $price);
+            if ($basePrice <= 0) {
+                $basePrice = $price;
+            }
+            $manualDiscountPct = safeFloat($detail['PORCENTAJE_DESCUENTO'] ?? 0);
 
             $saleItems[] = [
                 'id' => $itemId,
@@ -229,6 +234,10 @@ function legacyReadSalesFromTickets(): array
                 'name' => trim((string)($detail['PRODUCTO_NOMBRE'] ?? '')),
                 'qty' => $qty,
                 'price' => $price,
+                'basePrice' => $basePrice,
+                'manualDiscountPct' => $manualDiscountPct,
+                'discountPct' => $manualDiscountPct,
+                'discountAmount' => round(max(0, ($basePrice - $price) * $qty), 2),
             ];
 
             if ($returnedQty > 0) {
@@ -275,6 +284,10 @@ function legacyReadSalesFromTickets(): array
             'clientRequestId' => trim((string)($ticketRow['REFERENCIA'] ?? '')),
             'discountPct' => safeFloat($footerMeta['discountPct'] ?? 0),
             'discountAmount' => safeFloat($footerMeta['discountAmount'] ?? 0),
+            'discountMode' => trim((string)($footerMeta['discountMode'] ?? 'percent')),
+            'discountValue' => safeFloat($footerMeta['discountValue'] ?? ($footerMeta['discountPct'] ?? 0)),
+            'quoteEmail' => trim((string)($footerMeta['quoteEmail'] ?? '')),
+            'quoteSentAt' => trim((string)($footerMeta['quoteSentAt'] ?? '')),
             'transferMeta' => is_array($footerMeta['transferMeta'] ?? null) ? $footerMeta['transferMeta'] : ['reference' => '', 'phone' => ''],
             'creditDueDate' => trim((string)($footerMeta['creditDueDate'] ?? '')),
             'creditInterestPct' => safeFloat($footerMeta['creditInterestPct'] ?? 0),
@@ -703,6 +716,10 @@ function legacyBuildVentaTicketRow(array $sale, int $index): array
         'NOTAS_AL_PIE' => json_encode([
             'discountPct' => round((float)($sale['discountPct'] ?? 0), 2),
             'discountAmount' => round((float)($sale['discountAmount'] ?? 0), 2),
+            'discountMode' => trim((string)($sale['discountMode'] ?? 'percent')),
+            'discountValue' => round((float)($sale['discountValue'] ?? ($sale['discountPct'] ?? 0)), 2),
+            'quoteEmail' => trim((string)($sale['quoteEmail'] ?? '')),
+            'quoteSentAt' => trim((string)($sale['quoteSentAt'] ?? '')),
             'transferMeta' => is_array($sale['transferMeta'] ?? null) ? $sale['transferMeta'] : ['reference' => '', 'phone' => ''],
             'mixedPayments' => is_array($sale['mixedPayments'] ?? null) ? $sale['mixedPayments'] : null,
             'creditDueDate' => trim((string)($sale['creditDueDate'] ?? '')),
@@ -732,6 +749,14 @@ function legacyBuildVentaItemsRows(array $sale, string $ticketId): array
     foreach ($items as $idx => $item) {
         $qty = max(0, (int)($item['qty'] ?? 0));
         $price = round((float)($item['price'] ?? 0), 2);
+        $basePrice = round((float)($item['basePrice'] ?? $item['normalPrice'] ?? $item['originalPrice'] ?? $price), 2);
+        if ($basePrice <= 0) {
+            $basePrice = $price;
+        }
+        $discountPct = round((float)($item['manualDiscountPct'] ?? $item['discountPct'] ?? 0), 2);
+        if ($discountPct <= 0 && $basePrice > 0 && $price < $basePrice) {
+            $discountPct = round((($basePrice - $price) / $basePrice) * 100, 2);
+        }
         $code = trim((string)($item['id'] ?? $item['barcode'] ?? ''));
         $name = trim((string)($item['name'] ?? 'Producto'));
         $itemId = $ticketId . '-' . ($idx + 1);
@@ -749,9 +774,9 @@ function legacyBuildVentaItemsRows(array $sale, string $ticketId): array
             'CANTIDAD' => $qty,
             'GANANCIA' => '0',
             'DEPARTAMENTO_ID' => '',
-            'PAGADO_EN' => $price,
+            'PAGADO_EN' => $basePrice,
             'USA_MAYOREO' => '0',
-            'PORCENTAJE_DESCUENTO' => '0',
+            'PORCENTAJE_DESCUENTO' => $discountPct,
             'COMPONENTES' => '',
             'IMPUESTOS_USADOS' => '',
             'IMPUESTO_UNITARIO' => '0',
@@ -1261,7 +1286,7 @@ function legacyIvaRateByIdMap(): array
             continue;
         }
         $rate = (float)$raw;
-        if ($rate <= 0) {
+        if ($rate < 0) {
             continue;
         }
         $cache[$id] = $rate;

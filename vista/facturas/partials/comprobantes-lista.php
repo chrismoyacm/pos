@@ -16,6 +16,39 @@ $titles = [
     <input type="text" id="facturacion-document-search" placeholder="Buscar por clave, cliente o secuencial">
     <button class="btn-secondary" type="button" id="facturacion-document-refresh">Actualizar</button>
   </div>
+  <?php if ($currentView === 'administracion'): ?>
+  <div class="facturacion-report-panel" id="facturacion-report-panel">
+    <div class="facturacion-report-head">
+      <div>
+        <strong>Reporte de facturas</strong>
+        <span>Revise cuanto se ha facturado por rango de fechas.</span>
+      </div>
+      <div class="facturacion-report-filters">
+        <label>Desde
+          <input type="date" id="facturacion-report-date-from">
+        </label>
+        <label>Hasta
+          <input type="date" id="facturacion-report-date-to">
+        </label>
+        <label>Estado
+          <select id="facturacion-report-status">
+            <option value="">Todos</option>
+            <option value="authorized">Autorizados</option>
+          </select>
+        </label>
+        <button class="btn-secondary" type="button" id="facturacion-report-clear">Limpiar filtros</button>
+      </div>
+    </div>
+    <div class="facturacion-report-grid">
+      <div class="facturacion-report-card"><span>Total de facturas</span><strong data-invoice-report="count">0</strong></div>
+      <div class="facturacion-report-card"><span>Total facturado</span><strong data-invoice-report="total">$0.00</strong></div>
+      <div class="facturacion-report-card"><span>Total facturado IVA 0%</span><strong data-invoice-report="total0">$0.00</strong></div>
+      <div class="facturacion-report-card"><span>Subtotal IVA 0%</span><strong data-invoice-report="subtotal0">$0.00</strong></div>
+      <div class="facturacion-report-card"><span>Total facturado IVA 15%</span><strong data-invoice-report="total15">$0.00</strong></div>
+      <div class="facturacion-report-card"><span>Subtotal IVA 15%</span><strong data-invoice-report="subtotal15">$0.00</strong></div>
+    </div>
+  </div>
+  <?php endif; ?>
   <div class="facturacion-status facturacion-status--wide" id="facturacion-document-status"></div>
   <div class="facturacion-table-wrap">
     <table class="grid grid-compact factura-table">

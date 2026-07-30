@@ -18,6 +18,7 @@
     creditPeriod: 'monthly',
     creditPeriodDays: 30,
     saleDiscountPct: 0,
+    saleDiscountAmount: 0,
     priceEditIndex: -1,
     customer: { id: 'c-001', name: 'Publico en general' },
     taxOptions: [],
@@ -41,6 +42,11 @@
 
   const customerModalState = {
     onSelect: null
+  };
+
+  const searchModalState = {
+    products: [],
+    selectedIndex: -1
   };
 
   const CART_STORAGE_KEY = 'pos.ventas.cart.v1';
@@ -76,6 +82,48 @@
     }
     window.location.href =
       'index.php?mod=facturas&section=emision&view=factura&ticketId=' + encodeURIComponent(safeTicketId);
+  }
+
+  function showSweetMessage(options) {
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+      return window.Swal.fire(options);
+    }
+    const text = options?.text || options?.title || '';
+    if (text) {
+      window.alert(text);
+    }
+    return Promise.resolve({ isConfirmed: true });
+  }
+
+  function askSweetInputEmail(options) {
+    const title = options?.title || 'Correo';
+    const inputValue = options?.inputValue || '';
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+      return window.Swal.fire({
+        title: title,
+        text: options?.text || '',
+        input: 'email',
+        inputValue: inputValue,
+        inputPlaceholder: options?.placeholder || 'correo@ejemplo.com',
+        showCancelButton: true,
+        confirmButtonText: 'Enviar',
+        cancelButtonText: 'Cancelar',
+        inputValidator: function (value) {
+          const email = (value || '').toString().trim();
+          if (!email) {
+            return 'Ingrese un correo.';
+          }
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return 'Ingrese un correo valido.';
+          }
+          return null;
+        }
+      }).then(function (result) {
+        return result.isConfirmed ? (result.value || '').toString().trim() : '';
+      });
+    }
+
+    return Promise.resolve((window.prompt(title, inputValue) || '').toString().trim());
   }
 
   function savePendingInvoiceSale(payload) {
@@ -225,6 +273,7 @@
         creditPeriod: state.creditPeriod,
         creditPeriodDays: state.creditPeriodDays,
         saleDiscountPct: state.saleDiscountPct,
+        saleDiscountAmount: state.saleDiscountAmount,
         customer: state.customer
       };
       window.sessionStorage.setItem(CART_STORAGE_KEY, JSON.stringify(snapshot));
@@ -263,6 +312,7 @@
       state.creditPeriod = (parsed.creditPeriod || 'monthly').toString();
       state.creditPeriodDays = Math.max(1, parseInt((parsed.creditPeriodDays || 30).toString(), 10) || 30);
       state.saleDiscountPct = Math.max(0, Math.min(100, Number(parsed.saleDiscountPct || 0)));
+      state.saleDiscountAmount = Math.max(0, Number(parsed.saleDiscountAmount || 0));
 
       const customer = parsed.customer || {};
       state.customer = {
@@ -284,6 +334,7 @@
       state.creditPeriod = 'monthly';
       state.creditPeriodDays = 30;
       state.saleDiscountPct = 0;
+      state.saleDiscountAmount = 0;
       state.customer = { id: 'c-001', name: 'Publico en general' };
       state.saleRequestId = '';
       state.saleSubmitting = false;
@@ -411,7 +462,7 @@
 
   function formatIvaPercent(value) {
     const rate = Number(value || 0);
-    if (!(rate > 0)) return '';
+    if (!Number.isFinite(rate) || rate < 0) return '';
     return (Number.isInteger(rate) ? String(rate) : String(rate.toFixed(2)).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1')) + '%';
   }
 
@@ -424,7 +475,7 @@
           active: row && row.active !== false
         };
       })
-      .filter(function (row) { return row.active && row.percentage > 0; });
+      .filter(function (row) { return row.active && row.percentage >= 0; });
   }
 
   function findTaxById(id) {
@@ -444,10 +495,11 @@
 
   function normalizeIvaLabel(iva) {
     const raw = (iva || '').toString().trim().toLowerCase();
-    if (!raw || raw === 'no' || raw === '0' || raw === 'false') return 'No';
+    if (!raw || raw === 'no' || raw === 'false') return 'No';
     const byId = findTaxById(raw);
     if (byId) return formatIvaPercent(byId.percentage) || 'No';
     const numeric = Number(raw.replace('iva', '').replace('%', '').trim());
+    if (numeric === 0 && raw.indexOf('%') >= 0) return '0%';
     if (numeric > 0) return formatIvaPercent(numeric) || 'No';
     if (raw === 'si' || raw === 'si' || raw === 'yes' || raw === 'true') {
       const labels = availableIvaLabels().filter(function (label) { return label !== 'No'; });
@@ -521,6 +573,10 @@
     return Number(item.price || 0) * Number(item.qty || 0);
   }
 
+  function getItemBaseGrossAmount(item) {
+    return getItemBaseUnitPrice(item) * Number(item.qty || 0);
+  }
+
   function getItemIvaRate(item) {
     const normalized = normalizeIvaLabel(item?.iva);
     if (!normalized || normalized === 'No') {
@@ -540,6 +596,13 @@
   }
 
   function getSaleDiscountPct() {
+    const amount = Math.max(0, Number(state.saleDiscountAmount || 0));
+    if (amount > 0) {
+      const base = getSaleCurrentGrossAmount();
+      if (base > 0) {
+        return Math.max(0, Math.min(100, (Math.min(amount, base) / base) * 100));
+      }
+    }
     return Math.max(0, Math.min(100, Number(state.saleDiscountPct || 0)));
   }
 
@@ -577,22 +640,54 @@
   }
 
   function getSaleDiscountAmount() {
+    const amount = Math.max(0, Number(state.saleDiscountAmount || 0));
+    if (amount > 0) {
+      const base = getSaleCurrentGrossAmount();
+      return roundMoney(Math.min(amount, base));
+    }
     return roundMoney(state.items.reduce(function (sum, item) {
-      const gross = getItemGrossAmount(item);
+      const gross = getItemBaseGrossAmount(item);
       const net = getItemNetAmount(item);
       return sum + Math.max(0, gross - net);
     }, 0));
   }
 
+  function getSaleSubtotalBeforeDiscount() {
+    return roundMoney(state.items.reduce(function (sum, item) {
+      return sum + getItemBaseGrossAmount(item);
+    }, 0));
+  }
+
+  function getSaleCurrentGrossAmount() {
+    return roundMoney(state.items.reduce(function (sum, item) {
+      return sum + getItemGrossAmount(item);
+    }, 0));
+  }
+
+  function getSaleBase15DisplayAmount() {
+    return roundMoney(state.items.reduce(function (sum, item) {
+      if (getItemIvaRate(item) !== 15) {
+        return sum;
+      }
+      return sum + (getItemBaseGrossAmount(item) * 0.85);
+    }, 0));
+  }
+
   function recalc() {
-    state.subtotal = roundMoney(state.items.reduce(function (sum, item) {
-      return sum + getItemSubtotalWithoutIva(item);
-    }, 0));
-    state.total = roundMoney(state.items.reduce(function (sum, item) {
-      return sum + getItemNetAmount(item);
-    }, 0));
+    state.subtotal = getSaleSubtotalBeforeDiscount();
+    const discountAmount = getSaleDiscountAmount();
+    if (Number(state.saleDiscountAmount || 0) > 0) {
+      state.total = roundMoney(getSaleCurrentGrossAmount() - discountAmount);
+    } else {
+      state.total = roundMoney(state.items.reduce(function (sum, item) {
+        return sum + getItemNetAmount(item);
+      }, 0));
+    }
+    const base15Amount = getSaleBase15DisplayAmount();
 
     $('#subtotal').text(formatMoney(state.subtotal));
+    $('#venta-descuento-total').text(formatMoney(discountAmount));
+    $('#venta-base-15').text(formatMoney(base15Amount));
     $('#total').text(formatMoney(state.total));
     $('#countItems').text(state.items.length.toString());
 
@@ -773,9 +868,7 @@
     if (index >= 0) {
       const nextQty = Number(state.items[index].qty || 0) + normalizedQty;
       if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
-        if (ignoreInventoryValidation) {
-          warnInventoryDisabled(product, availableStock);
-        } else {
+        if (!ignoreInventoryValidation) {
           if (isPackageItem(product)) {
             window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
           } else {
@@ -794,9 +887,11 @@
       applyWholesaleForItem(state.items[index]);
       state.selectedIndex = index;
     } else {
+      let warnedInventoryDisabled = false;
       if (!String(product.id || '').startsWith('tmp-') && availableStock <= 0) {
         if (ignoreInventoryValidation) {
           warnInventoryDisabled(product, availableStock);
+          warnedInventoryDisabled = true;
         } else {
           if (isPackageItem(product)) {
             window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + ' porque no hay componentes suficientes.');
@@ -809,7 +904,9 @@
       }
       if (!String(product.id || '').startsWith('tmp-') && normalizedQty > availableStock) {
         if (ignoreInventoryValidation) {
-          warnInventoryDisabled(product, availableStock);
+          if (!warnedInventoryDisabled) {
+            warnInventoryDisabled(product, availableStock);
+          }
         } else {
           if (isPackageItem(product)) {
             window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
@@ -961,9 +1058,6 @@
       if (index >= 0) {
         const nextQty = Number(state.items[index].qty || 0) + qtyToAdd;
         if (!String(product.id || '').startsWith('tmp-') && nextQty > availableStock) {
-          if (ignoreInventoryValidation) {
-            warnInventoryDisabled(product, availableStock);
-          }
           if (!ignoreInventoryValidation) {
             if (isPackageItem(product)) {
               window.alert('No se puede armar el kit ' + (product.name || 'seleccionado') + '. Limite disponible: ' + formatQtyValue(availableStock, product));
@@ -982,9 +1076,11 @@
         applyWholesaleForItem(state.items[index]);
         state.selectedIndex = index;
       } else {
+        let warnedInventoryDisabled = false;
         if (!String(product.id || '').startsWith('tmp-') && availableStock <= 0) {
           if (ignoreInventoryValidation) {
             warnInventoryDisabled(product, availableStock);
+            warnedInventoryDisabled = true;
           }
           if (!ignoreInventoryValidation) {
             if (isPackageItem(product)) {
@@ -998,7 +1094,9 @@
         }
         if (!String(product.id || '').startsWith('tmp-') && qtyToAdd > availableStock) {
           if (ignoreInventoryValidation) {
-            warnInventoryDisabled(product, availableStock);
+            if (!warnedInventoryDisabled) {
+              warnInventoryDisabled(product, availableStock);
+            }
           }
           if (!ignoreInventoryValidation) {
             if (isPackageItem(product)) {
@@ -1063,9 +1161,39 @@
 
   function deleteSelected() {
     if (state.selectedIndex < 0) return;
-    state.items.splice(state.selectedIndex, 1);
-    state.selectedIndex = Math.min(state.selectedIndex, state.items.length - 1);
-    renderGrid();
+    const item = state.items[state.selectedIndex];
+    if (!item) return;
+
+    const removeItem = function () {
+      state.items.splice(state.selectedIndex, 1);
+      state.selectedIndex = Math.min(state.selectedIndex, state.items.length - 1);
+      renderGrid();
+      focusCodigoInput(true);
+    };
+
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+      window.Swal.fire({
+        icon: 'warning',
+        title: 'Eliminar producto',
+        text: 'Desea eliminar "' + (item.name || 'este producto') + '" de esta venta?',
+        showCancelButton: true,
+        confirmButtonText: 'Si, eliminar',
+        cancelButtonText: 'Cancelar'
+      }).then(function (result) {
+        if (result.isConfirmed) {
+          removeItem();
+        } else {
+          focusCodigoInput(true);
+        }
+      });
+      return;
+    }
+
+    if (window.confirm('Desea eliminar "' + (item.name || 'este producto') + '" de esta venta?')) {
+      removeItem();
+    } else {
+      focusCodigoInput(true);
+    }
   }
 
   function openCommonItemModal() {
@@ -1513,6 +1641,7 @@
     state.creditPeriod = 'monthly';
     state.creditPeriodDays = 30;
     state.saleDiscountPct = 0;
+    state.saleDiscountAmount = 0;
     state.saleRequestId = '';
     state.currentPendingTicketId = '';
     renderGrid();
@@ -1537,6 +1666,10 @@
       .prop('hidden', !canManagePending)
       .toggle(canManagePending)
       .prop('disabled', !canManagePending);
+    $('#sales-day-quote-btn')
+      .prop('hidden', !canManagePending)
+      .toggle(canManagePending)
+      .prop('disabled', !canManagePending || !Array.isArray(sale?.items) || sale.items.length === 0);
   }
 
   function updateSalesHistoryHeader() {
@@ -1813,7 +1946,44 @@
     if (!validateCurrentSaleForCheckout()) {
       return;
     }
-    redirectSaleToFactura();
+
+    const payload = Object.assign(buildSalePayload(), {
+      action: state.currentPendingTicketId ? 'complete_pending' : 'create',
+      ticketId: state.currentPendingTicketId || '',
+      clientRequestId: state.saleRequestId || nextSaleRequestId()
+    });
+
+    state.saleRequestId = payload.clientRequestId;
+    setSaleSubmitting(true);
+
+    $.ajax({
+      url: '../api/sales.php',
+      method: 'POST',
+      contentType: 'application/json',
+      data: JSON.stringify(payload)
+    }).done(function (res) {
+      if (!res.ok) {
+        window.alert(res.error || 'Error en venta');
+        return;
+      }
+
+      const ticketId = String(res?.data?.ticketId || '');
+      if (!ticketId) {
+        window.alert('La venta se registro, pero no se recibio el numero de ticket para facturar.');
+        return;
+      }
+
+      setLastTicketId(ticketId);
+      closeModal('#modal-pago');
+      resetSaleState();
+      showNotice((res?.data?.duplicate ? 'Venta ya registrada. ' : 'Venta registrada. ') + 'Ticket #' + ticketId + '. Abriendo factura...', 'success');
+      goToFacturaByTicket(ticketId);
+    }).fail(function (xhr) {
+      const backendError = xhr?.responseJSON?.error || xhr?.statusText || 'No se pudo registrar la venta.';
+      showNotice('No se pudo registrar la venta antes de facturar: ' + backendError, 'error');
+    }).always(function () {
+      setSaleSubmitting(false);
+    });
   }
 
   function closeModal(selector) {
@@ -1823,9 +1993,43 @@
   function openBuscarModal() {
     $('#modal-buscar [name=q]').val('');
     $('#modal-buscar [data-results]').empty();
+    searchModalState.products = [];
+    searchModalState.selectedIndex = -1;
     $('#modal-buscar').addClass('active');
     $('#modal-buscar [name=q]').focus();
     loadBuscarResults('');
+  }
+
+  function updateBuscarSelection() {
+    const $rows = $('#modal-buscar [data-results] tr[data-search-index]');
+    $rows.removeClass('row-selected');
+    if (searchModalState.selectedIndex < 0 || searchModalState.selectedIndex >= searchModalState.products.length) {
+      return;
+    }
+    const $row = $rows.filter('[data-search-index="' + searchModalState.selectedIndex + '"]');
+    $row.addClass('row-selected');
+    if ($row.length) {
+      $row.get(0).scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function moveBuscarSelection(delta) {
+    const total = searchModalState.products.length;
+    if (!total) return;
+    if (searchModalState.selectedIndex < 0) {
+      searchModalState.selectedIndex = delta > 0 ? 0 : total - 1;
+    } else {
+      searchModalState.selectedIndex = (searchModalState.selectedIndex + delta + total) % total;
+    }
+    updateBuscarSelection();
+  }
+
+  function confirmBuscarSelection() {
+    const product = searchModalState.products[searchModalState.selectedIndex];
+    if (!product) return false;
+    closeModal('#modal-buscar');
+    addItemByCode(product.id);
+    return true;
   }
 
   function loadBuscarResults(q) {
@@ -1840,9 +2044,11 @@
     $.getJSON('../api/products.php', params).done(function (res) {
       const $tbody = $('#modal-buscar [data-results]').empty();
       const products = (res.ok && Array.isArray(res.data)) ? res.data : [];
-      products.slice(0, 50).forEach(function (product) {
+      searchModalState.products = products.slice(0, 50);
+      searchModalState.selectedIndex = searchModalState.products.length ? 0 : -1;
+      searchModalState.products.forEach(function (product, index) {
         const $tr = $(
-          '<tr>' +
+          '<tr data-search-index="' + index + '">' +
             '<td>' + (product.barcode || product.id) + '</td>' +
             '<td>' + escapeHtml(product.name || '') + '</td>' +
             '<td>' + formatMoney(product.price) + '</td>' +
@@ -1853,8 +2059,13 @@
           closeModal('#modal-buscar');
           addItemByCode(product.id);
         });
+        $tr.on('mouseenter', function () {
+          searchModalState.selectedIndex = index;
+          updateBuscarSelection();
+        });
         $tbody.append($tr);
       });
+      updateBuscarSelection();
     });
   }
 
@@ -1895,10 +2106,22 @@
 
   function buildSalePayload() {
     return {
-      items: state.items,
+      items: state.items.map(function (item) {
+        return Object.assign({}, item, {
+          price: Number(item.price || 0),
+          basePrice: Number(getItemBaseUnitPrice(item) || 0),
+          invoiceUnitPrice: Number(getItemDiscountedUnitPrice(item) || 0),
+          manualDiscountPct: Number(getItemManualDiscountPct(item) || 0),
+          saleDiscountPct: Number(getSaleDiscountPct() || 0),
+          saleDiscountAmount: Number(getSaleDiscountAmount() || 0),
+          customPrice: Boolean(item.customPrice)
+        });
+      }),
       subtotal: state.subtotal,
       discountPct: state.saleDiscountPct,
+      discountMode: Number(state.saleDiscountAmount || 0) > 0 ? 'amount' : 'percent',
       discountAmount: getSaleDiscountAmount(),
+      discountValue: Number(state.saleDiscountAmount || 0) > 0 ? Number(state.saleDiscountAmount || 0) : Number(state.saleDiscountPct || 0),
       total: state.total,
       paidWith: state.paidWith,
       change: state.change,
@@ -1962,6 +2185,9 @@
       phone: (transferMeta.phone || '').toString()
     };
     state.saleDiscountPct = Number(pendingSale.discountPct || 0);
+    state.saleDiscountAmount = (pendingSale.discountMode || '').toString() === 'amount'
+      ? Number(pendingSale.discountValue || pendingSale.discountAmount || 0)
+      : 0;
     state.customer = {
       id: (pendingSale.customerId || 'c-001').toString(),
       name: (pendingSale.customerName || 'Publico en general').toString()
@@ -2242,25 +2468,45 @@
 
   function openDiscountModal() {
     $('#sale-discount-pct').val(Number(state.saleDiscountPct || 0).toFixed(2));
+    $('#sale-discount-amount').val(Number(state.saleDiscountAmount || 0).toFixed(2));
     $('#modal-discount').addClass('active');
-    $('#sale-discount-pct').focus();
-    $('#sale-discount-pct').select();
+    const $focus = Number(state.saleDiscountAmount || 0) > 0 ? $('#sale-discount-amount') : $('#sale-discount-pct');
+    $focus.focus();
+    $focus.select();
   }
 
   function applySaleDiscount() {
+    const amountRaw = ($('#sale-discount-amount').val() || '0').toString();
+    const amount = parseFloat(amountRaw.replace(',', '.'));
     const raw = ($('#sale-discount-pct').val() || '0').toString();
-    const pct = Number(raw);
+    const pct = parseFloat(raw.replace(',', '.'));
+    const maxDiscount = getSaleCurrentGrossAmount();
+
+    if (Number.isFinite(amount) && amount > 0) {
+      if (amount > maxDiscount) {
+        window.alert('El descuento por valor no puede superar el total de la venta.');
+        return;
+      }
+      state.saleDiscountAmount = roundMoney(amount);
+      state.saleDiscountPct = 0;
+      closeModal('#modal-discount');
+      renderGrid();
+      return;
+    }
+
     if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-      window.alert('Ingrese un descuento valido entre 0 y 100.');
+      window.alert('Ingrese un descuento valido entre 0 y 100 o un valor valido.');
       return;
     }
     state.saleDiscountPct = Number(pct.toFixed(2));
+    state.saleDiscountAmount = 0;
     closeModal('#modal-discount');
     renderGrid();
   }
 
   function clearSaleDiscount() {
     state.saleDiscountPct = 0;
+    state.saleDiscountAmount = 0;
     closeModal('#modal-discount');
     renderGrid();
   }
@@ -2291,7 +2537,8 @@
 
     if (!String(item.id || '').startsWith('tmp-') && qty > Number(item.stock || 0)) {
       if (!inventoryControlEnabled()) {
-        warnInventoryDisabled(item, Number(item.stock || 0));
+        // La advertencia de inventario desactivado solo se muestra al agregar
+        // el producto a la caja; al ajustar cantidades saturaba la pantalla.
       } else {
         if (showAlert) {
           window.alert('Stock insuficiente para ' + (item.name || 'el producto') + '. Existencia: ' + formatQtyValue(Number(item.stock || 0), item));
@@ -2370,6 +2617,34 @@
     }) || null;
   }
 
+  function saleItemDiscountAmount(item, sale, qtyOverride) {
+    const qty = Number(qtyOverride ?? item?.qty ?? 0);
+    if (!(qty > 0)) {
+      return 0;
+    }
+
+    const currentUnit = Number(item?.price || 0);
+    const baseUnit = Number(item?.basePrice || item?.normalPrice || item?.originalPrice || currentUnit || 0);
+    const manualDiscount = Math.max(0, (baseUnit - currentUnit) * qty);
+    if ((sale?.discountMode || '').toString() === 'amount' && Number(sale?.discountValue ?? sale?.discountAmount ?? 0) > 0) {
+      const saleItems = Array.isArray(sale?.items) ? sale.items : [];
+      const saleCurrentGross = saleItems.reduce(function (sum, saleItem) {
+        return sum + (Number(saleItem?.price || 0) * Number(saleItem?.qty || 0));
+      }, 0);
+      const lineCurrentGross = currentUnit * qty;
+      const amountDiscount = saleCurrentGross > 0
+        ? Math.min(Number(sale.discountValue ?? sale.discountAmount ?? 0), saleCurrentGross) * (lineCurrentGross / saleCurrentGross)
+        : 0;
+      return roundMoney(manualDiscount + amountDiscount);
+    }
+
+    const salePct = Math.max(0, Math.min(100, Number(item?.saleDiscountPct ?? sale?.discountPct ?? 0)));
+    const saleDiscount = Math.max(0, (currentUnit * qty) * (salePct / 100));
+    const explicit = Number(item?.discountAmount ?? item?.discount ?? 0);
+
+    return roundMoney(Math.max(manualDiscount + saleDiscount, explicit));
+  }
+
   function returnedQtyForItem(sale, itemId) {
     const returns = Array.isArray(sale?.returns) ? sale.returns : [];
     return returns
@@ -2416,6 +2691,7 @@
       $('#sales-day-meta').text('Seleccione un ticket.');
       $('#sales-day-return-btn').prop('disabled', true);
       $('#sales-day-reprint-btn').prop('disabled', true);
+      $('#sales-day-quote-btn').prop('disabled', true);
       $('#sales-day-invoice-btn').prop('disabled', true);
       updatePendingSalesActions();
       return;
@@ -2423,11 +2699,13 @@
 
     const cashier = String(sale.cashier || 'Cajero');
     const customer = String(sale.customerName || 'Publico en general');
+    const quoteEmail = (sale.quoteEmail || '').toString().trim();
     $('#sales-day-meta').text(
       'Folio #' + String(sale.ticketId || '') +
       ' | Estado: ' + saleStatusLabel(sale) +
       ' | Cajero: ' + cashier +
-      ' | Cliente: ' + customer
+      ' | Cliente: ' + customer +
+      (quoteEmail ? ' | Cotizacion: ' + quoteEmail : '')
     );
 
     const items = Array.isArray(sale.items) ? sale.items : [];
@@ -2436,12 +2714,14 @@
       const soldQty = Number(item.qty || 0);
       const returnedQty = returnedQtyForItem(sale, itemId);
       const currentQty = Math.max(0, soldQty - returnedQty);
+      const discountAmount = saleItemDiscountAmount(item, sale, currentQty);
       const selected = index === salesHistoryState.selectedItemIndex;
       const $tr = $(
         '<tr class="' + (selected ? 'row-selected' : '') + '">' +
           '<td class="catalog-center">' + escapeHtml(String(currentQty)) + '</td>' +
           '<td>' + escapeHtml(String(item.name || '')) + '</td>' +
           '<td class="catalog-center">' + escapeHtml(String(returnedQty)) + '</td>' +
+          '<td class="catalog-money">' + formatMoney(discountAmount) + '</td>' +
           '<td class="catalog-money">' + formatMoney(Number(item.price || 0) * currentQty) + '</td>' +
         '</tr>'
       );
@@ -2453,7 +2733,7 @@
     });
 
     if (items.length === 0) {
-      $tbody.append('<tr><td colspan="4" class="muted">Este ticket no tiene articulos.</td></tr>');
+      $tbody.append('<tr><td colspan="5" class="muted">Este ticket no tiene articulos.</td></tr>');
     }
 
     const canReturn = salesHistoryState.mode === 'return' && salesHistoryState.selectedItemIndex >= 0;
@@ -2497,6 +2777,123 @@
       return;
     }
     goToFacturaByTicket(sale.ticketId);
+  }
+
+  function fetchAssignedCustomerEmail(sale) {
+    const customerId = (sale?.customerId || '').toString().trim();
+    if (!customerId || customerId === 'c-001') {
+      return $.Deferred().resolve('').promise();
+    }
+
+    return $.getJSON('../api/customers.php', { q: customerId }).then(function (res) {
+      const customers = res?.ok && Array.isArray(res.data) ? res.data : [];
+      const customer = customers.find(function (row) {
+        return (row?.id || '').toString() === customerId;
+      });
+      return (customer?.email || '').toString().trim();
+    }, function () {
+      return '';
+    });
+  }
+
+  function chooseQuoteRecipientEmail(sale) {
+    const savedEmail = (sale?.quoteEmail || '').toString().trim();
+    return fetchAssignedCustomerEmail(sale).then(function (registeredEmail) {
+      const registered = (registeredEmail || '').toString().trim();
+      if (!registered) {
+        return askSweetInputEmail({
+          title: 'Enviar cotizacion',
+          text: savedEmail
+            ? 'Se usara como sugerencia el ultimo correo al que se envio esta cotizacion.'
+            : 'Ingrese el correo del receptor.',
+          inputValue: savedEmail
+        });
+      }
+
+      if (window.Swal && typeof window.Swal.fire === 'function') {
+        return window.Swal.fire({
+          title: 'Enviar cotizacion',
+          html: 'El cliente tiene este correo registrado:<br><strong>' + escapeHtml(registered) + '</strong>',
+          icon: 'question',
+          showCancelButton: true,
+          showDenyButton: true,
+          confirmButtonText: 'Usar registrado',
+          denyButtonText: 'Ingresar otro',
+          cancelButtonText: 'Cancelar'
+        }).then(function (choice) {
+          if (choice.isConfirmed) {
+            return registered;
+          }
+          if (choice.isDenied) {
+            return askSweetInputEmail({
+              title: 'Correo nuevo',
+              inputValue: savedEmail || registered
+            });
+          }
+          return '';
+        });
+      }
+
+      if (window.confirm('El cliente tiene registrado: ' + registered + '\nDesea usar ese correo?')) {
+        return registered;
+      }
+      return askSweetInputEmail({ title: 'Correo nuevo', inputValue: savedEmail || registered });
+    });
+  }
+
+  function sendSelectedPendingQuote() {
+    const sale = findSaleByTicketId(salesHistoryState.selectedTicketId);
+    if (!sale) {
+      showSweetMessage({ icon: 'warning', title: 'Seleccione una venta pendiente.' });
+      return;
+    }
+    if (saleStatusValue(sale) !== 'pending') {
+      showSweetMessage({ icon: 'warning', title: 'Solo se puede enviar cotizacion de una venta pendiente.' });
+      return;
+    }
+    if (!Array.isArray(sale.items) || sale.items.length === 0) {
+      showSweetMessage({ icon: 'warning', title: 'La venta pendiente no tiene articulos para cotizar.' });
+      return;
+    }
+
+    chooseQuoteRecipientEmail(sale).then(function (recipientEmail) {
+      if (!recipientEmail) {
+        return;
+      }
+
+      const $btn = $('#sales-day-quote-btn');
+      $btn.prop('disabled', true).text('Enviando...');
+      $.ajax({
+        url: '../api/sales.php',
+        method: 'POST',
+        contentType: 'application/json',
+        dataType: 'json',
+        data: JSON.stringify({
+          action: 'send_quote',
+          ticketId: sale.ticketId,
+          recipientEmail: recipientEmail
+        })
+      }).done(function (res) {
+        if (!res || !res.ok) {
+          showSweetMessage({ icon: 'error', title: res?.error || 'No se pudo enviar la cotizacion.' });
+          return;
+        }
+        const recipients = Array.isArray(res.data?.recipients) ? res.data.recipients.join(', ') : recipientEmail;
+        sale.quoteEmail = (res.data?.quoteEmail || recipientEmail).toString();
+        sale.quoteSentAt = (res.data?.quoteSentAt || '').toString();
+        showSweetMessage({
+          icon: 'success',
+          title: 'Cotizacion enviada',
+          text: 'Se envio a: ' + recipients
+        });
+      }).fail(function (xhr) {
+        const message = xhr?.responseJSON?.error || 'No se pudo enviar la cotizacion.';
+        showSweetMessage({ icon: 'error', title: message });
+      }).always(function () {
+        $btn.text('Enviar cotización');
+        renderSaleDetail();
+      });
+    });
   }
 
   function loadSalesByDay() {
@@ -2659,6 +3056,25 @@
     $('#btn-pay-confirm-print').on('click', function () { confirmSale({ printTicket: true }); });
     $('#modal-buscar .btn-secondary').on('click', function () { closeModal('#modal-buscar'); });
     $('#modal-buscar [name=q]').on('input', function () { loadBuscarResults($(this).val().toString()); });
+    $('#modal-buscar [name=q]').on('keydown', function (e) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        moveBuscarSelection(1);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        moveBuscarSelection(-1);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmBuscarSelection();
+      }
+    });
     $('#modal-cliente .btn-secondary').on('click', function () {
       customerModalState.onSelect = null;
       closeModal('#modal-cliente');
@@ -2698,6 +3114,7 @@
     });
     $('#sales-day-close').on('click', function () { closeModal('#modal-ventas-dia'); });
     $('#sales-day-reprint-btn').on('click', reprintSelectedSaleTicket);
+    $('#sales-day-quote-btn').on('click', sendSelectedPendingQuote);
     $('#sales-day-invoice-btn').on('click', invoiceSelectedSaleTicket);
     $('#sales-day-refresh').on('click', loadSalesByDay);
     $('#sales-day-date').on('change', function () {
@@ -2715,7 +3132,23 @@
     $('#sale-discount-cancel').on('click', function () { closeModal('#modal-discount'); });
     $('#sale-discount-apply').on('click', applySaleDiscount);
     $('#sale-discount-clear').on('click', clearSaleDiscount);
+    $('#sale-discount-pct').on('input', function () {
+      if (Number(($(this).val() || '0').toString().replace(',', '.')) > 0) {
+        $('#sale-discount-amount').val('');
+      }
+    });
+    $('#sale-discount-amount').on('input', function () {
+      if (Number(($(this).val() || '0').toString().replace(',', '.')) > 0) {
+        $('#sale-discount-pct').val('');
+      }
+    });
     $('#sale-discount-pct').on('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applySaleDiscount();
+      }
+    });
+    $('#sale-discount-amount').on('keydown', function (e) {
       if (e.key === 'Enter') {
         e.preventDefault();
         applySaleDiscount();

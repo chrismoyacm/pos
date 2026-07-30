@@ -97,7 +97,7 @@ function generarXMLFactura(array $document): array
         $detalleNode->appendChild($dom->createElement('codigoAuxiliar', (string)($detail['codigoAuxiliar'] ?? '')));
         $detalleNode->appendChild($dom->createElement('descripcion', (string)($detail['descripcion'] ?? '')));
         $detalleNode->appendChild($dom->createElement('cantidad', facturacionFormatDecimal((float)($detail['cantidad'] ?? 0), 6)));
-        $detalleNode->appendChild($dom->createElement('precioUnitario', facturacionFormatDecimal((float)($detail['precioUnitario'] ?? 0), 6)));
+        $detalleNode->appendChild($dom->createElement('precioUnitario', facturacionFormatDecimal((float)($detail['precioUnitario'] ?? 0))));
         $detalleNode->appendChild($dom->createElement('descuento', facturacionFormatDecimal((float)($detail['descuento'] ?? 0))));
         $detalleNode->appendChild($dom->createElement('precioTotalSinImpuesto', facturacionFormatDecimal((float)($detail['precioTotalSinImpuesto'] ?? 0))));
 

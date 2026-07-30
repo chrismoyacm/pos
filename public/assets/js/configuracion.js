@@ -43,7 +43,7 @@
             return null;
         }
         const rate = Number(option.percentage || 0);
-        if (!(rate > 0)) {
+        if (!Number.isFinite(rate) || rate < 0) {
             return null;
         }
         const label = (option.name || '').toString().trim() || ('IVA ' + rate + '%');
@@ -57,7 +57,7 @@
 
     function taxRateToNumber(value) {
         const parsed = Number(value || 0);
-        if (!Number.isFinite(parsed) || parsed <= 0) {
+        if (!Number.isFinite(parsed) || parsed < 0) {
             return 0;
         }
         return Math.round(parsed * 10000) / 10000;
@@ -86,7 +86,7 @@
         const rate = taxRateToNumber(opt ? opt.percentage : 0);
         $('#cfg-tax-edit-index').val(String(typeof index === 'number' ? index : -1));
         $('#cfg-tax-name').val(opt ? taxNameWithoutRate(opt.name || 'IVA') : 'IVA');
-        $('#cfg-tax-rate').val(rate > 0 ? rate : '');
+        $('#cfg-tax-rate').val(opt ? rate : '');
         $('#cfg-tax-include-new').prop('checked', !!(opt && state.taxDraftIncludeNew && taxRatesEqual(state.taxDraftDefaultRate, rate)));
         $('#cfg-tax-add-btn').text((typeof index === 'number' && index >= 0) ? 'Guardar cambios' : 'Guardar impuesto');
         state.taxEditIndex = typeof index === 'number' ? index : -1;
@@ -142,8 +142,8 @@
             setTaxStatus('El nombre del impuesto es requerido.', true);
             return false;
         }
-        if (!(rate > 0) || rate > 100) {
-            setTaxStatus('El porcentaje de impuesto debe ser mayor a 0 y menor o igual a 100.', true);
+        if (rate < 0 || rate > 100) {
+            setTaxStatus('El porcentaje de impuesto debe estar entre 0 y 100.', true);
             return false;
         }
 
@@ -444,7 +444,7 @@
             return taxRatesEqual(opt.percentage, selectedRate);
         }) || null;
         const selectedName = taxNameWithoutRate((defaultOption && defaultOption.name) || editorName || 'IVA') || 'IVA';
-        const selectedInclude = !!state.taxDraftIncludeNew && selectedRate > 0;
+        const selectedInclude = !!state.taxDraftIncludeNew;
 
         return {
             enabledOptions: {
